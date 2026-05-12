@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OZkids AD Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ── RESET & TOKENS ─────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F6F6FA;
+  --surface:#FFFFFF;
+  --surface2:#F0F0F7;
+  --border:rgba(107,95,228,.1);
+  --border2:rgba(107,95,228,.18);
+  --accent:#7B6FE8;
+  --accent-d:#5A4FD4;
+  --accent-l:#EDEAFD;
+  --red:#E05252;
+  --red-l:#FDEDEB;
+  --green:#2DA882;
+  --green-l:#E3F5EF;
+  --amber:#D97706;
+  --amber-l:#FEF3C7;
+  --text:#18172E;
+  --muted:#8A88A8;
+  --shadow:0 1px 3px rgba(107,95,228,.08),0 4px 16px rgba(107,95,228,.06);
+  --shadow-h:0 4px 12px rgba(107,95,228,.14),0 8px 28px rgba(107,95,228,.1);
+  --sb-w:220px;
+  --font-display:'Instrument Serif',Georgia,serif;
+  --font-body:'DM Sans',-apple-system,sans-serif;
+}
+html{font-family:var(--font-body);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+button{font-family:var(--font-body);cursor:pointer}
+input,select,textarea{font-family:var(--font-body)}
+
+/* ── LAYOUT ─────────────────────────────────────────────────────── */
+.app{display:flex;min-height:100vh}
+
+/* ── SIDEBAR ────────────────────────────────────────────────────── */
+.sidebar{
+  width:var(--sb-w);flex-shrink:0;
+  background:var(--surface);
+  border-right:1px solid var(--border2);
+  display:flex;flex-direction:column;
+  position:fixed;top:0;left:0;bottom:0;
+  overflow-y:auto;z-index:100;
+}
+.sb-logo{padding:22px 18px 16px}
+.sb-logo-sub{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px}
+.sb-logo-title{font-family:var(--font-display);font-size:22px;color:var(--text);line-height:1.1}
+.sb-status{padding:0 18px 14px;display:flex;flex-direction:column;gap:5px}
+.sb-status-item{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600}
+.sb-status-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.sb-divider{height:1px;background:var(--border2);margin:0 12px}
+.sb-section{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;padding:12px 18px 4px}
+.nav-item{
+  display:flex;align-items:center;gap:9px;
+  padding:8px 12px;margin:1px 8px;
+  border-radius:9px;font-size:13px;font-weight:500;
+  color:var(--muted);cursor:pointer;
+  transition:all .15s;border:none;background:none;width:calc(100% - 16px);text-align:left;
+}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:var(--accent);color:#fff;font-weight:600}
+.nav-item.active .nav-badge{background:rgba(255,255,255,.3)}
+.nav-icon{font-size:15px;flex-shrink:0;width:18px;text-align:center}
+.nav-label{flex:1}
+.nav-badge{
+  background:var(--red);color:#fff;
+  font-size:10px;font-weight:700;
+  padding:1px 6px;border-radius:100px;
+  min-width:18px;text-align:center;
+}
+.sb-upload{padding:10px 12px}
+.sb-upload-label{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;display:block}
+.upload-zone{
+  border:1.5px dashed var(--border2);border-radius:9px;
+  padding:12px;text-align:center;cursor:pointer;
+  transition:all .15s;background:var(--surface2);
+}
+.upload-zone:hover{border-color:var(--accent);background:var(--accent-l)}
+.upload-zone input{display:none}
+.upload-zone-text{font-size:11px;color:var(--muted)}
+.upload-status{font-size:11px;font-weight:600;color:var(--green);padding:4px 0}
+
+/* ── MAIN ───────────────────────────────────────────────────────── */
+.main{margin-left:var(--sb-w);flex:1;padding:32px 36px;max-width:1080px}
+.page-header{margin-bottom:24px}
+.page-title{font-family:var(--font-display);font-size:26px;color:var(--text);margin-bottom:3px}
+.page-sub{font-size:13px;color:var(--muted)}
+
+/* ── CARDS ──────────────────────────────────────────────────────── */
+.card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:13px;padding:16px 18px;
+  box-shadow:var(--shadow);transition:box-shadow .2s;
+}
+.card:hover{box-shadow:var(--shadow-h)}
+.card.ok{background:#EEF9F5;border-color:#A8DDCA}
+.card.warn{background:#FEF5F5;border-color:#F5BCBA}
+.card.hold{background:#FEF7ED;border-color:#FBBF82}
+.card.info{background:var(--accent-l);border-color:var(--border2)}
+.card+.card{margin-top:8px}
+
+/* ── TAGS ───────────────────────────────────────────────────────── */
+.tag{display:inline-flex;align-items:center;font-size:11px;font-weight:600;padding:3px 9px;border-radius:100px}
+.tag.purple{background:var(--accent-l);color:var(--accent-d);border:1px solid var(--border2)}
+.tag.green{background:var(--green-l);color:#1A7A5E;border:1px solid #A8DDCA}
+.tag.red{background:var(--red-l);color:#9B1C1C;border:1px solid #F5BCBA}
+.tag.amber{background:var(--amber-l);color:#92400E;border:1px solid #FBBF82}
+.tag.gray{background:var(--surface2);color:var(--muted);border:1px solid var(--border2)}
+
+/* ── METRICS ────────────────────────────────────────────────────── */
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+.metric-label{font-size:11px;color:var(--muted);margin-bottom:5px}
+.metric-value{font-family:var(--font-display);font-size:26px;color:var(--text)}
+.metric-value.up{color:var(--green)}
+.metric-value.dn{color:var(--red)}
+.metric-value.amber{color:var(--amber)}
+
+/* ── SECTION LABEL ──────────────────────────────────────────────── */
+.sl{font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;margin-top:20px}
+.sl:first-child{margin-top:0}
+
+/* ── ROAS BAR ───────────────────────────────────────────────────── */
+.roas-bar-wrap{margin-top:8px;position:relative}
+.roas-bar-bg{height:4px;border-radius:2px;background:var(--surface2);overflow:visible;position:relative}
+.roas-bar-fill{height:100%;border-radius:2px;transition:width .4s}
+.roas-bar-target{position:absolute;top:-4px;width:2px;height:12px;background:var(--accent);border-radius:1px}
+.roas-bar-labels{display:flex;justify-content:space-between;margin-top:3px;font-size:10px;color:var(--muted)}
+
+/* ── BUTTONS ────────────────────────────────────────────────────── */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:8px 16px;border-radius:9px;font-size:13px;font-weight:600;
+  border:none;cursor:pointer;transition:all .15s;
+}
+.btn-primary{background:var(--accent);color:#fff;box-shadow:0 2px 8px rgba(123,111,232,.3)}
+.btn-primary:hover{background:var(--accent-d);transform:translateY(-1px);box-shadow:0 4px 14px rgba(123,111,232,.4)}
+.btn-primary:disabled{background:var(--surface2);color:var(--muted);box-shadow:none;transform:none;cursor:not-allowed}
+.btn-outline{background:var(--surface);color:var(--text);border:1px solid var(--border2)}
+.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+.btn-sm{padding:4px 11px;font-size:11px;border-radius:7px}
+.btn-green{background:var(--green-l);color:#1A7A5E;border:1px solid #A8DDCA}
+.btn-green:hover{background:#C5EBD9}
+.btn-row{display:flex;gap:8px;margin-bottom:20px}
+
+/* ── FORM ───────────────────────────────────────────────────────── */
+.form-row{display:grid;gap:12px;margin-bottom:16px}
+.form-row.col4{grid-template-columns:repeat(4,1fr)}
+.form-row.col2{grid-template-columns:1fr 1fr}
+.form-group label{display:block;font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;margin-bottom:5px}
+.form-group input,.form-group select{
+  width:100%;padding:8px 11px;
+  border:1px solid var(--border2);border-radius:8px;
+  background:var(--surface);color:var(--text);font-size:13px;
+  transition:border-color .15s;outline:none;
+}
+.form-group input:focus,.form-group select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(123,111,232,.12)}
+.search-row{display:flex;gap:8px;margin-bottom:12px}
+.search-row input{flex:1;padding:8px 12px;border:1px solid var(--border2);border-radius:9px;background:var(--surface);color:var(--text);font-size:13px;outline:none;transition:border-color .15s}
+.search-row input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(123,111,232,.12)}
+
+/* ── SETTINGS BOX ───────────────────────────────────────────────── */
+.settings-box{
+  background:var(--surface);border:1px solid var(--border);border-radius:13px;
+  padding:16px 18px;margin-bottom:16px;box-shadow:var(--shadow);
+}
+.settings-box summary{font-size:13px;font-weight:600;color:var(--text);cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}
+.settings-box summary::before{content:'⚙';font-size:14px}
+.settings-box[open] summary{margin-bottom:16px}
+.settings-hint{font-size:11px;color:var(--muted);margin-top:8px}
+
+/* ── AD CARD ────────────────────────────────────────────────────── */
+.ad-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:13px;
+  padding:14px 16px;box-shadow:var(--shadow);margin-bottom:8px;
+}
+.ad-card.ok{background:#EEF9F5;border-color:#A8DDCA}
+.ad-card.warn{background:#FEF5F5;border-color:#F5BCBA}
+.ad-card.hold{background:#FEF7ED;border-color:#FBBF82}
+.ad-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.ad-name{font-size:13px;font-weight:600;color:var(--text)}
+.ad-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.ad-right{text-align:right;flex-shrink:0}
+.ad-budget-change{font-size:12px;font-weight:600;margin-top:4px}
+.ad-budget-change.up{color:var(--green)}
+.ad-budget-change.dn{color:var(--red)}
+
+/* ── USP CARD ───────────────────────────────────────────────────── */
+.usp-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:13px;
+  padding:14px 16px 14px 20px;margin-bottom:8px;
+  position:relative;box-shadow:var(--shadow);transition:all .2s;
+}
+.usp-card::before{
+  content:'';position:absolute;left:0;top:12px;bottom:12px;
+  width:3px;background:linear-gradient(180deg,var(--accent),#B8B0F5);
+  border-radius:0 3px 3px 0;
+}
+.usp-card:hover{transform:translateX(2px);box-shadow:var(--shadow-h)}
+.usp-num{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--accent);text-transform:uppercase;margin-bottom:3px}
+.usp-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px}
+.usp-desc{font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.5}
+.usp-evidence{
+  font-size:11px;color:var(--accent-d);
+  background:var(--accent-l);border-radius:7px;
+  padding:5px 10px;border-left:2px solid var(--border2);
+  display:flex;align-items:flex-start;gap:5px;
+}
+
+/* ── COPY CARD ──────────────────────────────────────────────────── */
+.copy-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:13px;
+  padding:14px 16px;margin-bottom:8px;box-shadow:var(--shadow);transition:box-shadow .2s;
+}
+.copy-card:hover{box-shadow:var(--shadow-h)}
+.copy-badges{display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap}
+.copy-headline{font-family:var(--font-display);font-size:18px;color:var(--text);margin-bottom:5px}
+.copy-body{font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6}
+.copy-footer{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cta-pill{background:var(--accent);color:#fff;font-size:11px;font-weight:600;padding:4px 13px;border-radius:100px}
+.copy-ref{font-size:11px;color:var(--muted)}
+
+/* ── CONCEPT CARD ───────────────────────────────────────────────── */
+.concept-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:13px;
+  padding:14px 16px;margin-bottom:8px;box-shadow:var(--shadow);
+}
+.concept-top{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.concept-name{font-size:13px;font-weight:600;color:var(--text)}
+.concept-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.concept-field{background:var(--surface2);border-radius:8px;padding:9px 11px}
+.concept-field.full{grid-column:1/-1}
+.concept-fl{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+.concept-fv{font-size:12px;color:var(--text);line-height:1.5}
+
+/* ── REVIEW ITEM ────────────────────────────────────────────────── */
+.review-item{background:var(--surface2);border-radius:8px;padding:8px 12px;margin-bottom:5px;font-size:12px;color:var(--muted);line-height:1.5}
+.review-stars{color:#F59E0B;margin-right:4px}
+
+/* ── STOCK BAR ──────────────────────────────────────────────────── */
+.stock-bar{height:4px;border-radius:2px;background:var(--surface2);margin-top:6px;overflow:hidden}
+.stock-fill{height:100%;border-radius:2px}
+
+/* ── EMPTY STATE ────────────────────────────────────────────────── */
+.empty-state{text-align:center;padding:40px 20px;color:var(--muted);font-size:13px}
+.empty-state-icon{font-size:32px;margin-bottom:10px}
+
+/* ── ALERT ──────────────────────────────────────────────────────── */
+.alert{border-radius:9px;padding:10px 14px;font-size:12px;font-weight:500;margin-bottom:12px}
+.alert.success{background:var(--green-l);color:#1A7A5E;border:1px solid #A8DDCA}
+.alert.error{background:var(--red-l);color:#9B1C1C;border:1px solid #F5BCBA}
+.alert.info{background:var(--accent-l);color:var(--accent-d);border:1px solid var(--border2)}
+.alert.warn{background:var(--amber-l);color:#92400E;border:1px solid #FBBF82}
+
+/* ── PRODUCT SUMMARY ────────────────────────────────────────────── */
+.product-summary{
+  background:var(--surface);border:1px solid var(--border);border-radius:13px;
+  padding:14px 18px;margin-bottom:16px;box-shadow:var(--shadow);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.product-summary-left .label{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:3px}
+.product-summary-left .pname{font-family:var(--font-display);font-size:18px;color:var(--text)}
+.product-summary-left .pmeta{font-size:12px;color:var(--muted);margin-top:2px}
+.product-summary-right{text-align:right}
+.product-summary-right .rlabel{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+.product-summary-right .rcount{font-family:var(--font-display);font-size:26px;color:var(--accent)}
+
+/* ── SPINNER ────────────────────────────────────────────────────── */
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── HIDDEN ─────────────────────────────────────────────────────── */
+.hidden{display:none!important}
+.page{display:none}
+.page.active{display:block}
+
+/* ── FADE IN ────────────────────────────────────────────────────── */
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.fade-in{animation:fadeIn .25s ease}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ── SIDEBAR ──────────────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="sb-logo">
+    <div class="sb-logo-sub">OZKIDS</div>
+    <div class="sb-logo-title">AD<br>Studio</div>
+  </div>
+  <div class="sb-status">
+    <div class="sb-status-item" id="status-cafe24">
+      <div class="sb-status-dot" style="background:var(--red)"></div>
+      <span style="color:var(--red)">카페24 미연결</span>
+    </div>
+    <div class="sb-status-item" id="status-meta">
+      <div class="sb-status-dot" style="background:var(--red)"></div>
+      <span style="color:var(--red)">메타 API 미연결</span>
+    </div>
+  </div>
+  <div class="sb-divider"></div>
+
+  <div class="sb-section">자동화</div>
+  <button class="nav-item active" data-page="roas">
+    <span class="nav-icon">⚡</span>
+    <span class="nav-label">ROAS 예산 엔진</span>
+    <span class="nav-badge hidden" id="badge-roas">0</span>
+  </button>
+  <button class="nav-item" data-page="stock">
+    <span class="nav-icon">📦</span>
+    <span class="nav-label">재고 연동 현황</span>
+  </button>
+
+  <div class="sb-section">추천</div>
+  <button class="nav-item" data-page="alert">
+    <span class="nav-icon">💡</span>
+    <span class="nav-label">잠재 상품 알림</span>
+    <span class="nav-badge hidden" id="badge-alert">0</span>
+  </button>
+
+  <div class="sb-section">소재 기획</div>
+  <button class="nav-item" data-page="usp">
+    <span class="nav-icon">✦</span>
+    <span class="nav-label">USP 분석</span>
+  </button>
+  <button class="nav-item" data-page="copy">
+    <span class="nav-icon">✏️</span>
+    <span class="nav-label">광고 문구</span>
+  </button>
+
+  <div class="sb-divider" style="margin-top:auto"></div>
+  <div class="sb-upload">
+    <span class="sb-upload-label">이지어드민 재고</span>
+    <label class="upload-zone" id="upload-zone">
+      <input type="file" id="inventory-file" accept=".xlsx,.xls,.csv">
+      <div class="upload-zone-text" id="upload-text">📂 엑셀 업로드</div>
+    </label>
+    <div class="upload-status hidden" id="upload-status"></div>
+  </div>
+</aside>
+
+<!-- ── MAIN ──────────────────────────────────────────────────────── -->
+<main class="main">
+
+<!-- PAGE: ROAS -->
+<div class="page active" id="page-roas">
+  <div class="page-header">
+    <div class="page-title">ROAS 기반 예산 조정</div>
+    <div class="page-sub">최근 4시간 실적 기준 · 직접 승인 후 실행</div>
+  </div>
+
+  <!-- 메타 토큰 입력 -->
+  <div class="card" id="meta-token-box" style="margin-bottom:16px">
+    <div style="font-size:13px;font-weight:600;margin-bottom:10px">메타 Access Token 설정</div>
+    <div class="form-row col2">
+      <div class="form-group">
+        <label>Access Token</label>
+        <input type="password" id="meta-token-input" placeholder="EAAxxxxx...">
+      </div>
+      <div class="form-group">
+        <label>광고 계정 ID</label>
+        <input type="text" id="meta-account-input" placeholder="act_146050252406874">
+      </div>
+    </div>
+    <button class="btn btn-outline btn-sm" onclick="saveMeta()">저장</button>
+    <div style="font-size:11px;color:var(--muted);margin-top:6px">⚠️ 브라우저에만 저장됩니다. 보안을 위해 PC를 공유하지 마세요.</div>
+  </div>
+
+  <details class="settings-box" open>
+    <summary>조정 설정</summary>
+    <div class="form-row col4">
+      <div class="form-group">
+        <label>목표 ROAS (%)</label>
+        <input type="number" id="target-roas" value="300" min="50" max="2000" step="50">
+      </div>
+      <div class="form-group">
+        <label>최대 증액 (%)</label>
+        <input type="number" id="cap-up" value="50" min="10" max="200" step="10">
+      </div>
+      <div class="form-group">
+        <label>최대 감액 (%)</label>
+        <input type="number" id="cap-dn" value="50" min="10" max="90" step="10">
+      </div>
+      <div class="form-group">
+        <label>최소 일예산 (₩)</label>
+        <input type="number" id="min-budget" value="5000" min="1000" step="1000">
+      </div>
+    </div>
+    <div class="settings-hint">조정 공식: 새 예산 = 현재 예산 × (현재 ROAS ÷ 목표 ROAS), 캡 범위 내 적용</div>
+  </details>
+
+  <div class="btn-row">
+    <button class="btn btn-outline" id="fetch-btn" onclick="fetchMetaAds()">🔄 데이터 불러오기</button>
+    <button class="btn btn-primary" id="run-btn" onclick="runAll()" disabled>▶ 승인 & 실행</button>
+  </div>
+
+  <div id="roas-result">
+    <div class="empty-state">
+      <div class="empty-state-icon">📊</div>
+      '데이터 불러오기'를 눌러 최근 4시간 광고 실적을 가져오세요
+    </div>
+  </div>
+</div>
+
+<!-- PAGE: STOCK -->
+<div class="page" id="page-stock">
+  <div class="page-header">
+    <div class="page-title">재고 연동 현황</div>
+    <div class="page-sub">이지어드민 재고 · 온라인 / 오프라인 분류</div>
+  </div>
+  <div id="stock-result">
+    <div class="empty-state">
+      <div class="empty-state-icon">📦</div>
+      왼쪽 사이드바에서 이지어드민 엑셀을 먼저 업로드해주세요
+    </div>
+  </div>
+</div>
+
+<!-- PAGE: ALERT -->
+<div class="page" id="page-alert">
+  <div class="page-header">
+    <div class="page-title">잠재 상품 알림</div>
+    <div class="page-sub">조회수 대비 전환율 높은 미광고 상품 · 재고 충분한 것만 표시</div>
+  </div>
+  <div id="alert-result">
+    <div class="empty-state">
+      <div class="empty-state-icon">💡</div>
+      카페24 연동 후 분석을 실행하세요
+    </div>
+  </div>
+</div>
+
+<!-- PAGE: USP -->
+<div class="page" id="page-usp">
+  <div class="page-header">
+    <div class="page-title">USP 분석</div>
+    <div class="page-sub">제품 리뷰 기반 핵심 차별점 도출</div>
+  </div>
+
+  <div class="card" id="cafe24-auth-box" style="margin-bottom:16px">
+    <div style="font-size:13px;font-weight:600;margin-bottom:10px">카페24 인증</div>
+    <div class="form-row col2">
+      <div class="form-group">
+        <label>카페24 인증 코드 또는 Refresh Token</label>
+        <input type="text" id="cafe24-token-input" placeholder="refresh_token 값 입력">
+      </div>
+    </div>
+    <button class="btn btn-outline btn-sm" onclick="saveCafe24Token()">연결</button>
+  </div>
+
+  <div class="search-row">
+    <input type="text" id="product-search" placeholder="제품명 검색 (예: 벙어리장갑, 내복)" onkeydown="if(event.key==='Enter')searchProduct()">
+    <button class="btn btn-outline" onclick="searchProduct()">검색</button>
+  </div>
+  <div id="search-result"></div>
+  <div id="product-summary" class="hidden"></div>
+  <div id="review-section" class="hidden"></div>
+
+  <div style="margin-top:16px">
+    <button class="btn btn-primary" id="analyze-btn" onclick="analyzeUSP()" disabled>✦ USP 분석 시작</button>
+  </div>
+  <div id="usp-result" style="margin-top:20px"></div>
+</div>
+
+<!-- PAGE: COPY -->
+<div class="page" id="page-copy">
+  <div class="page-header">
+    <div class="page-title">광고 문구</div>
+    <div class="page-sub">실제 고객 말투 반영 카피 · CTA 포함</div>
+  </div>
+  <div id="copy-result">
+    <div class="empty-state">
+      <div class="empty-state-icon">✏️</div>
+      USP 분석 탭에서 먼저 제품을 분석해주세요
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+// ── CONFIG ───────────────────────────────────────────────────────
+const PROXY   = 'https://ozkiz-proxy.vercel.app';
+const GEMINI_KEY = ''; // 사용자가 직접 입력하거나 별도 관리
+const MALL_ID = 'ozkiz';
+const META_BASE = 'https://graph.facebook.com/v21.0';
+
+// ── STATE ────────────────────────────────────────────────────────
+const state = {
+  metaToken: localStorage.getItem('meta_token') || '',
+  metaAccount: localStorage.getItem('meta_account') || '',
+  cafe24Token: localStorage.getItem('cafe24_token') || '',
+  geminiKey: localStorage.getItem('gemini_key') || '',
+  inventoryData: [],
+  metaAds: [],
+  productData: null,
+  reviews: [],
+  uspResult: [],
+  adCopies: [],
+  adConcepts: [],
+  completedAlerts: JSON.parse(localStorage.getItem('completed_alerts') || '[]'),
+};
+
+// ── INIT ─────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  updateStatusUI();
+  if (state.metaToken) document.getElementById('meta-token-input').value = '••••••••';
+  if (state.metaAccount) document.getElementById('meta-account-input').value = state.metaAccount;
+  if (state.cafe24Token) document.getElementById('cafe24-token-input').value = '••••••••';
+  initNav();
+  initUpload();
+  initGeminiInput();
+});
+
+function updateStatusUI() {
+  const c24 = document.getElementById('status-cafe24');
+  const meta = document.getElementById('status-meta');
+  if (state.cafe24Token) {
+    c24.innerHTML = `<div class="sb-status-dot" style="background:var(--green)"></div><span style="color:var(--green)">카페24 연결됨</span>`;
+  }
+  if (state.metaToken) {
+    meta.innerHTML = `<div class="sb-status-dot" style="background:var(--green)"></div><span style="color:var(--green)">메타 API 연결됨</span>`;
+  }
+}
+
+// ── NAV ──────────────────────────────────────────────────────────
+function initNav() {
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('page-' + btn.dataset.page).classList.add('active');
+    });
+  });
+}
+
+// ── UPLOAD ───────────────────────────────────────────────────────
+function initUpload() {
+  document.getElementById('inventory-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        state.inventoryData = XLSX.utils.sheet_to_json(ws);
+        document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 로드됨`;
+        document.getElementById('upload-zone').style.borderColor = 'var(--green)';
+        renderStockPage();
+      } catch(err) {
+        alert('파일 읽기 오류: ' + err.message);
+      }
+    };
+    reader.readAsBinaryString(file);
+  });
+}
+
+// ── GEMINI KEY INPUT ─────────────────────────────────────────────
+function initGeminiInput() {
+  // 사이드바 하단에 Gemini Key 입력 추가 (선택적)
+  const key = localStorage.getItem('gemini_key');
+  if (key) state.geminiKey = key;
+}
+
+// ── META SETTINGS ────────────────────────────────────────────────
+function saveMeta() {
+  const token = document.getElementById('meta-token-input').value.trim();
+  const account = document.getElementById('meta-account-input').value.trim();
+  if (token && token !== '••••••••') {
+    state.metaToken = token;
+    localStorage.setItem('meta_token', token);
+  }
+  if (account) {
+    state.metaAccount = account;
+    localStorage.setItem('meta_account', account);
+  }
+  updateStatusUI();
+  showAlert('roas-result', '메타 설정이 저장됐어요!', 'success');
+}
+
+function saveCafe24Token() {
+  const val = document.getElementById('cafe24-token-input').value.trim();
+  if (val && val !== '••••••••') {
+    state.cafe24Token = val;
+    localStorage.setItem('cafe24_token', val);
+    updateStatusUI();
+    showAlert('usp-result', '카페24 연결됐어요!', 'success');
+  }
+}
+
+// ── HELPERS ──────────────────────────────────────────────────────
+function fmt(n) { return Number(n).toLocaleString('ko-KR'); }
+function showAlert(containerId, msg, type='info') {
+  const el = document.getElementById(containerId);
+  const div = document.createElement('div');
+  div.className = `alert ${type} fade-in`;
+  div.textContent = msg;
+  el.prepend(div);
+  setTimeout(() => div.remove(), 4000);
+}
+
+function parseAdName(raw) { return raw.split(';')[0].trim(); }
+
+function matchInventory(productName) {
+  if (!state.inventoryData.length) return { online: null, offline: null };
+  const nameKeys = ['상품명','품명','제품명','name'];
+  const onlineKeys = ['온라인재고','온라인 재고','온라인수량'];
+  const offlineKeys = ['오프라인재고','오프라인 재고','오프라인수량'];
+  const stockKeys = ['재고','수량','stock','qty'];
+
+  const parsed = productName.toLowerCase().replace(/\s/g,'');
+  let best = null, bestScore = 0;
+  for (const row of state.inventoryData) {
+    const nameCol = Object.keys(row).find(k => nameKeys.some(nk => k.includes(nk))) || Object.keys(row)[0];
+    const score = [...parsed].filter(c => String(row[nameCol]||'').toLowerCase().replace(/\s/g,'').includes(c)).length;
+    if (score > bestScore) { bestScore = score; best = row; }
+  }
+  if (!best || bestScore < 2) return { online: null, offline: null };
+  const getVal = (row, keys) => {
+    const k = Object.keys(row).find(rk => keys.some(sk => rk.includes(sk)));
+    return k ? parseInt(row[k]||0) : 0;
+  };
+  return {
+    online: getVal(best, onlineKeys) || getVal(best, stockKeys),
+    offline: getVal(best, offlineKeys),
+  };
+}
+
+function calcBudget(current, roas, target, capUp, capDn, minB) {
+  if (roas === 0) return { nb: 0, action: 'off' };
+  let nb = Math.round(current * (roas / target) / 1000) * 1000;
+  nb = Math.min(nb, current * (1 + capUp / 100));
+  nb = Math.max(nb, current * (1 - capDn / 100), minB);
+  nb = Math.round(nb / 1000) * 1000;
+  if (nb > current) return { nb, action: 'up' };
+  if (nb < current) return { nb, action: 'dn' };
+  return { nb, action: 'hold' };
+}
+
+// ── FETCH META ADS ───────────────────────────────────────────────
+async function fetchMetaAds() {
+  if (!state.metaToken) { alert('메타 Access Token을 먼저 입력해주세요.'); return; }
+  const btn = document.getElementById('fetch-btn');
+  btn.innerHTML = '<span class="spinner"></span> 불러오는 중...';
+  btn.disabled = true;
+
+  const target = parseInt(document.getElementById('target-roas').value);
+  const capUp  = parseInt(document.getElementById('cap-up').value);
+  const capDn  = parseInt(document.getElementById('cap-dn').value);
+  const minB   = parseInt(document.getElementById('min-budget').value);
+  const now    = new Date();
+  const since  = new Date(now - 4 * 3600 * 1000).toISOString().split('T')[0];
+  const until  = now.toISOString().split('T')[0];
+
+  try {
+    const res = await fetch(
+      `${META_BASE}/${state.metaAccount}/ads?access_token=${state.metaToken}` +
+      `&fields=id,name,status,daily_budget,insights.time_range({"since":"${since}","until":"${until}"})` +
+      `{spend,purchase_roas,impressions}&limit=200`
+    );
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const ads = data.data || [];
+    state.metaAds = ads.map(ad => {
+      const productName = parseAdName(ad.name || '');
+      const budget = parseInt(ad.daily_budget || 0);
+      const ins = (ad.insights?.data || [{}])[0];
+      const roasData = ins.purchase_roas || [];
+      const roas = roasData[0] ? parseFloat(roasData[0].value) * 100 : 0;
+      const spend = parseFloat(ins.spend || 0);
+      const inv = matchInventory(productName);
+      const total = (inv.online || 0) + (inv.offline || 0);
+      const stockKnown = inv.online !== null;
+      const isPresale = false; // 카페24 연동 시 확인
+      let action, nb;
+      if (stockKnown && total === 0 && !isPresale) { action = 'off'; nb = 0; }
+      else { ({ nb, action } = calcBudget(budget, roas, target, capUp, capDn, minB)); }
+      return { id: ad.id, name: productName, nameRaw: ad.name, status: ad.status,
+               budget, nb, action, roas, spend, inv, isPresale };
+    });
+
+    renderRoasResult(target);
+    const nAction = state.metaAds.filter(r => ['up','dn','off'].includes(r.action)).length;
+    document.getElementById('badge-roas').textContent = nAction;
+    document.getElementById('badge-roas').classList.toggle('hidden', nAction === 0);
+    document.getElementById('run-btn').disabled = nAction === 0;
+  } catch(e) {
+    showAlert('roas-result', '오류: ' + e.message, 'error');
+  } finally {
+    btn.innerHTML = '🔄 데이터 불러오기';
+    btn.disabled = false;
+  }
+}
+
+function renderRoasResult(target) {
+  const ads = state.metaAds;
+  const nUp   = ads.filter(r=>r.action==='up').length;
+  const nDn   = ads.filter(r=>r.action==='dn').length;
+  const nOff  = ads.filter(r=>r.action==='off').length;
+  const nHold = ads.filter(r=>r.action==='hold').length;
+
+  let html = `
+  <div class="metrics">
+    <div class="metric"><div class="metric-label">증액 대상</div><div class="metric-value up">${nUp}개</div></div>
+    <div class="metric"><div class="metric-label">감액 대상</div><div class="metric-value dn">${nDn}개</div></div>
+    <div class="metric"><div class="metric-label">OFF 대상</div><div class="metric-value dn">${nOff}개</div></div>
+    <div class="metric"><div class="metric-label">유지</div><div class="metric-value">${nHold}개</div></div>
+  </div>`;
+
+  // OFF 대상
+  const offList = ads.filter(r=>r.action==='off');
+  if (offList.length) {
+    html += `<div class="sl">🔴 재고 없음 — OFF 대상</div>`;
+    offList.forEach(r => {
+      const stockTxt = r.inv.online !== null ? `온라인 ${r.inv.online}개 · 오프라인 ${r.inv.offline}개` : '재고 미확인';
+      html += `<div class="ad-card ${r.isPresale?'hold':'warn'} fade-in">
+        <div class="ad-card-top">
+          <div>
+            <div class="ad-name">${r.name}</div>
+            <div class="ad-meta">${r.nameRaw.substring(0,55)} · ${stockTxt}</div>
+            ${r.isPresale ? `<div class="alert warn" style="margin-top:6px;margin-bottom:0;font-size:11px">📅 카페24 예약판매 확인 — OFF 제외</div>` : ''}
+          </div>
+          <span class="tag ${r.isPresale?'amber':'red'}">${r.isPresale?'예약판매 유지':'재고없음 OFF'}</span>
+        </div>
+      </div>`;
+    });
+  }
+
+  // 예산 조정
+  const adjList = ads.filter(r=>['up','dn'].includes(r.action));
+  if (adjList.length) {
+    html += `<div class="sl">⚡ 효율 기반 — 예산 조정 대상</div>`;
+    adjList.forEach(r => {
+      const pct = Math.abs(Math.round((r.nb/r.budget-1)*100));
+      const arrow = r.action==='up' ? '▲' : '▼';
+      const roasColor = r.roas >= target ? 'var(--green)' : 'var(--red)';
+      const fillW = Math.min(r.roas/(target*2)*100, 100);
+      const targetW = Math.min(target/(target*2)*100, 100);
+      html += `<div class="ad-card ${r.action==='up'?'ok':'warn'} fade-in">
+        <div class="ad-card-top">
+          <div style="flex:1;min-width:0">
+            <div class="ad-name">${r.name}</div>
+            <div class="ad-meta">현재 ROAS <b style="color:${roasColor}">${r.roas.toFixed(0)}%</b> · 목표 ${target}% · 소진 ₩${fmt(r.spend)}</div>
+            <div class="roas-bar-wrap">
+              <div class="roas-bar-bg">
+                <div class="roas-bar-fill" style="width:${fillW}%;background:${roasColor}"></div>
+                <div class="roas-bar-target" style="left:${targetW}%"></div>
+              </div>
+              <div class="roas-bar-labels"><span>현재 ${r.roas.toFixed(0)}%</span><span>목표 ${target}%</span></div>
+            </div>
+          </div>
+          <div class="ad-right">
+            <span class="tag ${r.action==='up'?'green':'red'}">${arrow} ${pct}%</span>
+            <div class="ad-budget-change ${r.action}">₩${fmt(r.budget)} → ₩${fmt(r.nb)}</div>
+          </div>
+        </div>
+      </div>`;
+    });
+  }
+
+  // 유지
+  const holdList = ads.filter(r=>r.action==='hold');
+  if (holdList.length) {
+    html += `<div class="sl">✓ 유지 (${holdList.length}개)</div>`;
+    holdList.forEach(r => {
+      html += `<div class="ad-card fade-in">
+        <div class="ad-card-top">
+          <div><div class="ad-name">${r.name}</div><div class="ad-meta">ROAS ${r.roas.toFixed(0)}% · ₩${fmt(r.budget)}</div></div>
+          <span class="tag gray">유지</span>
+        </div>
+      </div>`;
+    });
+  }
+
+  document.getElementById('roas-result').innerHTML = html;
+}
+
+// ── RUN ALL ──────────────────────────────────────────────────────
+async function runAll() {
+  if (!confirm('선택된 조정 사항을 실제로 실행할까요?')) return;
+  const btn = document.getElementById('run-btn');
+  btn.innerHTML = '<span class="spinner"></span> 실행 중...';
+  btn.disabled = true;
+  let ok = 0, fail = 0;
+  for (const r of state.metaAds) {
+    try {
+      if (r.action === 'off' && !r.isPresale) {
+        await fetch(`${META_BASE}/${r.id}?access_token=${state.metaToken}`,
+          { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:'PAUSED'}) });
+        ok++;
+      } else if (['up','dn'].includes(r.action)) {
+        await fetch(`${META_BASE}/${r.id}?access_token=${state.metaToken}`,
+          { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({daily_budget:r.nb}) });
+        ok++;
+      }
+    } catch { fail++; }
+  }
+  btn.innerHTML = '▶ 승인 & 실행';
+  btn.disabled = false;
+  showAlert('roas-result', `✅ 완료! 성공 ${ok}개 · 실패 ${fail}개`, 'success');
+}
+
+// ── STOCK PAGE ───────────────────────────────────────────────────
+function renderStockPage() {
+  if (!state.inventoryData.length) return;
+  const data = state.inventoryData;
+  const rows = Object.keys(data[0]);
+  const nameKey = rows.find(k => ['상품명','품명','제품명','name'].some(nk=>k.includes(nk))) || rows[0];
+  const onlineKey = rows.find(k => k.includes('온라인'));
+  const offlineKey = rows.find(k => k.includes('오프라인'));
+  const stockKey = rows.find(k => ['재고','수량','stock'].some(sk=>k.includes(sk)));
+
+  let zero=[], low=[], ok=[];
+  data.forEach(row => {
+    const name = String(row[nameKey]||'');
+    const online = parseInt(row[onlineKey]||0);
+    const offline = parseInt(row[offlineKey]||0);
+    const total = (onlineKey||offlineKey) ? online+offline : parseInt(row[stockKey]||0);
+    const item = { name, online, offline, total };
+    if (total===0) zero.push(item);
+    else if (total<10) low.push(item);
+    else ok.push(item);
+  });
+
+  let html = `<div class="metrics" style="grid-template-columns:repeat(3,1fr)">
+    <div class="metric"><div class="metric-label">재고 없음</div><div class="metric-value dn">${zero.length}개</div></div>
+    <div class="metric"><div class="metric-label">재고 부족 (10개 미만)</div><div class="metric-value amber">${low.length}개</div></div>
+    <div class="metric"><div class="metric-label">재고 충분</div><div class="metric-value up">${ok.length}개</div></div>
+  </div>`;
+
+  if (zero.length) {
+    html += `<div class="sl">🔴 재고 없음</div>`;
+    zero.forEach(item => {
+      html += `<div class="card warn fade-in" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div>
+          <div style="font-size:13px;font-weight:600">${item.name}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">온라인 ${item.online}개 · 오프라인 ${item.offline}개</div>
+        </div>
+        <span class="tag red">재고없음</span>
+      </div>`;
+    });
+  }
+
+  if (low.length) {
+    html += `<div class="sl">🟡 재고 부족</div>`;
+    low.forEach(item => {
+      const pct = Math.min(item.total/20*100,100);
+      html += `<div class="card hold fade-in" style="margin-bottom:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">${item.name}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">온라인 ${item.online}개 · 오프라인 ${item.offline}개</div>
+            <div class="stock-bar"><div class="stock-fill" style="width:${pct}%;background:var(--amber)"></div></div>
+          </div>
+          <span class="tag amber" style="margin-left:12px">잔여 ${item.total}개</span>
+        </div>
+      </div>`;
+    });
+  }
+
+  if (ok.length) {
+    html += `<div class="sl">✅ 재고 충분 (${ok.length}개)</div>`;
+    html += ok.slice(0,20).map(item => `
+      <div class="card fade-in" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="font-size:13px;font-weight:500">${item.name}</div>
+        <span class="tag green">${item.total}개</span>
+      </div>`).join('');
+  }
+
+  document.getElementById('stock-result').innerHTML = html;
+}
+
+// ── SEARCH PRODUCT ───────────────────────────────────────────────
+async function searchProduct() {
+  const kw = document.getElementById('product-search').value.trim();
+  if (!kw) return;
+  if (!state.cafe24Token) { alert('카페24 토큰을 먼저 입력해주세요.'); return; }
+
+  document.getElementById('search-result').innerHTML = '<div class="alert info">검색 중...</div>';
+  try {
+    const res = await fetch(`${PROXY}/api/cafe24?path=admin/products&token=${state.cafe24Token}&product_name=${encodeURIComponent(kw)}&limit=10&embed=options,variants`);
+    const data = await res.json();
+    const products = data.products || [];
+    if (!products.length) {
+      document.getElementById('search-result').innerHTML = '<div class="alert warn">검색 결과가 없습니다.</div>';
+      return;
+    }
+    let html = `<div style="margin-bottom:10px">`;
+    products.forEach(p => {
+      html += `<div class="card fade-in" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;cursor:pointer" onclick="selectProduct(${p.product_no},'${p.product_name.replace(/'/g,"\\'")}')">
+        <div>
+          <div style="font-size:13px;font-weight:600">${p.product_name}</div>
+          <div style="font-size:11px;color:var(--muted)">No.${p.product_no} · ₩${fmt(p.price)}</div>
+        </div>
+        <button class="btn btn-outline btn-sm">선택 →</button>
+      </div>`;
+    });
+    html += `</div>`;
+    document.getElementById('search-result').innerHTML = html;
+  } catch(e) {
+    document.getElementById('search-result').innerHTML = `<div class="alert error">오류: ${e.message}</div>`;
+  }
+}
+
+async function selectProduct(no, name) {
+  document.getElementById('search-result').innerHTML = '<div class="alert info">상품 정보 & 리뷰 불러오는 중...</div>';
+  try {
+    const [pRes, rRes] = await Promise.all([
+      fetch(`${PROXY}/api/cafe24?path=admin/products/${no}&token=${state.cafe24Token}&embed=options,variants,inventories`),
+      fetch(`${PROXY}/api/cafe24?path=admin/products/${no}/reviews&token=${state.cafe24Token}&limit=50`),
+    ]);
+    const pData = await pRes.json();
+    const rData = await rRes.json();
+    state.productData = pData.product || { product_name: name, product_no: no };
+    state.reviews = rData.reviews || [];
+
+    document.getElementById('search-result').innerHTML = '';
+    document.getElementById('product-summary').classList.remove('hidden');
+    document.getElementById('product-summary').innerHTML = `
+      <div class="product-summary fade-in">
+        <div class="product-summary-left">
+          <div class="label">분석 제품</div>
+          <div class="pname">${state.productData.product_name}</div>
+          <div class="pmeta">₩${fmt(state.productData.price)} · <a href="https://${MALL_ID}.cafe24.com/product/detail.html?product_no=${no}" target="_blank" style="color:var(--accent);text-decoration:none">상품 페이지 →</a></div>
+        </div>
+        <div class="product-summary-right">
+          <div class="rlabel">수집 리뷰</div>
+          <div class="rcount">${state.reviews.length}개</div>
+        </div>
+      </div>`;
+
+    if (state.reviews.length) {
+      let rvHtml = `<details style="margin-bottom:12px"><summary style="font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;padding:8px 0">💬 수집된 리뷰 (${state.reviews.length}개)</summary><div style="margin-top:8px">`;
+      state.reviews.slice(0,8).forEach(rv => {
+        const content = rv.content || rv.review_content || '';
+        const stars = '★'.repeat(parseInt(rv.rating)||5);
+        if (content) rvHtml += `<div class="review-item"><span class="review-stars">${stars}</span>${content}</div>`;
+      });
+      rvHtml += `</div></details>`;
+      document.getElementById('review-section').classList.remove('hidden');
+      document.getElementById('review-section').innerHTML = rvHtml;
+    }
+    document.getElementById('analyze-btn').disabled = false;
+  } catch(e) {
+    document.getElementById('search-result').innerHTML = `<div class="alert error">오류: ${e.message}</div>`;
+  }
+}
+
+// ── GEMINI ANALYZE ───────────────────────────────────────────────
+async function analyzeUSP() {
+  if (!state.productData) return;
+  let geminiKey = state.geminiKey;
+  if (!geminiKey) {
+    geminiKey = prompt('Gemini API Key를 입력해주세요 (aistudio.google.com에서 발급):');
+    if (!geminiKey) return;
+    state.geminiKey = geminiKey;
+    localStorage.setItem('gemini_key', geminiKey);
+  }
+
+  const btn = document.getElementById('analyze-btn');
+  btn.innerHTML = '<span class="spinner" style="border-top-color:var(--accent);border-color:rgba(0,0,0,.1)"></span> AI 분석 중...';
+  btn.disabled = true;
+
+  const reviewTexts = state.reviews.slice(0,15).map(r=>r.content||r.review_content||'').filter(Boolean);
+  const prompt = `당신은 오즈키즈(영유아 제품 브랜드) 전문 마케터입니다.
+상품 정보와 고객 리뷰를 분석해서 광고 소재를 기획해주세요.
+
+[상품 정보]
+- 상품명: ${state.productData.product_name}
+- 판매가: ${state.productData.price}원
+
+[실제 고객 리뷰 ${reviewTexts.length}개]
+${reviewTexts.map(r=>`- ${r}`).join('\n')}
+
+다음 JSON 형식으로만 응답 (마크다운 없이):
+{"usp_list":[{"title":"제목","desc":"설명","evidence":"리뷰근거"},{"title":"제목","desc":"설명","evidence":"리뷰근거"},{"title":"제목","desc":"설명","evidence":"리뷰근거"},{"title":"제목","desc":"설명","evidence":"리뷰근거"},{"title":"제목","desc":"설명","evidence":"리뷰근거"}],"ad_copies":[{"headline":"헤드라인(15자이내)","body":"본문(40자이내)","cta":"CTA","tone":"말투"},{"headline":"헤드라인","body":"본문","cta":"CTA","tone":"말투"},{"headline":"헤드라인","body":"본문","cta":"CTA","tone":"말투"},{"headline":"헤드라인","body":"본문","cta":"CTA","tone":"말투"},{"headline":"헤드라인","body":"본문","cta":"CTA","tone":"말투"}],"ad_concepts":[{"concept":"컨셉","format":"카드뉴스/릴스/배너","scenario":"시나리오","key_visual":"비주얼","target_moment":"모먼트"},{"concept":"컨셉","format":"형식","scenario":"시나리오","key_visual":"비주얼","target_moment":"모먼트"},{"concept":"컨셉","format":"형식","scenario":"시나리오","key_visual":"비주얼","target_moment":"모먼트"},{"concept":"컨셉","format":"형식","scenario":"시나리오","key_visual":"비주얼","target_moment":"모먼트"},{"concept":"컨셉","format":"형식","scenario":"시나리오","key_visual":"비주얼","target_moment":"모먼트"}]}`;
+
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
+    });
+    const data = await res.json();
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const json = JSON.parse(raw.replace(/```json|```/g,'').trim());
+    state.uspResult  = json.usp_list || [];
+    state.adCopies   = json.ad_copies || [];
+    state.adConcepts = json.ad_concepts || [];
+    renderUSP();
+    renderCopy();
+  } catch(e) {
+    alert('분석 오류: ' + e.message);
+  } finally {
+    btn.innerHTML = '✦ USP 분석 시작';
+    btn.disabled = false;
+  }
+}
+
+function renderUSP() {
+  let html = `<div class="sl">🏆 제품 USP 5가지</div>`;
+  state.uspResult.forEach((u,i) => {
+    html += `<div class="usp-card fade-in">
+      <div class="usp-num">USP ${String(i+1).padStart(2,'0')}</div>
+      <div class="usp-title">${u.title}</div>
+      <div class="usp-desc">${u.desc}</div>
+      <div class="usp-evidence">📌 ${u.evidence}</div>
+    </div>`;
+  });
+  document.getElementById('usp-result').innerHTML = html;
+}
+
+function renderCopy() {
+  const copyPage = document.getElementById('copy-result');
+  let html = `<div class="sl">✍️ 광고 문구 5개</div>`;
+  state.adCopies.forEach((c,i) => {
+    html += `<div class="copy-card fade-in">
+      <div class="copy-badges">
+        <span class="tag purple">COPY ${String(i+1).padStart(2,'0')}</span>
+        <span class="tag gray">${c.tone}</span>
+      </div>
+      <div class="copy-headline">${c.headline}</div>
+      <div class="copy-body">${c.body}</div>
+      <div class="copy-footer">
+        <span class="cta-pill">${c.cta}</span>
+        <span class="copy-ref">💬 실제 리뷰 말투 참고</span>
+      </div>
+    </div>`;
+  });
+
+  html += `<div class="sl" style="margin-top:24px">🎬 광고 소재 기획 5개</div>`;
+  state.adConcepts.forEach((con,i) => {
+    html += `<div class="concept-card fade-in">
+      <div class="concept-top">
+        <span class="tag green">${con.format}</span>
+        <div class="concept-name">소재 ${i+1}. ${con.concept}</div>
+      </div>
+      <div class="concept-grid">
+        <div class="concept-field"><div class="concept-fl">📋 시나리오</div><div class="concept-fv">${con.scenario}</div></div>
+        <div class="concept-field"><div class="concept-fl">🖼 핵심 비주얼</div><div class="concept-fv">${con.key_visual}</div></div>
+        <div class="concept-field full"><div class="concept-fl">🎯 타겟 모먼트</div><div class="concept-fv">${con.target_moment}</div></div>
+      </div>
+    </div>`;
+  });
+
+  // 다운로드
+  const output = {
+    product: state.productData?.product_name,
+    generated_at: new Date().toLocaleString('ko-KR'),
+    usp: state.uspResult, ad_copies: state.adCopies, ad_concepts: state.adConcepts
+  };
+  html += `<div style="margin-top:16px">
+    <button class="btn btn-green" onclick='downloadJSON(${JSON.stringify(JSON.stringify(output))})'>⬇ 결과 다운로드 (JSON)</button>
+  </div>`;
+
+  copyPage.innerHTML = html;
+}
+
+function downloadJSON(jsonStr) {
+  const blob = new Blob([jsonStr], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ozkids_ad_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+}
+</script>
+</body>
+</html>
