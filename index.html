@@ -485,6 +485,9 @@ const GEMINI_KEY = ''; // 사용자가 직접 입력하거나 별도 관리
 const MALL_ID = 'ozkiz';
 const META_BASE = 'https://graph.facebook.com/v21.0';
 
+// ── 제외 키워드 ──────────────────────────────────────────────────
+const EXCLUDE_KEYWORDS = ['수선택배', '우일신', '일상화보'];
+
 // ── STATE ────────────────────────────────────────────────────────
 const state = {
   cafe24Token: localStorage.getItem('cafe24_token') || '',
@@ -885,6 +888,8 @@ function renderStockPage() {
   data.forEach(row => {
     const name = String(row[nameKey]||'').trim();
     if (!name) return;
+    // 제외 키워드 포함된 상품 숨김
+    if (EXCLUDE_KEYWORDS.some(kw => name.includes(kw))) return;
     if (!grouped[name]) grouped[name] = [];
     grouped[name].push({
       option: String(row[optionKey]||'').trim(),
