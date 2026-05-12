@@ -339,9 +339,16 @@ input,select,textarea{font-family:var(--font-body)}
     <span class="sb-upload-label">이지어드민 재고</span>
     <label class="upload-zone" id="upload-zone">
       <input type="file" id="inventory-file" accept=".xlsx,.xls,.csv">
-      <div class="upload-zone-text" id="upload-text">📂 엑셀 업로드</div>
+      <div class="upload-zone-text" id="upload-text">📂 현재고조회 업로드</div>
     </label>
     <div class="upload-status hidden" id="upload-status"></div>
+    <div style="margin-top:8px">
+      <span class="sb-upload-label">전략파일</span>
+      <label class="upload-zone" id="strategy-zone">
+        <input type="file" id="strategy-file" accept=".xlsx,.xls,.csv">
+        <div class="upload-zone-text" id="strategy-text">📂 전략파일 업로드</div>
+      </label>
+    </div>
   </div>
 </aside>
 
@@ -490,15 +497,32 @@ const state = {
   adCopies: [],
   adConcepts: [],
   completedAlerts: JSON.parse(localStorage.getItem('completed_alerts') || '[]'),
+  strategyData: [],  // 전략파일 데이터
 };
 
 // ── INIT ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   updateStatusUI();
   if (state.cafe24Token) document.getElementById('cafe24-token-input').value = '••••••••';
+
+  // localStorage에서 파일 데이터 복원 (새로고침 후에도 유지)
+  try {
+    const savedInv = localStorage.getItem('inventory_data');
+    if (savedInv) {
+      state.inventoryData = JSON.parse(savedInv);
+      document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 (저장됨)`;
+    }
+    const savedStrat = localStorage.getItem('strategy_data');
+    if (savedStrat) {
+      state.strategyData = JSON.parse(savedStrat);
+      document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 (저장됨)`;
+    }
+  } catch(e) { console.log('복원 실패:', e); }
+
   initNav();
   initUpload();
   initGeminiInput();
+  if (state.inventoryData.length) renderStockPage();
 });
 
 function updateStatusUI() {
@@ -534,11 +558,57 @@ function initUpload() {
         const wb = XLSX.read(ev.target.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         state.inventoryData = XLSX.utils.sheet_to_json(ws);
+        // localStorage에 필요한 컬럼만 저장 (용량 절약)
+        try {
+          const cols = Object.keys(state.inventoryData[0] || {});
+          const nameKey  = cols.find(k=>k.includes('상품명')) || cols[0];
+          const optKey   = cols.find(k=>k.includes('옵션'));
+          const availKey = cols.find(k=>k.includes('가용재고'));
+          const storeKey = cols.find(k=>k.includes('매장총재고'));
+          const slim = state.inventoryData.map(r => ({
+            '상품명': r[nameKey]||'', '옵션': r[optKey]||'',
+            '가용재고': r[availKey]||0, '매장총재고': r[storeKey]||0
+          }));
+          localStorage.setItem('inventory_data', JSON.stringify(slim));
+        } catch(e) { console.log('저장 실패:', e); }
         document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 로드됨`;
-        document.getElementById('upload-zone').style.borderColor = 'var(--green)';
         renderStockPage();
       } catch(err) {
         alert('파일 읽기 오류: ' + err.message);
+      }
+    };
+    reader.readAsBinaryString(file);
+  });
+
+  document.getElementById('strategy-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        // header:1 로 읽어서 두 번째 행을 헤더로
+        const raw = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        const headers = raw[1]; // 두 번째 행이 실제 헤더
+        state.strategyData = raw.slice(2).map(row => {
+          const obj = {};
+          headers.forEach((h, i) => { if (h) obj[String(h).trim()] = row[i]; });
+          return obj;
+        }).filter(r => r['상품명']);
+        // localStorage에 필요한 컬럼만 저장
+        try {
+          const slimStrat = state.strategyData.map(r => ({
+            '상품명': r['상품명']||'',
+            '시즌': r['시즌']||'',
+            '복종': r[' 복종']||r['복종']||''
+          }));
+          localStorage.setItem('strategy_data', JSON.stringify(slimStrat));
+        } catch(e) { console.log('전략파일 저장 실패:', e); }
+        document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 로드됨`;
+        if (state.inventoryData.length) renderStockPage();
+      } catch(err) {
+        alert('전략파일 오류: ' + err.message);
       }
     };
     reader.readAsBinaryString(file);
@@ -580,27 +650,38 @@ function parseAdName(raw) { return raw.split(';')[0].trim(); }
 
 function matchInventory(productName) {
   if (!state.inventoryData.length) return { online: null, offline: null };
-  const nameKeys = ['상품명','품명','제품명','name'];
-  const onlineKeys = ['온라인재고','온라인 재고','온라인수량'];
-  const offlineKeys = ['오프라인재고','오프라인 재고','오프라인수량'];
-  const stockKeys = ['재고','수량','stock','qty'];
+  const cols = Object.keys(state.inventoryData[0]);
+  const nameKey  = cols.find(k => k.includes('상품명')) || cols[0];
+  const availKey = cols.find(k => k.includes('가용재고'));
+  const storeKey = cols.find(k => k.includes('매장총재고'));
 
-  const parsed = productName.toLowerCase().replace(/\s/g,'');
-  let best = null, bestScore = 0;
+  const parsed = productName.toLowerCase().replace(/[-\s]/g,'');
+
+  // 상품명 기준으로 매칭되는 SKU 전체 합산
+  let totalAvail = 0, totalStore = 0, matched = false;
   for (const row of state.inventoryData) {
-    const nameCol = Object.keys(row).find(k => nameKeys.some(nk => k.includes(nk))) || Object.keys(row)[0];
-    const score = [...parsed].filter(c => String(row[nameCol]||'').toLowerCase().replace(/\s/g,'').includes(c)).length;
-    if (score > bestScore) { bestScore = score; best = row; }
+    const rowName = String(row[nameKey]||'').toLowerCase().replace(/[-\s]/g,'');
+    // 광고소재명이 상품명에 포함되거나, 상품명이 광고소재명에 포함되면 매칭
+    if (rowName.includes(parsed) || parsed.includes(rowName) || similarity(parsed, rowName) > 0.6) {
+      totalAvail += parseInt(row[availKey]||0);
+      totalStore += parseInt(row[storeKey]||0);
+      matched = true;
+    }
   }
-  if (!best || bestScore < 2) return { online: null, offline: null };
-  const getVal = (row, keys) => {
-    const k = Object.keys(row).find(rk => keys.some(sk => rk.includes(sk)));
-    return k ? parseInt(row[k]||0) : 0;
-  };
-  return {
-    online: getVal(best, onlineKeys) || getVal(best, stockKeys),
-    offline: getVal(best, offlineKeys),
-  };
+  if (!matched) return { online: null, offline: null };
+  return { online: totalAvail, offline: totalStore };
+}
+
+function similarity(a, b) {
+  if (!a || !b) return 0;
+  const longer = a.length > b.length ? a : b;
+  const shorter = a.length > b.length ? b : a;
+  if (longer.length === 0) return 1;
+  let matches = 0;
+  for (let i = 0; i < shorter.length; i++) {
+    if (longer.includes(shorter[i])) matches++;
+  }
+  return matches / longer.length;
 }
 
 function calcBudget(current, roas, target, capUp, capDn, minB) {
@@ -774,70 +855,171 @@ async function runAll() {
 function renderStockPage() {
   if (!state.inventoryData.length) return;
   const data = state.inventoryData;
-  const rows = Object.keys(data[0]);
-  const nameKey = rows.find(k => ['상품명','품명','제품명','name'].some(nk=>k.includes(nk))) || rows[0];
-  const onlineKey = rows.find(k => k.includes('온라인'));
-  const offlineKey = rows.find(k => k.includes('오프라인'));
-  const stockKey = rows.find(k => ['재고','수량','stock'].some(sk=>k.includes(sk)));
 
-  let zero=[], low=[], ok=[];
+  // 컬럼 자동 탐색
+  const cols = Object.keys(data[0]);
+  const nameKey   = cols.find(k => k.includes('상품명')) || cols[0];
+  const optionKey = cols.find(k => k.includes('옵션'));
+  const availKey  = cols.find(k => k.includes('가용재고'));
+  const storeKey  = cols.find(k => k.includes('매장총재고'));
+
+  // 전략파일 매핑 (상품명 → 시즌, 복종)
+  const strategyMap = {};
+  if (state.strategyData.length) {
+    state.strategyData.forEach(row => {
+      const name = String(row['상품명']||'').trim();
+      if (!name) return;
+      strategyMap[name] = {
+        season: String(row['시즌']||'').trim(),
+        category: String(row[' 복종']||row['복종']||'').trim(),
+      };
+    });
+  }
+
+  // 시즌/복종 필터 옵션 추출
+  const seasons   = [...new Set(Object.values(strategyMap).map(r=>r.season).filter(Boolean))].sort();
+  const categories = [...new Set(Object.values(strategyMap).map(r=>r.category).filter(Boolean))].sort();
+
+  // 상품명 기준으로 그룹핑
+  const grouped = {};
   data.forEach(row => {
-    const name = String(row[nameKey]||'');
-    const online = parseInt(row[onlineKey]||0);
-    const offline = parseInt(row[offlineKey]||0);
-    const total = (onlineKey||offlineKey) ? online+offline : parseInt(row[stockKey]||0);
-    const item = { name, online, offline, total };
-    if (total===0) zero.push(item);
-    else if (total<10) low.push(item);
-    else ok.push(item);
+    const name = String(row[nameKey]||'').trim();
+    if (!name) return;
+    if (!grouped[name]) grouped[name] = [];
+    grouped[name].push({
+      option: String(row[optionKey]||'').trim(),
+      avail:  parseInt(row[availKey]||0),
+      store:  parseInt(row[storeKey]||0),
+    });
   });
 
-  let html = `<div class="metrics" style="grid-template-columns:repeat(3,1fr)">
+  // 상품별 집계 + 전략파일 매칭
+  const products = Object.entries(grouped).map(([name, skus]) => {
+    const totalAvail = skus.reduce((s,r)=>s+r.avail,0);
+    const totalStore = skus.reduce((s,r)=>s+r.store,0);
+    const meta = strategyMap[name] || { season: '', category: '' };
+    return { name, skus, totalAvail, totalStore, total: totalAvail + totalStore,
+             season: meta.season, category: meta.category };
+  });
+
+  const zero = products.filter(p => p.total === 0);
+  const low  = products.filter(p => p.total > 0 && p.total < 10);
+  const ok   = products.filter(p => p.total >= 10);
+
+  state._stockProducts = products;
+  state._stockFilter   = state._stockFilter || '';
+  state._stockSeason   = state._stockSeason || '';
+  state._stockCategory = state._stockCategory || '';
+
+  const seasonOpts = seasons.map(s =>
+    `<option value="${s}" ${state._stockSeason===s?'selected':''}>${s}</option>`).join('');
+  const catOpts = categories.map(c =>
+    `<option value="${c}" ${state._stockCategory===c?'selected':''}>${c}</option>`).join('');
+
+  const strategyNote = state.strategyData.length
+    ? `<span style="font-size:11px;color:var(--green);font-weight:600">✓ 전략파일 매칭됨 (${state.strategyData.length}개)</span>`
+    : `<span style="font-size:11px;color:var(--muted)">전략파일 미업로드 — 시즌/복종 필터 비활성</span>`;
+
+  let html = `
+  <div class="metrics" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
     <div class="metric"><div class="metric-label">재고 없음</div><div class="metric-value dn">${zero.length}개</div></div>
     <div class="metric"><div class="metric-label">재고 부족 (10개 미만)</div><div class="metric-value amber">${low.length}개</div></div>
     <div class="metric"><div class="metric-label">재고 충분</div><div class="metric-value up">${ok.length}개</div></div>
-  </div>`;
+  </div>
 
-  if (zero.length) {
-    html += `<div class="sl">🔴 재고 없음</div>`;
-    zero.forEach(item => {
-      html += `<div class="card warn fade-in" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div>
-          <div style="font-size:13px;font-weight:600">${item.name}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px">온라인 ${item.online}개 · 오프라인 ${item.offline}개</div>
-        </div>
-        <span class="tag red">재고없음</span>
-      </div>`;
-    });
-  }
-
-  if (low.length) {
-    html += `<div class="sl">🟡 재고 부족</div>`;
-    low.forEach(item => {
-      const pct = Math.min(item.total/20*100,100);
-      html += `<div class="card hold fade-in" style="margin-bottom:8px">
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <div style="flex:1">
-            <div style="font-size:13px;font-weight:600">${item.name}</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:2px">온라인 ${item.online}개 · 오프라인 ${item.offline}개</div>
-            <div class="stock-bar"><div class="stock-fill" style="width:${pct}%;background:var(--amber)"></div></div>
-          </div>
-          <span class="tag amber" style="margin-left:12px">잔여 ${item.total}개</span>
-        </div>
-      </div>`;
-    });
-  }
-
-  if (ok.length) {
-    html += `<div class="sl">✅ 재고 충분 (${ok.length}개)</div>`;
-    html += ok.slice(0,20).map(item => `
-      <div class="card fade-in" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <div style="font-size:13px;font-weight:500">${item.name}</div>
-        <span class="tag green">${item.total}개</span>
-      </div>`).join('');
-  }
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+    <input type="text" id="stock-search" placeholder="상품명 검색..."
+      style="flex:1;min-width:160px;padding:7px 11px;border:1px solid var(--border2);border-radius:8px;font-size:13px;outline:none"
+      value="${state._stockFilter}" oninput="state._stockFilter=this.value;renderStockTable()">
+    <select id="stock-season" onchange="state._stockSeason=this.value;renderStockTable()"
+      style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
+      <option value="">전체 시즌</option>${seasonOpts}
+    </select>
+    <select id="stock-category" onchange="state._stockCategory=this.value;renderStockTable()"
+      style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
+      <option value="">전체 복종</option>${catOpts}
+    </select>
+    <button class="btn btn-outline btn-sm" onclick="state._stockFilter='';state._stockSeason='';state._stockCategory='';renderStockPage()">초기화</button>
+  </div>
+  <div style="margin-bottom:10px">${strategyNote}</div>
+  <div id="stock-table-wrap"></div>`;
 
   document.getElementById('stock-result').innerHTML = html;
+  renderStockTable();
+}
+
+function renderStockTable() {
+  const products = state._stockProducts || [];
+  const filter   = (state._stockFilter||'').toLowerCase();
+  const season   = state._stockSeason || '';
+  const category = state._stockCategory || '';
+  const filtered = products.filter(p => {
+    if (filter && !p.name.toLowerCase().includes(filter)) return false;
+    if (season && p.season !== season) return false;
+    if (category && p.category !== category) return false;
+    return true;
+  });
+
+  // 테이블 헤더
+  let html = `
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead>
+      <tr style="background:var(--surface2);border-bottom:1px solid var(--border2)">
+        <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">상품명</th>
+        <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">시즌</th>
+        <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">복종</th>
+        <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">옵션</th>
+        <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">가용재고</th>
+        <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">매장총재고</th>
+        <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">상태</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  // 재고없음 먼저, 그 다음 부족, 그 다음 충분 순
+  const sorted = [...filtered].sort((a,b) => a.total - b.total);
+
+  sorted.slice(0, 200).forEach(p => {
+    const isZero = p.total === 0;
+    const isLow  = p.total > 0 && p.total < 10;
+    const rowBg  = isZero ? '#FEF5F5' : isLow ? '#FEF7ED' : 'var(--surface)';
+    const statusTag = isZero
+      ? `<span class="tag red">재고없음</span>`
+      : isLow
+      ? `<span class="tag amber">부족</span>`
+      : `<span class="tag green">충분</span>`;
+
+    // 첫 번째 SKU는 상품명 표시, 나머지는 빈칸 (rowspan 효과)
+    const skuCount = p.skus.length;
+    p.skus.forEach((sku, i) => {
+      const availColor = sku.avail === 0 ? 'color:var(--red)' : sku.avail < 5 ? 'color:var(--amber)' : 'color:var(--green)';
+      const storeColor = sku.store === 0 ? 'color:var(--muted)' : 'color:var(--text)';
+      const seasonTag = p.season ? `<span style="font-size:11px;color:var(--accent);background:var(--accent-l);padding:2px 7px;border-radius:100px;font-weight:500">${p.season}</span>` : '';
+      const catTag = p.category ? `<span style="font-size:11px;color:var(--muted);background:var(--surface2);padding:2px 7px;border-radius:100px">${p.category}</span>` : '';
+      html += `<tr style="background:${rowBg};border-bottom:1px solid var(--border)">
+        ${i === 0
+          ? `<td style="padding:8px 12px;font-weight:600;color:var(--text);vertical-align:top" rowspan="${skuCount}">${p.name}</td>
+             <td style="padding:8px 12px;vertical-align:top" rowspan="${skuCount}">${seasonTag}</td>
+             <td style="padding:8px 12px;vertical-align:top" rowspan="${skuCount}">${catTag}</td>`
+          : ''}
+        <td style="padding:8px 12px;color:var(--muted)">${sku.option}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:600;${availColor}">${sku.avail}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:500;${storeColor}">${sku.store}</td>
+        ${i === 0
+          ? `<td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${statusTag}</td>`
+          : ''}
+      </tr>`;
+    });
+  });
+
+  if (filtered.length > 200) {
+    html += `<tr><td colspan="7" style="padding:12px;text-align:center;color:var(--muted);font-size:12px">
+      상위 200개 표시 중 (전체 ${filtered.length}개) — 검색으로 좁혀보세요
+    </td></tr>`;
+  }
+
+  html += `</tbody></table>`;
+  document.getElementById('stock-table-wrap').innerHTML = html;
 }
 
 // ── SEARCH PRODUCT ───────────────────────────────────────────────
