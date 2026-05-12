@@ -9,7 +9,7 @@
 /* ── RESET & TOKENS ─────────────────────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#F6F6FA;
+  --bg:#F5F5F8;
   --surface:#FFFFFF;
   --surface2:#F0F0F7;
   --border:rgba(107,95,228,.1);
@@ -49,7 +49,7 @@ input,select,textarea{font-family:var(--font-body)}
 }
 .sb-logo{padding:22px 18px 16px}
 .sb-logo-sub{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px}
-.sb-logo-title{font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--text);line-height:1.1}
+.sb-logo-title{font-family:var(--font-display);font-size:19px;font-weight:300;color:var(--text);line-height:1.2;letter-spacing:-.01em}
 .sb-status{padding:0 18px 14px;display:flex;flex-direction:column;gap:5px}
 .sb-status-item{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600}
 .sb-status-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
@@ -73,28 +73,29 @@ input,select,textarea{font-family:var(--font-body)}
   padding:1px 6px;border-radius:100px;
   min-width:18px;text-align:center;
 }
-.sb-upload{padding:10px 12px}
+.sb-upload{padding:8px 12px 14px}
 .sb-upload-label{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;display:block}
 .upload-zone{
-  border:1.5px dashed var(--border2);border-radius:9px;
-  padding:12px;text-align:center;cursor:pointer;
-  transition:all .15s;background:var(--surface2);outline:none;
+  border:none;border-radius:9px;
+  padding:4px 0;text-align:left;cursor:pointer;
+  transition:all .15s;background:transparent;
+  outline:none;display:block;
 }
-.upload-zone:hover{border-color:var(--accent);background:var(--accent-l)}
-.upload-zone input{display:none;outline:none;border:none}
-.upload-zone-text{font-size:11px;color:var(--muted)}
+.upload-zone input{display:none}
+.upload-zone-text{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:7px;transition:background .15s}
+.upload-zone:hover .upload-zone-text{background:var(--surface2);color:var(--text)}
 .upload-status{font-size:11px;font-weight:600;color:var(--green);padding:4px 0}
 
 /* ── MAIN ───────────────────────────────────────────────────────── */
-.main{margin-left:var(--sb-w);flex:1;padding:32px 36px;max-width:1080px}
-.page-header{margin-bottom:24px}
-.page-title{font-family:var(--font-display);font-size:24px;font-weight:700;color:var(--text);margin-bottom:3px}
-.page-sub{font-size:13px;color:var(--muted)}
+.main{margin-left:var(--sb-w);flex:1;padding:28px 32px;max-width:1060px}
+.page-header{margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.page-title{font-family:var(--font-display);font-size:22px;font-weight:300;color:var(--text);margin-bottom:3px;letter-spacing:-.02em}
+.page-sub{font-size:12px;color:var(--muted);font-weight:400;margin-top:3px}
 
 /* ── CARDS ──────────────────────────────────────────────────────── */
 .card{
   background:var(--surface);border:1px solid var(--border);
-  border-radius:13px;padding:16px 18px;
+  border-radius:14px;padding:14px 16px;
   box-shadow:var(--shadow);transition:box-shadow .2s;
 }
 .card:hover{box-shadow:var(--shadow-h)}
@@ -116,13 +117,13 @@ input,select,textarea{font-family:var(--font-body)}
 .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
 .metric{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
 .metric-label{font-size:11px;color:var(--muted);margin-bottom:5px}
-.metric-value{font-family:var(--font-display);font-size:24px;font-weight:700;color:var(--text)}
+.metric-value{font-family:var(--font-display);font-size:22px;font-weight:500;color:var(--text)}
 .metric-value.up{color:var(--green)}
 .metric-value.dn{color:var(--red)}
 .metric-value.amber{color:var(--amber)}
 
 /* ── SECTION LABEL ──────────────────────────────────────────────── */
-.sl{font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;margin-top:20px}
+.sl{font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;margin-top:18px;padding-bottom:6px;border-bottom:1px solid var(--border)}
 .sl:first-child{margin-top:0}
 
 /* ── ROAS BAR ───────────────────────────────────────────────────── */
@@ -169,7 +170,7 @@ input,select,textarea{font-family:var(--font-body)}
   background:var(--surface);border:1px solid var(--border);border-radius:13px;
   padding:16px 18px;margin-bottom:16px;box-shadow:var(--shadow);
 }
-.settings-box summary{font-size:13px;font-weight:600;color:var(--text);cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}
+.settings-box summary{font-size:12px;font-weight:500;color:var(--muted);cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}
 .settings-box summary::before{content:'⚙';font-size:14px}
 .settings-box[open] summary{margin-bottom:16px}
 .settings-hint{font-size:11px;color:var(--muted);margin-top:8px}
