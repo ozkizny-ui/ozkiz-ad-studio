@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OZkids AD Studio</title>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet">
 <style>
 /* ── RESET & TOKENS ─────────────────────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -28,8 +28,8 @@
   --shadow:0 1px 3px rgba(107,95,228,.08),0 4px 16px rgba(107,95,228,.06);
   --shadow-h:0 4px 12px rgba(107,95,228,.14),0 8px 28px rgba(107,95,228,.1);
   --sb-w:220px;
-  --font-display:'Instrument Serif',Georgia,serif;
-  --font-body:'DM Sans',-apple-system,sans-serif;
+  --font-display:'Pretendard',sans-serif;
+  --font-body:'Pretendard',-apple-system,sans-serif;
 }
 html{font-family:var(--font-body);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
 button{font-family:var(--font-body);cursor:pointer}
@@ -49,7 +49,7 @@ input,select,textarea{font-family:var(--font-body)}
 }
 .sb-logo{padding:22px 18px 16px}
 .sb-logo-sub{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px}
-.sb-logo-title{font-family:var(--font-display);font-size:22px;color:var(--text);line-height:1.1}
+.sb-logo-title{font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--text);line-height:1.1}
 .sb-status{padding:0 18px 14px;display:flex;flex-direction:column;gap:5px}
 .sb-status-item{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600}
 .sb-status-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
@@ -78,17 +78,17 @@ input,select,textarea{font-family:var(--font-body)}
 .upload-zone{
   border:1.5px dashed var(--border2);border-radius:9px;
   padding:12px;text-align:center;cursor:pointer;
-  transition:all .15s;background:var(--surface2);
+  transition:all .15s;background:var(--surface2);outline:none;
 }
 .upload-zone:hover{border-color:var(--accent);background:var(--accent-l)}
-.upload-zone input{display:none}
+.upload-zone input{display:none;outline:none;border:none}
 .upload-zone-text{font-size:11px;color:var(--muted)}
 .upload-status{font-size:11px;font-weight:600;color:var(--green);padding:4px 0}
 
 /* ── MAIN ───────────────────────────────────────────────────────── */
 .main{margin-left:var(--sb-w);flex:1;padding:32px 36px;max-width:1080px}
 .page-header{margin-bottom:24px}
-.page-title{font-family:var(--font-display);font-size:26px;color:var(--text);margin-bottom:3px}
+.page-title{font-family:var(--font-display);font-size:24px;font-weight:700;color:var(--text);margin-bottom:3px}
 .page-sub{font-size:13px;color:var(--muted)}
 
 /* ── CARDS ──────────────────────────────────────────────────────── */
@@ -116,7 +116,7 @@ input,select,textarea{font-family:var(--font-body)}
 .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
 .metric{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
 .metric-label{font-size:11px;color:var(--muted);margin-bottom:5px}
-.metric-value{font-family:var(--font-display);font-size:26px;color:var(--text)}
+.metric-value{font-family:var(--font-display);font-size:24px;font-weight:700;color:var(--text)}
 .metric-value.up{color:var(--green)}
 .metric-value.dn{color:var(--red)}
 .metric-value.amber{color:var(--amber)}
