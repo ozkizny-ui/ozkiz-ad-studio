@@ -908,7 +908,7 @@ function renderStockPage() {
 
   state._stockProducts = products;
   state._stockFilter   = state._stockFilter || '';
-  state._stockSeason   = state._stockSeason || '';
+  state._stockSeasons  = state._stockSeasons || [];
   state._stockCategory = state._stockCategory || '';
 
   const seasonOpts = seasons.map(s =>
@@ -931,15 +931,34 @@ function renderStockPage() {
     <input type="text" id="stock-search" placeholder="상품명 검색..."
       style="flex:1;min-width:160px;padding:7px 11px;border:1px solid var(--border2);border-radius:8px;font-size:13px;outline:none"
       value="${state._stockFilter}" oninput="state._stockFilter=this.value;renderStockTable()">
-    <select id="stock-season" onchange="state._stockSeason=this.value;renderStockTable()"
-      style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
-      <option value="">전체 시즌</option>${seasonOpts}
-    </select>
+    <div style="position:relative" id="season-dropdown-wrap">
+      <button onclick="toggleSeasonDropdown()" id="season-btn"
+        style="padding:7px 12px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap">
+        <span id="season-btn-label">${state._stockSeasons&&state._stockSeasons.length ? state._stockSeasons.join(', ') : '전체 시즌'}</span>
+        <span style="font-size:10px;color:var(--muted)">▾</span>
+      </button>
+      <div id="season-dropdown"
+        style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:100;
+               background:var(--surface);border:1px solid var(--border2);border-radius:10px;
+               box-shadow:0 4px 16px rgba(0,0,0,.1);padding:6px;min-width:130px">
+        ${seasons.map(s => {
+          const checked = (state._stockSeasons||[]).includes(s);
+          return `<label style="display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--text)"
+            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='transparent'">
+            <input type="checkbox" value="${s}" ${checked?'checked':''} onchange="toggleSeason(this)"
+              style="accent-color:var(--accent);width:14px;height:14px"> ${s}
+          </label>`;
+        }).join('')}
+        <div style="border-top:1px solid var(--border);margin:4px 0"></div>
+        <button onclick="clearSeasons()" style="width:100%;padding:4px 8px;font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;text-align:left;border-radius:6px"
+          onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='transparent'">전체 선택 해제</button>
+      </div>
+    </div>
     <select id="stock-category" onchange="state._stockCategory=this.value;renderStockTable()"
       style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
       <option value="">전체 복종</option>${catOpts}
     </select>
-    <button class="btn btn-outline btn-sm" onclick="state._stockFilter='';state._stockSeason='';state._stockCategory='';renderStockPage()">초기화</button>
+    <button class="btn btn-outline btn-sm" onclick="state._stockFilter='';state._stockSeasons=[];state._stockCategory='';closeSeasonDropdown();renderStockPage()">초기화</button>
   </div>
   <div style="margin-bottom:10px">${strategyNote}</div>
   <div id="stock-table-wrap"></div>`;
@@ -948,6 +967,39 @@ function renderStockPage() {
   renderStockTable();
 }
 
+
+function toggleSeasonDropdown() {
+  const dd = document.getElementById('season-dropdown');
+  dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+}
+function closeSeasonDropdown() {
+  const dd = document.getElementById('season-dropdown');
+  if (dd) dd.style.display = 'none';
+}
+function toggleSeason(cb) {
+  if (!state._stockSeasons) state._stockSeasons = [];
+  if (cb.checked) {
+    if (!state._stockSeasons.includes(cb.value)) state._stockSeasons.push(cb.value);
+  } else {
+    state._stockSeasons = state._stockSeasons.filter(s => s !== cb.value);
+  }
+  const label = document.getElementById('season-btn-label');
+  if (label) label.textContent = state._stockSeasons.length ? state._stockSeasons.join(', ') : '전체 시즌';
+  renderStockTable();
+}
+function clearSeasons() {
+  state._stockSeasons = [];
+  document.querySelectorAll('#season-dropdown input[type=checkbox]').forEach(cb => cb.checked = false);
+  const label = document.getElementById('season-btn-label');
+  if (label) label.textContent = '전체 시즌';
+  renderStockTable();
+}
+// 드롭다운 외부 클릭 시 닫기
+document.addEventListener('click', e => {
+  const wrap = document.getElementById('season-dropdown-wrap');
+  if (wrap && !wrap.contains(e.target)) closeSeasonDropdown();
+});
+
 function renderStockTable() {
   const products = state._stockProducts || [];
   const filter   = (state._stockFilter||'').toLowerCase();
@@ -955,7 +1007,7 @@ function renderStockTable() {
   const category = state._stockCategory || '';
   const filtered = products.filter(p => {
     if (filter && !p.name.toLowerCase().includes(filter)) return false;
-    if (season && p.season !== season) return false;
+    if (state._stockSeasons && state._stockSeasons.length && !state._stockSeasons.includes(p.season)) return false;
     if (category && p.category !== category) return false;
     return true;
   });
