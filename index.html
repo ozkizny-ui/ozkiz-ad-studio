@@ -355,22 +355,7 @@ input,select,textarea{font-family:var(--font-body)}
     <div class="page-sub">최근 4시간 실적 기준 · 직접 승인 후 실행</div>
   </div>
 
-  <!-- 메타 토큰 입력 -->
-  <div class="card" id="meta-token-box" style="margin-bottom:16px">
-    <div style="font-size:13px;font-weight:600;margin-bottom:10px">메타 Access Token 설정</div>
-    <div class="form-row col2">
-      <div class="form-group">
-        <label>Access Token</label>
-        <input type="password" id="meta-token-input" placeholder="EAAxxxxx...">
-      </div>
-      <div class="form-group">
-        <label>광고 계정 ID</label>
-        <input type="text" id="meta-account-input" placeholder="act_146050252406874">
-      </div>
-    </div>
-    <button class="btn btn-outline btn-sm" onclick="saveMeta()">저장</button>
-    <div style="font-size:11px;color:var(--muted);margin-top:6px">⚠️ 브라우저에만 저장됩니다. 보안을 위해 PC를 공유하지 마세요.</div>
-  </div>
+
 
   <details class="settings-box" open>
     <summary>조정 설정</summary>
@@ -495,8 +480,6 @@ const META_BASE = 'https://graph.facebook.com/v21.0';
 
 // ── STATE ────────────────────────────────────────────────────────
 const state = {
-  metaToken: localStorage.getItem('meta_token') || '',
-  metaAccount: localStorage.getItem('meta_account') || '',
   cafe24Token: localStorage.getItem('cafe24_token') || '',
   geminiKey: localStorage.getItem('gemini_key') || '',
   inventoryData: [],
@@ -512,8 +495,6 @@ const state = {
 // ── INIT ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   updateStatusUI();
-  if (state.metaToken) document.getElementById('meta-token-input').value = '••••••••';
-  if (state.metaAccount) document.getElementById('meta-account-input').value = state.metaAccount;
   if (state.cafe24Token) document.getElementById('cafe24-token-input').value = '••••••••';
   initNav();
   initUpload();
@@ -526,9 +507,8 @@ function updateStatusUI() {
   if (state.cafe24Token) {
     c24.innerHTML = `<div class="sb-status-dot" style="background:var(--green)"></div><span style="color:var(--green)">카페24 연결됨</span>`;
   }
-  if (state.metaToken) {
-    meta.innerHTML = `<div class="sb-status-dot" style="background:var(--green)"></div><span style="color:var(--green)">메타 API 연결됨</span>`;
-  }
+  // 메타 토큰은 서버에 있으므로 항상 연결됨
+  meta.innerHTML = `<div class="sb-status-dot" style="background:var(--green)"></div><span style="color:var(--green)">메타 API 연결됨</span>`;
 }
 
 // ── NAV ──────────────────────────────────────────────────────────
@@ -573,20 +553,7 @@ function initGeminiInput() {
 }
 
 // ── META SETTINGS ────────────────────────────────────────────────
-function saveMeta() {
-  const token = document.getElementById('meta-token-input').value.trim();
-  const account = document.getElementById('meta-account-input').value.trim();
-  if (token && token !== '••••••••') {
-    state.metaToken = token;
-    localStorage.setItem('meta_token', token);
-  }
-  if (account) {
-    state.metaAccount = account;
-    localStorage.setItem('meta_account', account);
-  }
-  updateStatusUI();
-  showAlert('roas-result', '메타 설정이 저장됐어요!', 'success');
-}
+
 
 function saveCafe24Token() {
   const val = document.getElementById('cafe24-token-input').value.trim();
@@ -649,7 +616,6 @@ function calcBudget(current, roas, target, capUp, capDn, minB) {
 
 // ── FETCH META ADS ───────────────────────────────────────────────
 async function fetchMetaAds() {
-  if (!state.metaToken) { alert('메타 Access Token을 먼저 입력해주세요.'); return; }
   const btn = document.getElementById('fetch-btn');
   btn.innerHTML = '<span class="spinner"></span> 불러오는 중...';
   btn.disabled = true;
@@ -658,18 +624,11 @@ async function fetchMetaAds() {
   const capUp  = parseInt(document.getElementById('cap-up').value);
   const capDn  = parseInt(document.getElementById('cap-dn').value);
   const minB   = parseInt(document.getElementById('min-budget').value);
-  const now    = new Date();
-  const since  = new Date(now - 4 * 3600 * 1000).toISOString().split('T')[0];
-  const until  = now.toISOString().split('T')[0];
 
   try {
-    const res = await fetch(
-      `${META_BASE}/${state.metaAccount}/ads?access_token=${state.metaToken}` +
-      `&fields=id,name,status,daily_budget,insights.time_range({"since":"${since}","until":"${until}"})` +
-      `{spend,purchase_roas,impressions}&limit=200`
-    );
+    const res = await fetch(`${PROXY}/api/meta?action=get_ads&hours=4`);
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
+    if (data.error) throw new Error(data.error);
 
     const ads = data.data || [];
     state.metaAds = ads.map(ad => {
@@ -796,12 +755,12 @@ async function runAll() {
   for (const r of state.metaAds) {
     try {
       if (r.action === 'off' && !r.isPresale) {
-        await fetch(`${META_BASE}/${r.id}?access_token=${state.metaToken}`,
-          { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:'PAUSED'}) });
+        await fetch(`${PROXY}/api/meta?action=toggle_ad`,
+          { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:r.id, status:'PAUSED'}) });
         ok++;
       } else if (['up','dn'].includes(r.action)) {
-        await fetch(`${META_BASE}/${r.id}?access_token=${state.metaToken}`,
-          { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({daily_budget:r.nb}) });
+        await fetch(`${PROXY}/api/meta?action=update_budget`,
+          { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:r.id, daily_budget:r.nb}) });
         ok++;
       }
     } catch { fail++; }
