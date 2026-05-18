@@ -2221,12 +2221,12 @@ async function selectProduct(no, name) {
   try {
     const [pRes, rRes] = await Promise.all([
       fetch(`${PROXY}/api/cafe24?path=admin/products/${no}&token=${state.cafe24Token}&embed=options,variants,inventories`),
-      fetch(`${PROXY}/api/cafe24?path=admin/products/${no}/reviews&token=${state.cafe24Token}&limit=50`),
+      fetch(`${PROXY}/api/cafe24?path=admin/boards/4/articles&product_no=${no}&limit=50`),
     ]);
     const pData = await pRes.json();
     const rData = await rRes.json();
     state.productData = pData.product || { product_name: name, product_no: no };
-    state.reviews = rData.reviews || [];
+    state.reviews = rData.articles || [];
 
     document.getElementById('search-result').innerHTML = '';
     document.getElementById('product-summary').classList.remove('hidden');
@@ -2246,7 +2246,7 @@ async function selectProduct(no, name) {
     if (state.reviews.length) {
       let rvHtml = `<details style="margin-bottom:12px"><summary style="font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;padding:8px 0">💬 수집된 리뷰 (${state.reviews.length}개)</summary><div style="margin-top:8px">`;
       state.reviews.slice(0,8).forEach(rv => {
-        const content = rv.content || rv.review_content || '';
+        const content = rv.content || rv.review_content || rv.body || '';
         const stars = '★'.repeat(parseInt(rv.rating)||5);
         if (content) rvHtml += `<div class="review-item"><span class="review-stars">${stars}</span>${content}</div>`;
       });
