@@ -317,6 +317,10 @@ input,select,textarea{font-family:var(--font-body)}
     <span class="nav-icon">📦</span>
     <span class="nav-label">재고 연동 현황</span>
   </button>
+  <button class="nav-item" data-page="matching">
+    <span class="nav-icon">🔗</span>
+    <span class="nav-label">상품 매칭 현황</span>
+  </button>
 
   <div class="sb-section">추천</div>
   <button class="nav-item" data-page="alert">
@@ -411,6 +415,20 @@ input,select,textarea{font-family:var(--font-body)}
     <div class="empty-state">
       <div class="empty-state-icon">📦</div>
       왼쪽 사이드바에서 이지어드민 엑셀을 먼저 업로드해주세요
+    </div>
+  </div>
+</div>
+
+<!-- PAGE: MATCHING -->
+<div class="page" id="page-matching">
+  <div class="page-header">
+    <div class="page-title">상품 매칭 현황</div>
+    <div class="page-sub">이지어드민 ↔ 카페24 상품명 매칭 결과</div>
+  </div>
+  <div id="matching-result">
+    <div class="empty-state">
+      <div class="empty-state-icon">🔗</div>
+      이지어드민 파일을 업로드하면 매칭 결과가 표시됩니다
     </div>
   </div>
 </div>
@@ -875,18 +893,20 @@ async function runAll() {
 }
 
 // ── STOCK PAGE ───────────────────────────────────────────────────
-async function loadPresaleProducts(zeroStockNames) {
+async function loadPresaleProducts() {
   if (state._presaleLoaded) return;
-  if (!zeroStockNames || zeroStockNames.length === 0) {
-    state._presaleProducts = new Set();
-    state._presaleLoaded = true;
-    return;
-  }
   try {
     const r = await fetch(`${PROXY}/api/cafe24-presale`);
-    if (r.status === 401) { state._presaleProducts = new Set(); return; }
+    if (r.status === 401) {
+      state._presaleProducts = new Set();
+      state._presaleLoaded = true;
+      return;
+    }
     const data = await r.json();
-    state._presaleProducts = new Set(data.presale_products || []);
+    // 카페24 예판 상품의 product_no 목록 저장
+    state._presaleProductNos = new Set(data.presale_product_nos || []);
+    // 전체 카페24 상품 목록 저장 (매칭용)
+    state._cafe24Products = data.all_products || [];
     state._presaleLoaded = true;
     renderStockPage();
   } catch(e) {
@@ -895,9 +915,161 @@ async function loadPresaleProducts(zeroStockNames) {
   }
 }
 
+
+// ── 이지어드민-카페24 상품명 매칭 알고리즘 ──────────────────────────
+function extractEzCore(name) {
+  let core = String(name).trim();
+  // "-" 뒤 핵심어 추출
+  if (core.includes('-')) core = core.split('-').slice(1).join('-').trim();
+  // 괄호 내용 제거: (인디), (브레드), (신비), (아트웍) 등
+  core = core.replace(/\([^)]*\)/g, '').trim();
+  // 특수문자 제거
+  core = core.replace(/[☆★✩*]/g, '').trim();
+  // 복종명이 핵심어에 다시 붙어있는 경우 제거
+  const 복종목록 = ['슬립온','장화','운동화','부츠','샌들','구두','실내화','아쿠아','젤리','원피스','세트','상의','하의','아우터','실내복','수영복','잡화','가방','우비','우산','스키복','발레복','한복','스펀지'];
+  for (const 복종 of 복종목록) {
+    if (core.endsWith(복종)) core = core.slice(0, -복종.length).trim();
+  }
+  return core.toLowerCase();
+}
+
+function matchEzToCafe24(ezName, cafe24Products) {
+  const core = extractEzCore(ezName);
+  if (!core || core.length < 2) return null;
+  for (const p of cafe24Products) {
+    const c24Clean = p.product_name.replace(/\[.*?\]/g, '').toLowerCase().trim();
+    if (c24Clean.includes(core) || core.includes(c24Clean.replace(/\s+/g, ''))) {
+      return p;
+    }
+  }
+  return null;
+}
+
+function renderMatchingPage() {
+  const container = document.getElementById('matching-result');
+  const ezData = state.inventoryData;
+  const cafe24Products = state._cafe24Products || [];
+
+  if (!ezData.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔗</div>이지어드민 파일을 업로드하면 매칭 결과가 표시됩니다</div>`;
+    return;
+  }
+  if (!cafe24Products.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⏳</div>카페24 상품 데이터 로딩 중...<br><small>잠시 후 다시 클릭해주세요</small></div>`;
+    // 아직 안 로드됐으면 로드 시작
+    if (!state._presaleLoaded && !state._presaleLoading) {
+      state._presaleLoading = true;
+      loadPresaleProducts();
+    }
+    return;
+  }
+
+  // 이지어드민 상품명 중복 제거
+  const nameKey = Object.keys(ezData[0]).find(k => k.includes('상품명'));
+  const repCodeKey = Object.keys(ezData[0]).find(k => k.includes('대표상품코드'));
+  const ezNames = [...new Set(ezData.map(r => String(r[nameKey]||'').trim()).filter(Boolean))];
+
+  // EXCLUDE_KEYWORDS 필터
+  const EXCLUDE = ['수선','우일신','일상화보','옷체부','데일리라이크','(브레드)','(신비)'];
+  const filtered = ezNames.filter(n => !EXCLUDE.some(kw => n.includes(kw)));
+
+  // 매칭
+  const rows = filtered.map(ezName => {
+    const core = extractEzCore(ezName);
+    const matched = matchEzToCafe24(ezName, cafe24Products);
+    return { ezName, core, matched };
+  });
+
+  const totalCount = rows.length;
+  const matchedCount = rows.filter(r => r.matched).length;
+  const unmatchedCount = totalCount - matchedCount;
+
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <div style="font-size:13px;color:var(--text2)">
+        전체 <b style="color:var(--text)">${totalCount}개</b> &nbsp;·&nbsp;
+        매칭 <b style="color:var(--green)">${matchedCount}개</b> &nbsp;·&nbsp;
+        미매칭 <b style="color:var(--red)">${unmatchedCount}개</b>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+        <select id="match-filter" onchange="renderMatchingPage()" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface2)">
+          <option value="all">전체 보기</option>
+          <option value="matched">매칭됨만</option>
+          <option value="unmatched">미매칭만</option>
+        </select>
+        <button onclick="downloadMatchingExcel()" class="btn btn-primary btn-sm">⬇ 엑셀 다운로드</button>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="background:var(--surface2);position:sticky;top:0">
+            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;white-space:nowrap">이지어드민 상품명</th>
+            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;white-space:nowrap">추출 핵심어</th>
+            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;white-space:nowrap">카페24 매칭 상품명</th>
+            <th style="padding:8px 12px;text-align:center;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;white-space:nowrap">상태</th>
+          </tr>
+        </thead>
+        <tbody id="matching-tbody"></tbody>
+      </table>
+    </div>
+  `;
+
+  // 필터 적용
+  const filterVal = document.getElementById('match-filter')?.value || 'all';
+  const filtered2 = rows.filter(r => {
+    if (filterVal === 'matched') return !!r.matched;
+    if (filterVal === 'unmatched') return !r.matched;
+    return true;
+  });
+
+  const tbody = document.getElementById('matching-tbody');
+  tbody.innerHTML = filtered2.map(r => `
+    <tr style="border-bottom:1px solid var(--border);${!r.matched ? 'background:rgba(255,80,80,0.04)' : ''}">
+      <td style="padding:8px 12px;color:var(--text)">${r.ezName}</td>
+      <td style="padding:8px 12px;color:var(--text2);font-family:monospace">${r.core || '-'}</td>
+      <td style="padding:8px 12px;color:var(--text)">${r.matched ? r.matched.product_name : '<span style="color:var(--red)">미매칭</span>'}</td>
+      <td style="padding:8px 12px;text-align:center">${r.matched
+        ? '<span style="color:var(--green);font-weight:600">✓</span>'
+        : '<span style="color:var(--red);font-weight:600">✗</span>'
+      }</td>
+    </tr>
+  `).join('');
+
+  // 전체 rows를 state에 저장 (엑셀 다운로드용)
+  state._matchingRows = rows;
+}
+
+function downloadMatchingExcel() {
+  const rows = state._matchingRows || [];
+  if (!rows.length) return;
+
+  const headers = ['이지어드민 상품명', '추출 핵심어', '카페24 매칭 상품명', '매칭 여부'];
+  const data = rows.map(r => [
+    r.ezName,
+    r.core || '',
+    r.matched ? r.matched.product_name : '',
+    r.matched ? '매칭됨' : '미매칭'
+  ]);
+
+  // CSV로 다운로드 (엑셀에서 열 수 있음)
+  const BOM = '\uFEFF';
+  const csvContent = BOM + [headers, ...data].map(row =>
+    row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+  ).join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `상품매칭현황_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function renderStockPage() {
   if (!state.inventoryData.length) return;
-  // 예판 상품 로드 (아직 안 됐으면)
+  // 카페24 예판 목록 로드 (아직 안 됐으면)
   if (!state._presaleLoaded && !state._presaleLoading) {
     state._presaleLoading = true;
     loadPresaleProducts();
@@ -931,56 +1103,44 @@ function renderStockPage() {
   // 상품명 기준으로 그룹핑
   const grouped = {};
   data.forEach(row => {
-    const name = String(row[nameKey]||'').trim();
+    const name   = String(row[nameKey]||'').trim();
+    const option = String(row[optionKey]||'').trim();
     if (!name) return;
     // 제외 키워드 포함된 상품 숨김
     if (EXCLUDE_KEYWORDS.some(kw => name.includes(kw))) return;
     if (!grouped[name]) grouped[name] = [];
+    // 대표상품코드 컬럼 찾기
+    const repCodeKey = Object.keys(row).find(k => k.includes('대표상품코드'));
+    const repCode = repCodeKey ? String(row[repCodeKey]||'').trim() : '';
     grouped[name].push({
-      option: String(row[optionKey]||'').trim(),
-      avail:  parseInt(row[availKey]||0),
-      store:  parseInt(row[storeKey]||0),
+      option,
+      avail: parseInt(row[availKey]||0),
+      store: parseInt(row[storeKey]||0),
+      repCode,
     });
   });
 
   // 상품별 집계 + 전략파일 매칭
-  const presaleSet = state._presaleProducts || new Set();
-  const zeroStockNames = []; // 가용재고 = 0인 상품명 수집
+  // 카페24에서 가져온 예판 상품 목록 (상품명 기준)
   const products = Object.entries(grouped).map(([name, skus]) => {
     const totalAvail = skus.reduce((s,r)=>s+r.avail,0);
     const totalStore = skus.reduce((s,r)=>s+r.store,0);
     const meta = strategyMap[name] || { season: '', category: '' };
 
-    // 가용재고 < 0 → 예약판매 확정
-    if (totalAvail < 0) {
+    // 카페24 product_no와 이지어드민 대표상품코드로 정확히 매칭
+    const presaleNos = state._presaleProductNos || new Set();
+    const repCode = skus[0]?.repCode || '';
+    const isPresale = repCode ? presaleNos.has(repCode) : false;
+    if (isPresale) {
       return { name, skus, totalAvail, totalStore, total: totalStore,
                season: meta.season, category: meta.category, isPresale: true };
     }
-    // 가용재고 = 0 → 카페24 API로 확인 필요
-    if (totalAvail === 0) {
-      if (presaleSet.has(name)) {
-        // 카페24에서 예판 확인됨 → 표시
-        return { name, skus, totalAvail, totalStore, total: totalStore,
-                 season: meta.season, category: meta.category, isPresale: true };
-      }
-      if (!state._presaleLoaded) {
-        // 아직 카페24 확인 안 됨 → 목록에 수집
-        zeroStockNames.push(name);
-        return null; // 일단 숨김
-      }
-      // 카페24 확인했는데 예판 아님 → 단종, 숨김
-      return null;
-    }
+    // 예판 아니고 가용재고 ≤ 0 → 숨김
+    if (totalAvail <= 0) return null;
     // 가용재고 > 0 → 정상
     return { name, skus, totalAvail, totalStore, total: totalAvail + totalStore,
              season: meta.season, category: meta.category, isPresale: false };
   }).filter(Boolean);
-
-  // 가용재고 = 0인 상품이 있고 아직 카페24 확인 안 됐으면 조회
-  if (zeroStockNames.length > 0 && !state._presaleLoaded && !state._presaleLoading) {
-    state._presaleLoading = true;
-    loadPresaleProducts(zeroStockNames);
-  }
 
   const zero = products.filter(p => p.total === 0);
   const low  = products.filter(p => p.total > 0 && p.total < 10);
