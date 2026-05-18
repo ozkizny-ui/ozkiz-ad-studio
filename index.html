@@ -875,17 +875,23 @@ async function runAll() {
 }
 
 // ── STOCK PAGE ───────────────────────────────────────────────────
-async function loadPresaleProducts() {
+async function loadPresaleProducts(zeroStockNames) {
   if (state._presaleLoaded) return;
+  if (!zeroStockNames || zeroStockNames.length === 0) {
+    state._presaleProducts = new Set();
+    state._presaleLoaded = true;
+    return;
+  }
   try {
     const r = await fetch(`${PROXY}/api/cafe24-presale`);
     if (r.status === 401) { state._presaleProducts = new Set(); return; }
     const data = await r.json();
     state._presaleProducts = new Set(data.presale_products || []);
     state._presaleLoaded = true;
-    renderStockPage(); // 예판 데이터 로드 후 다시 렌더링
+    renderStockPage();
   } catch(e) {
     state._presaleProducts = new Set();
+    state._presaleLoaded = true;
   }
 }
 
@@ -939,17 +945,42 @@ function renderStockPage() {
 
   // 상품별 집계 + 전략파일 매칭
   const presaleSet = state._presaleProducts || new Set();
+  const zeroStockNames = []; // 가용재고 = 0인 상품명 수집
   const products = Object.entries(grouped).map(([name, skus]) => {
     const totalAvail = skus.reduce((s,r)=>s+r.avail,0);
     const totalStore = skus.reduce((s,r)=>s+r.store,0);
-    const total = totalAvail + totalStore;
     const meta = strategyMap[name] || { season: '', category: '' };
-    const isPresale = presaleSet.has(name);
-    // 단종: 재고 0 + 예판 아님 → 숨김
-    if (total === 0 && !isPresale) return null;
-    return { name, skus, totalAvail, totalStore, total,
-             season: meta.season, category: meta.category, isPresale };
+
+    // 가용재고 < 0 → 예약판매 확정
+    if (totalAvail < 0) {
+      return { name, skus, totalAvail, totalStore, total: totalStore,
+               season: meta.season, category: meta.category, isPresale: true };
+    }
+    // 가용재고 = 0 → 카페24 API로 확인 필요
+    if (totalAvail === 0) {
+      if (presaleSet.has(name)) {
+        // 카페24에서 예판 확인됨 → 표시
+        return { name, skus, totalAvail, totalStore, total: totalStore,
+                 season: meta.season, category: meta.category, isPresale: true };
+      }
+      if (!state._presaleLoaded) {
+        // 아직 카페24 확인 안 됨 → 목록에 수집
+        zeroStockNames.push(name);
+        return null; // 일단 숨김
+      }
+      // 카페24 확인했는데 예판 아님 → 단종, 숨김
+      return null;
+    }
+    // 가용재고 > 0 → 정상
+    return { name, skus, totalAvail, totalStore, total: totalAvail + totalStore,
+             season: meta.season, category: meta.category, isPresale: false };
   }).filter(Boolean);
+
+  // 가용재고 = 0인 상품이 있고 아직 카페24 확인 안 됐으면 조회
+  if (zeroStockNames.length > 0 && !state._presaleLoaded && !state._presaleLoading) {
+    state._presaleLoading = true;
+    loadPresaleProducts(zeroStockNames);
+  }
 
   const zero = products.filter(p => p.total === 0);
   const low  = products.filter(p => p.total > 0 && p.total < 10);
@@ -1084,8 +1115,9 @@ function renderStockTable() {
     const isZero = p.total === 0;
     const isLow  = p.total > 0 && p.total < 10;
     const rowBg  = isZero ? '#FEF5F5' : isLow ? '#FEF7ED' : 'var(--surface)';
-    const statusTag = p.isPresale && isZero
-      ? `<span class="tag amber">예약판매</span>`
+    const isNegative = p.totalAvail < 0;
+    const statusTag = p.isPresale
+      ? `<span class="tag amber">예약판매${isNegative ? ' (' + p.totalAvail + ')' : ''}</span>`
       : isZero
       ? `<span class="tag red">재고없음</span>`
       : isLow
