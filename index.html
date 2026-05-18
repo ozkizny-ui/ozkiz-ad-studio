@@ -1054,9 +1054,13 @@ function renderAdSettingForm(adType) {
       ${label}
     </button>`;
 
-  const campaignOptions = campaigns.length
-    ? campaigns.map(c => `<option value="${c.id}">[${c.status}] ${c.name}</option>`).join('')
-    : '<option value="">캠페인 없음 (카페24 인증 확인)</option>';
+  // ACTIVE 먼저 정렬
+  const sortedCampaigns = [...campaigns].sort((a, b) => {
+    if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
+    if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
+    return 0;
+  });
+  state._adSettingCampaigns = sortedCampaigns;
 
   // 소재 유형별 추가 필드
   let extraFields = '';
@@ -1188,10 +1192,19 @@ function renderAdSettingForm(adType) {
 
       <div class="as-row">
         <label class="as-label">캠페인</label>
-        <div class="as-val">
-          <select id="as-campaign" class="as-input">
-            ${campaignOptions}
-          </select>
+        <div class="as-val" style="position:relative">
+          <input type="text" id="as-campaign-search" class="as-input"
+            placeholder="캠페인 검색..."
+            autocomplete="off"
+            oninput="filterCampaignList(this.value)"
+            onfocus="showCampaignList()"
+            onblur="setTimeout(()=>hideCampaignList(),200)">
+          <input type="hidden" id="as-campaign">
+          <div id="as-campaign-list" style="display:none;position:absolute;top:100%;left:0;right:0;
+            background:var(--bg);border:1px solid var(--border);border-radius:8px;
+            max-height:220px;overflow-y:auto;z-index:100;margin-top:2px;box-shadow:0 4px 12px rgba(0,0,0,0.1)">
+            ${buildCampaignListHTML(sortedCampaigns)}
+          </div>
         </div>
       </div>
 
@@ -1244,6 +1257,64 @@ function renderAdSettingForm(adType) {
 
   // PA 타입이면 데이터 미리 로드
   if (adType === 'PA') loadPaData();
+}
+
+
+// 캠페인 드롭다운 HTML 생성
+function buildCampaignListHTML(campaigns, filter='') {
+  const lower = filter.toLowerCase();
+  const filtered = filter ? campaigns.filter(c => c.name.toLowerCase().includes(lower)) : campaigns;
+  if (!filtered.length) return '<div style="padding:10px 14px;font-size:12px;color:var(--text2)">검색 결과 없음</div>';
+
+  let html = '';
+  let lastStatus = null;
+  for (const c of filtered) {
+    if (!filter && c.status !== lastStatus) {
+      if (c.status === 'ACTIVE') {
+        html += `<div style="padding:5px 12px;font-size:10px;color:var(--text2);background:var(--surface2);font-weight:600;letter-spacing:0.05em">진행중</div>`;
+      } else if (lastStatus === 'ACTIVE') {
+        html += `<div style="padding:5px 12px;font-size:10px;color:var(--text2);background:var(--surface2);font-weight:600;letter-spacing:0.05em">일시중지</div>`;
+      }
+      lastStatus = c.status;
+    }
+    const dot = c.status === 'ACTIVE'
+      ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#1D9E75;margin-right:7px;flex-shrink:0"></span>'
+      : '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#B4B2A9;margin-right:7px;flex-shrink:0"></span>';
+    html += `<div onclick="selectCampaign('${c.id}','${c.name.replace(/'/g,"\'")}','${c.status}')"
+      style="padding:8px 12px;font-size:12px;color:var(--text);cursor:pointer;display:flex;align-items:center;
+      transition:background 0.1s" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      ${dot}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name}</span>
+    </div>`;
+  }
+  return html;
+}
+
+function selectCampaign(id, name, status) {
+  document.getElementById('as-campaign').value = id;
+  document.getElementById('as-campaign-search').value = name;
+  const dot = status === 'ACTIVE' ? '🟢 ' : '⚫ ';
+  document.getElementById('as-campaign-search').value = dot + name;
+  hideCampaignList();
+}
+
+function filterCampaignList(val) {
+  const list = document.getElementById('as-campaign-list');
+  if (!list) return;
+  const campaigns = state._adSettingCampaigns || [];
+  list.innerHTML = buildCampaignListHTML(campaigns, val);
+  list.style.display = 'block';
+  // 검색하면 hidden 초기화
+  if (!val) document.getElementById('as-campaign').value = '';
+}
+
+function showCampaignList() {
+  const list = document.getElementById('as-campaign-list');
+  if (list) list.style.display = 'block';
+}
+
+function hideCampaignList() {
+  const list = document.getElementById('as-campaign-list');
+  if (list) list.style.display = 'none';
 }
 
 // 광고명 자동 생성
