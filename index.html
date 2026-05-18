@@ -544,12 +544,22 @@ document.addEventListener('DOMContentLoaded', () => {
       state.strategyData = JSON.parse(savedStrat);
       document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 (저장됨)`;
     }
+    // 매칭 결과 복원
+    const savedMatching = localStorage.getItem('matching_data');
+    if (savedMatching) {
+      state._matchingRows = JSON.parse(savedMatching);
+      console.log(`✓ 매칭 데이터 복원됨 (${state._matchingRows.length}개)`);
+    }
   } catch(e) { console.log('복원 실패:', e); }
 
   initNav();
   initUpload();
   initGeminiInput();
   if (state.inventoryData.length) renderStockPage();
+  // 이지어드민 데이터 있고 매칭 데이터 없으면 자동 매칭
+  if (state.inventoryData.length && !state._matchingRows) {
+    triggerMatching();
+  }
 });
 
 async function checkCafe24Auth() {
@@ -592,6 +602,16 @@ function initNav() {
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById('page-' + btn.dataset.page).classList.add('active');
+      // 페이지별 렌더링
+      if (btn.dataset.page === 'stock') renderStockPage();
+      if (btn.dataset.page === 'matching') {
+        // 매칭 데이터 없으면 triggerMatching 후 렌더
+        if (!state._matchingRows) {
+          triggerMatching().then(() => renderMatchingPage());
+        } else {
+          renderMatchingPage();
+        }
+      }
     });
   });
 }
@@ -622,6 +642,8 @@ function initUpload() {
         } catch(e) { console.log('저장 실패:', e); }
         document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 로드됨`;
         renderStockPage();
+        // 이지어드민 업로드 시 카페24 매칭 자동 시작
+        triggerMatching();
       } catch(err) {
         alert('파일 읽기 오류: ' + err.message);
       }
@@ -893,6 +915,48 @@ async function runAll() {
 }
 
 // ── STOCK PAGE ───────────────────────────────────────────────────
+
+// ── 매칭 트리거 ──────────────────────────────────────────────────
+async function triggerMatching() {
+  if (!state.inventoryData.length) return;
+  // 카페24 데이터 로드 (아직 없으면)
+  if (!state._presaleLoaded && !state._presaleLoading) {
+    state._presaleLoading = true;
+    await loadPresaleProducts();
+  } else if (state._presaleLoading) {
+    // 로딩 중이면 대기
+    return;
+  }
+  // 매칭 실행
+  const cafe24Products = state._cafe24Products || [];
+  if (!cafe24Products.length) return;
+
+  const nameKey = Object.keys(state.inventoryData[0]).find(k => k.includes('상품명'));
+  const EXCLUDE = ['수선','우일신','일상화보','옷체부','데일리라이크','(브레드)','(신비)'];
+  const ezNames = [...new Set(state.inventoryData.map(r => String(r[nameKey]||'').trim()).filter(Boolean))];
+  const filtered = ezNames.filter(n => !EXCLUDE.some(kw => n.includes(kw)));
+
+  const rows = filtered.map(ezName => {
+    const core = extractEzCore(ezName);
+    const matched = matchEzToCafe24(ezName, cafe24Products);
+    return { ezName, core, matched };
+  });
+
+  state._matchingRows = rows;
+
+  // localStorage에 저장 (matched는 product_no, product_name만 저장)
+  try {
+    const slim = rows.map(r => ({
+      ezName: r.ezName,
+      core: r.core,
+      matched: r.matched ? { product_no: r.matched.product_no, product_name: r.matched.product_name } : null
+    }));
+    localStorage.setItem('matching_data', JSON.stringify(slim));
+  } catch(e) { console.log('매칭 저장 실패:', e); }
+
+  console.log(`✓ 매칭 완료: ${rows.filter(r=>r.matched).length}/${rows.length}개`);
+}
+
 async function loadPresaleProducts() {
   if (state._presaleLoaded) return;
   try {
