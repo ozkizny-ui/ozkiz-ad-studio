@@ -1211,8 +1211,15 @@ function renderAdSettingForm(adType) {
       ${adType !== 'PA' ? `
       <div class="as-row">
         <label class="as-label">상품명</label>
-        <div class="as-val"><input type="text" id="as-product" placeholder="원피스-모모리본" class="as-input"
-          oninput="updateAdName()"></div>
+        <div class="as-val" style="position:relative">
+          <input type="text" id="as-product" placeholder="원피스-모모리본" class="as-input"
+            autocomplete="off"
+            oninput="onProductInput(this.value)"
+            onblur="setTimeout(()=>hideProductList(),200)">
+          <div id="as-product-list" style="display:none;position:absolute;top:100%;left:0;right:0;
+            background:var(--bg);border:1px solid var(--border);border-radius:8px;
+            max-height:200px;overflow-y:auto;z-index:100;margin-top:2px;box-shadow:0 4px 12px rgba(0,0,0,0.1)"></div>
+        </div>
       </div>
       <div class="as-row">
         <label class="as-label">소재 설명</label>
@@ -1315,6 +1322,95 @@ function showCampaignList() {
 function hideCampaignList() {
   const list = document.getElementById('as-campaign-list');
   if (list) list.style.display = 'none';
+}
+
+
+// 상품명 자동완성
+function onProductInput(val) {
+  updateAdName();
+  const list = document.getElementById('as-product-list');
+  if (!list) return;
+
+  if (!val || val.length < 1) { list.style.display = 'none'; return; }
+
+  // 이지어드민 데이터에서 검색 (중복 제거)
+  const ezData = state.inventoryData;
+  if (!ezData.length) { list.style.display = 'none'; return; }
+
+  const nameKey = Object.keys(ezData[0]).find(k => k.includes('상품명')) || Object.keys(ezData[0])[0];
+  const EXCLUDE = ['수선','우일신','일상화보','옷체부','데일리라이크','(브레드)','(신비)'];
+  const lower = val.toLowerCase();
+
+  const uniqueNames = [...new Set(
+    ezData
+      .map(r => String(r[nameKey]||'').trim())
+      .filter(n => n && n.toLowerCase().includes(lower) && !EXCLUDE.some(kw => n.includes(kw)))
+  )].slice(0, 15);
+
+  if (!uniqueNames.length) {
+    list.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:var(--text2)">검색 결과 없음</div>';
+    list.style.display = 'block';
+    return;
+  }
+
+  list.innerHTML = uniqueNames.map(name => `
+    <div onclick="selectProduct('${name.replace(/'/g,"\'")}'')"
+      style="padding:8px 14px;font-size:12px;color:var(--text);cursor:pointer"
+      onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      ${name}
+    </div>`).join('');
+  list.style.display = 'block';
+}
+
+function hideProductList() {
+  const list = document.getElementById('as-product-list');
+  if (list) list.style.display = 'none';
+}
+
+async function selectProduct(name) {
+  const input = document.getElementById('as-product');
+  if (input) input.value = name;
+  hideProductList();
+  updateAdName();
+  // 카페24에서 랜딩 URL 자동 조회
+  await fetchLandingUrl(name);
+}
+
+// 카페24 API로 랜딩 URL 조회
+async function fetchLandingUrl(productName) {
+  const urlInput = document.getElementById('landing-url');
+  const statusEl = document.getElementById('landing-url-status');
+  if (!urlInput) return;
+
+  if (statusEl) { statusEl.style.display = 'inline'; statusEl.innerHTML = '<span style="color:var(--text2)">⏳ URL 조회 중...</span>'; }
+
+  try {
+    // 핵심어 추출 (- 뒤 부분)
+    const core = productName.includes('-') ? productName.split('-').slice(1).join('-').trim() : productName;
+    // 괄호 제거
+    const searchQuery = core.replace(/\([^)]*\)/g, '').trim();
+
+    const r = await fetch(`${PROXY}/api/cafe24?path=/api/v2/products&params=limit=10%26search_query=${encodeURIComponent(searchQuery)}`);
+    const data = await r.json();
+    const products = data.products || [];
+
+    if (!products.length) {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">✗ 상품 없음</span>';
+      return;
+    }
+
+    // 가장 이름이 유사한 상품 찾기
+    const lower = searchQuery.toLowerCase();
+    const best = products.find(p => p.product_name.toLowerCase().includes(lower)) || products[0];
+    const url = `https://ozkiz.com/product/detail.html?product_no=${best.product_no}`;
+
+    urlInput.value = url;
+    if (statusEl) statusEl.innerHTML = '<span style="color:#3B6D11;background:#EAF3DE;padding:2px 8px;border-radius:4px">✓ 카페24 자동</span>';
+    // 캡션도 바로 생성 시작
+    onLandingUrlChange(url);
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">✗ 조회 실패</span>';
+  }
 }
 
 // 광고명 자동 생성
