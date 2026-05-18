@@ -361,6 +361,18 @@ input,select,textarea{font-family:var(--font-body)}
       </label>
     </div>
   </div>
+
+  <div class="sb-upload" style="border-top:1px solid var(--border);padding-top:12px">
+    <span class="sb-upload-label">Gemini API 키</span>
+    <div style="display:flex;gap:4px">
+      <input type="password" id="gemini-key-input" placeholder="AIza..." 
+        style="flex:1;padding:5px 8px;font-size:11px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);min-width:0">
+      <button onclick="saveGeminiKey()" 
+        style="padding:5px 8px;font-size:11px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);cursor:pointer;white-space:nowrap">저장</button>
+    </div>
+    <div id="gemini-key-status" style="font-size:10px;color:var(--muted);margin-top:3px"></div>
+  </div>
+
 </aside>
 
 <!-- ── MAIN ──────────────────────────────────────────────────────── -->
@@ -708,9 +720,27 @@ function initUpload() {
 
 // ── GEMINI KEY INPUT ─────────────────────────────────────────────
 function initGeminiInput() {
-  // 사이드바 하단에 Gemini Key 입력 추가 (선택적)
   const key = localStorage.getItem('gemini_key');
-  if (key) state.geminiKey = key;
+  if (key) {
+    state.geminiKey = key;
+    const input = document.getElementById('gemini-key-input');
+    if (input) input.value = key;
+    const status = document.getElementById('gemini-key-status');
+    if (status) status.innerHTML = '<span style="color:var(--green)">✓ 키 저장됨</span>';
+  }
+}
+
+function saveGeminiKey() {
+  const input = document.getElementById('gemini-key-input');
+  const status = document.getElementById('gemini-key-status');
+  const key = input?.value?.trim();
+  if (!key) {
+    if (status) status.innerHTML = '<span style="color:var(--red)">키를 입력해주세요</span>';
+    return;
+  }
+  state.geminiKey = key;
+  localStorage.setItem('gemini_key', key);
+  if (status) status.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>';
 }
 
 // ── META SETTINGS ────────────────────────────────────────────────
@@ -2265,10 +2295,8 @@ async function analyzeUSP() {
   if (!state.productData) return;
   let geminiKey = state.geminiKey;
   if (!geminiKey) {
-    geminiKey = prompt('Gemini API Key를 입력해주세요 (aistudio.google.com에서 발급):');
-    if (!geminiKey) return;
-    state.geminiKey = geminiKey;
-    localStorage.setItem('gemini_key', geminiKey);
+    alert('사이드바 하단에서 Gemini API 키를 먼저 저장해주세요!');
+    return;
   }
 
   const btn = document.getElementById('analyze-btn');
