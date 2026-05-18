@@ -339,6 +339,12 @@ input,select,textarea{font-family:var(--font-body)}
     <span class="nav-label">광고 문구</span>
   </button>
 
+  <div class="sb-section">광고 운영</div>
+  <button class="nav-item" data-page="adsetting">
+    <span class="nav-icon">🎯</span>
+    <span class="nav-label">광고 세팅</span>
+  </button>
+
   <div class="sb-divider" style="margin-top:auto"></div>
   <div class="sb-upload">
     <span class="sb-upload-label">이지어드민 재고</span>
@@ -490,6 +496,20 @@ input,select,textarea{font-family:var(--font-body)}
   </div>
 </div>
 
+<!-- PAGE: AD SETTING -->
+<div class="page" id="page-adsetting">
+  <div class="page-header">
+    <div class="page-title">광고 세팅</div>
+    <div class="page-sub">Meta 광고 자동 세팅 · 임시저장 후 검토</div>
+  </div>
+  <div id="adsetting-result">
+    <div class="empty-state">
+      <div class="empty-state-icon">🎯</div>
+      광고명을 입력하면 세팅 미리보기가 표시됩니다
+    </div>
+  </div>
+</div>
+
 </main>
 </div>
 
@@ -605,13 +625,13 @@ function initNav() {
       // 페이지별 렌더링
       if (btn.dataset.page === 'stock') renderStockPage();
       if (btn.dataset.page === 'matching') {
-        // 매칭 데이터 없으면 triggerMatching 후 렌더
         if (!state._matchingRows) {
           triggerMatching().then(() => renderMatchingPage());
         } else {
           renderMatchingPage();
         }
       }
+      if (btn.dataset.page === 'adsetting') renderAdSettingPage();
     });
   });
 }
@@ -915,6 +935,624 @@ async function runAll() {
 }
 
 // ── STOCK PAGE ───────────────────────────────────────────────────
+
+
+// ── 광고 세팅 ────────────────────────────────────────────────────
+
+// 오늘 날짜 YYMMDD
+function todayStr() {
+  const d = new Date();
+  return String(d.getFullYear()).slice(2) + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+}
+
+// 소재 유형 판별
+function detectAdType(type) { return type || 'IMAGE'; }
+
+// 캠페인 목록 로드
+async function loadCampaignsForSetting() {
+  try {
+    const r = await fetch(`${PROXY}/api/meta?action=get_campaigns`);
+    const data = await r.json();
+    return data.campaigns || [];
+  } catch(e) { return []; }
+}
+
+// 제품 세트 목록 로드
+async function loadProductSets() {
+  try {
+    const r = await fetch(`${PROXY}/api/meta?action=get_product_sets`);
+    const data = await r.json();
+    return data.product_sets || [];
+  } catch(e) { return []; }
+}
+
+// PA 데이터 로드 (구글시트)
+async function loadPaData() {
+  if (state._paData) return state._paData;
+  try {
+    const r = await fetch(`${PROXY}/api/sheets?action=get_pa_data`);
+    const data = await r.json();
+    state._paData = data.pa_data || [];
+    return state._paData;
+  } catch(e) { return []; }
+}
+
+// Gemini로 캡션 생성
+async function generateCaption(landingUrl, productName) {
+  const geminiKey = state.geminiKey;
+  if (!geminiKey) return '⚠️ Gemini API 키를 설정해주세요';
+  try {
+    // 카페24 상품페이지 텍스트 가져오기
+    const proxyUrl = `${PROXY}/api/cafe24?path=/api/v2/products&params=search_query=${encodeURIComponent(productName.split('-')[1]||productName)}&limit=1`;
+    let productInfo = productName;
+    try {
+      const pr = await fetch(proxyUrl);
+      const pd = await pr.json();
+      if (pd.products && pd.products[0]) {
+        productInfo = `${pd.products[0].product_name}: ${pd.products[0].simple_description||''}`;
+      }
+    } catch(e) {}
+
+    const prompt = `아래 오즈키즈 유아동 의류/신발 상품에 대한 메타 광고 캡션을 작성해주세요.
+상품: ${productInfo}
+랜딩URL: ${landingUrl}
+
+조건:
+- 2~3문장, 이모지 포함
+- 엄마/아빠 감성에 맞게
+- 자연스럽고 구매 욕구를 자극
+- 해시태그 없이
+캡션만 출력:`;
+
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    });
+    const d = await r.json();
+    return d.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '캡션 생성 실패';
+  } catch(e) {
+    return '캡션 생성 실패: ' + e.message;
+  }
+}
+
+// 광고 세팅 페이지 렌더링
+async function renderAdSettingPage() {
+  const container = document.getElementById('adsetting-result');
+  container.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text2)">⏳ 불러오는 중...</div>`;
+
+  const [campaigns, productSets] = await Promise.all([
+    loadCampaignsForSetting(),
+    loadProductSets(),
+  ]);
+
+  state._adSettingCampaigns = campaigns;
+  state._adSettingProductSets = productSets;
+
+  renderAdSettingForm('IMAGE');
+}
+
+function renderAdSettingForm(adType) {
+  const container = document.getElementById('adsetting-result');
+  const campaigns = state._adSettingCampaigns || [];
+  const productSets = state._adSettingProductSets || [];
+
+  const typeColors = {
+    IMAGE: '#639922', VIDEO: '#BA7517', COLLECTION: '#185FA5', PA: '#993556'
+  };
+  const typeBg = {
+    IMAGE: '#EAF3DE', VIDEO: '#FAEEDA', COLLECTION: '#E6F1FB', PA: '#FBEAF0'
+  };
+
+  const tabBtn = (type, label) => `
+    <button onclick="renderAdSettingForm('${type}')"
+      style="padding:6px 16px;font-size:12px;border-radius:20px;cursor:pointer;
+        border:${adType===type ? '1.5px' : '0.5px'} solid ${adType===type ? typeColors[type] : 'var(--border)'};
+        background:${adType===type ? typeBg[type] : 'var(--surface2)'};
+        color:${adType===type ? typeColors[type] : 'var(--text2)'};
+        font-weight:${adType===type ? '600' : '400'}">
+      ${label}
+    </button>`;
+
+  const campaignOptions = campaigns.length
+    ? campaigns.map(c => `<option value="${c.id}">[${c.status}] ${c.name}</option>`).join('')
+    : '<option value="">캠페인 없음 (카페24 인증 확인)</option>';
+
+  // 소재 유형별 추가 필드
+  let extraFields = '';
+
+  if (adType === 'IMAGE') {
+    extraFields = `
+      <div class="as-row">
+        <label class="as-label">이미지</label>
+        <div class="as-val">
+          <div id="img-drop" onclick="document.getElementById('img-file').click()"
+            style="border:0.5px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;background:var(--surface2)">
+            <div style="font-size:20px">🖼</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:4px" id="img-label">이미지 업로드 (JPG/PNG)</div>
+          </div>
+          <input type="file" id="img-file" accept="image/*" style="display:none" onchange="handleFileSelect('image', this)">
+        </div>
+      </div>`;
+  } else if (adType === 'VIDEO') {
+    extraFields = `
+      <div class="as-row">
+        <label class="as-label">영상</label>
+        <div class="as-val">
+          <div id="video-drop" onclick="document.getElementById('video-file').click()"
+            style="border:0.5px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;background:var(--surface2)">
+            <div style="font-size:20px">🎬</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:4px" id="video-label">영상 업로드 (MP4 · 최대 4GB)</div>
+          </div>
+          <input type="file" id="video-file" accept="video/*" style="display:none" onchange="handleFileSelect('video', this)">
+        </div>
+      </div>`;
+  } else if (adType === 'COLLECTION') {
+    const psOptions = productSets.length
+      ? productSets.map(ps => `<option value="${ps.id}">${ps.name} · ${ps.product_count||'?'}개</option>`).join('')
+      : '<option value="">제품 세트 없음</option>';
+    extraFields = `
+      <div class="as-row">
+        <label class="as-label">소재</label>
+        <div class="as-val">
+          <div onclick="document.getElementById('col-file').click()"
+            style="border:0.5px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;background:var(--surface2)">
+            <div style="font-size:20px">📂</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:4px" id="col-label">이미지 또는 영상 업로드</div>
+          </div>
+          <input type="file" id="col-file" accept="image/*,video/*" style="display:none" onchange="handleFileSelect('collection', this)">
+        </div>
+      </div>
+      <div class="as-row">
+        <label class="as-label">제품 세트</label>
+        <div class="as-val" style="display:flex;align-items:center;gap:6px">
+          <select id="product-set-id" style="flex:1;padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text)">
+            ${psOptions}
+          </select>
+          <span style="font-size:11px;background:#E6F1FB;color:#185FA5;padding:3px 8px;border-radius:4px;white-space:nowrap;flex-shrink:0">Meta</span>
+        </div>
+      </div>
+      <div class="as-row">
+        <label class="as-label">레이블</label>
+        <div class="as-val"><input type="text" id="collection-label" placeholder="레이블 입력..." class="as-input"></div>
+      </div>`;
+  } else if (adType === 'PA') {
+    extraFields = `
+      <div class="as-row">
+        <label class="as-label">상품명 검색</label>
+        <div class="as-val" style="display:flex;gap:6px">
+          <input type="text" id="pa-search" placeholder="세트-두근하트" class="as-input" style="flex:1"
+            onkeydown="if(event.key==='Enter')searchPaData()">
+          <button onclick="searchPaData()" class="btn btn-outline btn-sm" style="white-space:nowrap">🔍 검색</button>
+        </div>
+      </div>
+      <div id="pa-results" style="margin-top:8px"></div>
+      <div id="pa-selected-fields" style="display:none">
+        <div class="as-row" style="margin-top:8px">
+          <label class="as-label">광고소재명</label>
+          <div class="as-val"><input type="text" id="pa-ad-name" class="as-input"></div>
+        </div>
+        <div class="as-row">
+          <label class="as-label">릴스 URL</label>
+          <div class="as-val" style="display:flex;gap:6px;align-items:center">
+            <input type="text" id="pa-reels-url" class="as-input" style="flex:1">
+            <a id="pa-reels-link" href="#" target="_blank" style="font-size:11px;color:#185FA5;white-space:nowrap;text-decoration:none;flex-shrink:0">↗ 열기</a>
+          </div>
+        </div>
+        <div id="pa-id-check" style="margin:4px 0 0 100px;font-size:11px"></div>
+        <div class="as-row">
+          <label class="as-label">랜딩 URL</label>
+          <div class="as-val"><input type="text" id="landing-url" placeholder="https://ozkiz.com/product/..." class="as-input"></div>
+        </div>
+      </div>`;
+  }
+
+  // 이미지/영상/컬렉션 공통 랜딩+캡션
+  const landingAndCaption = adType !== 'PA' ? `
+    <div class="as-row">
+      <label class="as-label">랜딩 URL</label>
+      <div class="as-val"><input type="text" id="landing-url" placeholder="https://ozkiz.com/product/..."
+        class="as-input" oninput="onLandingUrlChange(this.value)"></div>
+    </div>
+    <div class="as-row">
+      <label class="as-label">캡션</label>
+      <div class="as-val">
+        <textarea id="caption-text" placeholder="랜딩 URL 입력 후 자동 생성됩니다..."
+          style="width:100%;height:64px;padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical;box-sizing:border-box"></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+          <span id="caption-status" style="font-size:11px;color:var(--text2)">✨ 랜딩 URL 입력 시 Gemini 자동 작성</span>
+          <button onclick="regenCaption()" style="font-size:11px;color:var(--text2);background:none;border:none;cursor:pointer;padding:0">다시 생성</button>
+        </div>
+      </div>
+    </div>` : '';
+
+  container.innerHTML = `
+    <style>
+      .as-row{display:grid;grid-template-columns:88px 1fr;align-items:flex-start;gap:12px;margin-bottom:10px}
+      .as-label{font-size:12px;color:var(--text2);padding-top:7px;white-space:nowrap}
+      .as-val{flex:1;min-width:0}
+      .as-input{width:100%;padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);box-sizing:border-box}
+      .as-input:focus{outline:none;border-color:var(--accent)}
+    </style>
+
+    <!-- 소재 유형 탭 -->
+    <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+      ${tabBtn('IMAGE','🖼 이미지')}
+      ${tabBtn('VIDEO','🎬 영상')}
+      ${tabBtn('COLLECTION','📂 컬렉션')}
+      ${tabBtn('PA','🤝 PA')}
+    </div>
+
+    <!-- 입력 폼 -->
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:12px">
+
+      <div class="as-row">
+        <label class="as-label">캠페인</label>
+        <div class="as-val">
+          <select id="as-campaign" class="as-input">
+            ${campaignOptions}
+          </select>
+        </div>
+      </div>
+
+      ${adType !== 'PA' ? `
+      <div class="as-row">
+        <label class="as-label">상품명</label>
+        <div class="as-val"><input type="text" id="as-product" placeholder="원피스-모모리본" class="as-input"
+          oninput="updateAdName()"></div>
+      </div>
+      <div class="as-row">
+        <label class="as-label">소재 설명</label>
+        <div class="as-val"><input type="text" id="as-desc" placeholder="ai모델영상_켄_260518" class="as-input"
+          oninput="updateAdName()"></div>
+      </div>
+      <div class="as-row">
+        <label class="as-label">광고명</label>
+        <div class="as-val" style="display:flex;align-items:center;gap:6px">
+          <input type="text" id="as-adname" class="as-input" style="flex:1"
+            placeholder="상품명과 소재 설명 입력 시 자동 생성">
+          <span style="font-size:11px;background:#EAF3DE;color:#3B6D11;padding:3px 8px;border-radius:4px;white-space:nowrap;flex-shrink:0">자동</span>
+        </div>
+      </div>` : ''}
+
+      ${extraFields}
+      ${landingAndCaption}
+
+    </div>
+
+    <!-- 공통 세팅 -->
+    <details style="margin-bottom:14px">
+      <summary style="font-size:11px;color:var(--text2);cursor:pointer;padding:8px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)">
+        공통 세팅 확인 (자동 고정)
+      </summary>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:12px;background:var(--surface2);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;font-size:11px">
+        ${[['전환위치','웹사이트'],['성과목표','전환값 극대화'],['픽셀','OZKIZ 픽셀'],
+           ['전환이벤트','구매'],['기여설정','클릭1일/참여X/조회X'],['일일예산','10,000원'],
+           ['언어','한국어'],['UTM 캠페인','ozkizmall'],['UTM 콘텐츠','{{ad.name}}'],
+           ['앱 추적','오즈키즈'],['Facebook 페이지','오즈키즈 OZKIZ'],['행동유도(PA)','지금 구매하기']
+          ].map(([k,v])=>`<div><div style="color:var(--text2)">${k}</div><div style="color:var(--text);font-weight:500">${v}</div></div>`).join('')}
+      </div>
+    </details>
+
+    <!-- 생성 버튼 -->
+    <button id="as-submit-btn" onclick="submitAdSetting('${adType}')"
+      style="width:100%;padding:11px;font-size:13px;font-weight:600;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer">
+      ⏸ 메타에 PAUSED 상태로 생성
+    </button>
+    <div id="as-result" style="margin-top:10px"></div>
+  `;
+
+  // PA 타입이면 데이터 미리 로드
+  if (adType === 'PA') loadPaData();
+}
+
+// 광고명 자동 생성
+function updateAdName() {
+  const product = document.getElementById('as-product')?.value?.trim() || '';
+  const desc    = document.getElementById('as-desc')?.value?.trim() || '';
+  const adname  = document.getElementById('as-adname');
+  if (!adname) return;
+  if (product && desc) adname.value = `${product};${desc}`;
+  else if (product) adname.value = product;
+}
+
+// 랜딩 URL 입력 시 캡션 자동 생성
+let _captionTimer = null;
+function onLandingUrlChange(url) {
+  if (!url || !url.startsWith('http')) return;
+  clearTimeout(_captionTimer);
+  const statusEl = document.getElementById('caption-status');
+  if (statusEl) statusEl.textContent = '⏳ 캡션 생성 중...';
+  _captionTimer = setTimeout(async () => {
+    const product = document.getElementById('as-product')?.value || '';
+    const caption = await generateCaption(url, product);
+    const ta = document.getElementById('caption-text');
+    if (ta) ta.value = caption;
+    if (statusEl) statusEl.textContent = '✨ Gemini 자동 작성 완료';
+  }, 1000);
+}
+
+async function regenCaption() {
+  const url = document.getElementById('landing-url')?.value || '';
+  const product = document.getElementById('as-product')?.value || '';
+  if (!url) { alert('랜딩 URL을 먼저 입력해주세요'); return; }
+  const statusEl = document.getElementById('caption-status');
+  if (statusEl) statusEl.textContent = '⏳ 재생성 중...';
+  const caption = await generateCaption(url, product);
+  const ta = document.getElementById('caption-text');
+  if (ta) ta.value = caption;
+  if (statusEl) statusEl.textContent = '✨ Gemini 자동 작성 완료';
+}
+
+// 파일 선택 핸들러
+function handleFileSelect(type, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const labelId = type === 'image' ? 'img-label' : type === 'video' ? 'video-label' : 'col-label';
+  const el = document.getElementById(labelId);
+  if (el) el.textContent = `✓ ${file.name} (${(file.size/1024/1024).toFixed(1)}MB)`;
+  // state에 저장
+  state[`_adFile_${type}`] = file;
+}
+
+// PA 검색
+async function searchPaData() {
+  const query = document.getElementById('pa-search')?.value?.trim().toLowerCase();
+  if (!query) return;
+  const resultsEl = document.getElementById('pa-results');
+  if (resultsEl) resultsEl.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:8px 0">⏳ 검색 중...</div>';
+
+  const allData = await loadPaData();
+  const matches = allData.filter(d =>
+    d.product.toLowerCase().includes(query) && !d.checked
+  );
+  const checkedMatches = allData.filter(d =>
+    d.product.toLowerCase().includes(query) && d.checked
+  );
+
+  if (!resultsEl) return;
+
+  if (!matches.length && !checkedMatches.length) {
+    resultsEl.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:8px 0">검색 결과 없음</div>';
+    return;
+  }
+
+  const makeRow = (d, dimmed) => {
+    const initial = (d.insta_id[0]||'?').toUpperCase();
+    return `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:6px;
+        cursor:${dimmed?'default':'pointer'};opacity:${dimmed?0.4:1};background:var(--surface2)"
+        ${dimmed?'':` onclick="selectPaEntry(${JSON.stringify(d).replace(/"/g,'&quot;')})"`}>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:30px;height:30px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;font-weight:600;flex-shrink:0">${initial}</div>
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--text)">@${d.insta_id}</div>
+              <div style="font-size:11px;color:var(--text2)">${d.round}차 · ${d.product}</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <a href="${d.reels_url}" target="_blank" onclick="event.stopPropagation()"
+              style="font-size:11px;color:#185FA5;text-decoration:none;white-space:nowrap">↗ 게시물 보기</a>
+            ${dimmed
+              ? '<span style="font-size:11px;background:var(--surface3,#eee);color:var(--text2);padding:2px 8px;border-radius:4px">세팅완료</span>'
+              : '<button style="font-size:11px;padding:2px 10px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer">선택</button>'
+            }
+          </div>
+        </div>
+      </div>`;
+  };
+
+  let html = `<div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">
+    검색 결과 · 미세팅 ${matches.length}개${checkedMatches.length ? ` · 세팅완료 ${checkedMatches.length}개` : ''}
+  </div>`;
+  html += matches.map(d => makeRow(d, false)).join('');
+  if (checkedMatches.length) {
+    html += `<details style="margin-top:4px">
+      <summary style="font-size:11px;color:var(--text2);cursor:pointer;padding:4px 0">▸ 세팅완료 ${checkedMatches.length}개 보기</summary>
+      ${checkedMatches.map(d => makeRow(d, true)).join('')}
+    </details>`;
+  }
+  resultsEl.innerHTML = html;
+}
+
+// PA 항목 선택
+function selectPaEntry(d) {
+  const today = todayStr();
+  // 광고소재명 날짜 채우기
+  const adName = d.ad_name
+    ? d.ad_name.replace(/_$/, `_${today}`)
+    : `${d.product};PA_23기오즈맘영상_(@${d.insta_id})_${today}`;
+
+  const fieldsEl = document.getElementById('pa-selected-fields');
+  const adNameEl = document.getElementById('pa-ad-name');
+  const reelsEl  = document.getElementById('pa-reels-url');
+  const linkEl   = document.getElementById('pa-reels-link');
+  const checkEl  = document.getElementById('pa-id-check');
+
+  if (fieldsEl) fieldsEl.style.display = 'block';
+  if (adNameEl) adNameEl.value = adName;
+  if (reelsEl)  reelsEl.value  = d.reels_url;
+  if (linkEl)   linkEl.href    = d.reels_url;
+
+  // URL에서 인스타 아이디 추출해서 비교
+  const urlMatch = d.reels_url.match(/instagram\.com\/(?:reel\/[^/]+\/)?@?([\w.]+)/);
+  // URL에서 크리에이터 아이디를 직접 알기 어려우므로 광고소재명의 @아이디와 일치 여부 표시
+  if (checkEl) {
+    checkEl.innerHTML = `<span style="color:#3B6D11;background:#EAF3DE;padding:3px 8px;border-radius:4px;font-size:11px">✓ @${d.insta_id} 선택됨 · 게시물 열어서 아이디 확인해주세요</span>`;
+  }
+
+  // 선택된 row 정보 저장 (나중에 체크박스 업데이트용)
+  state._selectedPaEntry = d;
+
+  // 검색 결과 숨기기
+  const resultsEl = document.getElementById('pa-results');
+  if (resultsEl) resultsEl.innerHTML = `
+    <div style="border:1px solid #D4537E;border-radius:8px;padding:8px 12px;background:#FBEAF0;font-size:12px;color:#993556;display:flex;align-items:center;justify-content:space-between">
+      <span>✓ @${d.insta_id} 선택됨</span>
+      <button onclick="clearPaSelection()" style="font-size:11px;background:none;border:none;cursor:pointer;color:#993556">다시 선택</button>
+    </div>`;
+}
+
+function clearPaSelection() {
+  state._selectedPaEntry = null;
+  const fieldsEl = document.getElementById('pa-selected-fields');
+  if (fieldsEl) fieldsEl.style.display = 'none';
+  const resultsEl = document.getElementById('pa-results');
+  if (resultsEl) resultsEl.innerHTML = '';
+}
+
+// 광고 생성 제출
+async function submitAdSetting(adType) {
+  const btn = document.getElementById('as-submit-btn');
+  const resultEl = document.getElementById('as-result');
+  const campaignId = document.getElementById('as-campaign')?.value;
+
+  if (!campaignId) { resultEl.innerHTML = '<div style="color:var(--red)">캠페인을 선택해주세요</div>'; return; }
+
+  // 공통 유효성
+  const landingUrl = document.getElementById('landing-url')?.value?.trim();
+
+  if (adType !== 'PA' && !landingUrl) {
+    resultEl.innerHTML = '<div style="color:var(--red)">랜딩 URL을 입력해주세요</div>'; return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ 생성 중...';
+  resultEl.innerHTML = '';
+
+  try {
+    const adName = adType === 'PA'
+      ? document.getElementById('pa-ad-name')?.value?.trim()
+      : document.getElementById('as-adname')?.value?.trim();
+
+    if (!adName) { throw new Error('광고명이 비어있습니다'); }
+
+    let body = {
+      ad_type: adType,
+      campaign_id: campaignId,
+      ad_name: adName,
+      landing_url: landingUrl || '',
+      caption: document.getElementById('caption-text')?.value?.trim() || '',
+    };
+
+    // 소재 유형별 추가 처리
+    if (adType === 'IMAGE') {
+      const file = state._adFile_image;
+      if (file) {
+        resultEl.innerHTML = '<div style="color:var(--text2)">⏳ 이미지 업로드 중...</div>';
+        const b64 = await fileToBase64(file);
+        const uploadRes = await fetch(`${PROXY}/api/meta?action=upload_image`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_base64: b64, filename: file.name }),
+        });
+        const uploadData = await uploadRes.json();
+        if (uploadData.error) throw new Error(uploadData.error);
+        body.image_hash = uploadData.hash;
+      }
+    } else if (adType === 'VIDEO') {
+      const file = state._adFile_video;
+      if (file) {
+        resultEl.innerHTML = '<div style="color:var(--text2)">⏳ 영상 업로드 중 (파일 크기에 따라 시간이 걸릴 수 있습니다)...</div>';
+        const b64 = await fileToBase64(file);
+        const uploadRes = await fetch(`${PROXY}/api/meta?action=upload_video`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ video_base64: b64, filename: file.name }),
+        });
+        const uploadData = await uploadRes.json();
+        if (uploadData.error) throw new Error(uploadData.error);
+        body.video_id = uploadData.video_id;
+      }
+    } else if (adType === 'COLLECTION') {
+      body.product_set_id = document.getElementById('product-set-id')?.value;
+      body.collection_label = document.getElementById('collection-label')?.value?.trim();
+      const file = state._adFile_collection;
+      if (file) {
+        const isVideo = file.type.startsWith('video');
+        const b64 = await fileToBase64(file);
+        if (isVideo) {
+          const uploadRes = await fetch(`${PROXY}/api/meta?action=upload_video`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ video_base64: b64, filename: file.name }),
+          });
+          const d = await uploadRes.json();
+          if (d.error) throw new Error(d.error);
+          body.video_id = d.video_id;
+        } else {
+          const uploadRes = await fetch(`${PROXY}/api/meta?action=upload_image`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_base64: b64, filename: file.name }),
+          });
+          const d = await uploadRes.json();
+          if (d.error) throw new Error(d.error);
+          body.image_hash = d.hash;
+        }
+      }
+    } else if (adType === 'PA') {
+      body.post_url = document.getElementById('pa-reels-url')?.value?.trim();
+      body.landing_url = document.getElementById('landing-url')?.value?.trim() || '';
+      if (!body.post_url) throw new Error('릴스 URL을 입력해주세요');
+      if (!body.landing_url) throw new Error('랜딩 URL을 입력해주세요');
+    }
+
+    resultEl.innerHTML = '<div style="color:var(--text2)">⏳ 메타 광고 생성 중...</div>';
+
+    const r = await fetch(`${PROXY}/api/meta?action=create_ad`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+
+    if (data.error) throw new Error(data.error);
+
+    // 성공!
+    resultEl.innerHTML = `
+      <div style="background:#EAF3DE;border-radius:8px;padding:14px 16px;font-size:12px;color:#3B6D11">
+        <div style="font-weight:600;margin-bottom:6px">✅ PAUSED 상태로 생성 완료!</div>
+        <div>광고 ID: ${data.ad_id || '-'}</div>
+        <div>광고세트 ID: ${data.adset_id || '-'}</div>
+        ${data.warning ? `<div style="color:#854F0B;margin-top:6px">⚠️ ${data.warning}</div>` : ''}
+        <div style="margin-top:8px;color:#1D9E75">메타 광고관리자에서 검토 후 ACTIVE로 전환해주세요</div>
+      </div>`;
+
+    // PA면 구글시트 체크박스 업데이트
+    if (adType === 'PA' && state._selectedPaEntry) {
+      try {
+        await fetch(`${PROXY}/api/sheets?action=check_pa`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            row_index: state._selectedPaEntry.row_index,
+            check_col: state._selectedPaEntry.check_col,
+          }),
+        });
+        // 캐시 초기화 (다음 검색 시 새로 로드)
+        state._paData = null;
+      } catch(e) {
+        console.warn('구글시트 체크 업데이트 실패:', e);
+      }
+    }
+
+  } catch(e) {
+    resultEl.innerHTML = `<div style="background:#FCEBEB;border-radius:8px;padding:12px 14px;font-size:12px;color:#A32D2D">❌ 오류: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⏸ 메타에 PAUSED 상태로 생성';
+  }
+}
+
+// 파일을 base64로 변환
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 // ── 매칭 트리거 ──────────────────────────────────────────────────
 async function triggerMatching() {
