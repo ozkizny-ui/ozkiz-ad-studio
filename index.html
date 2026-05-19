@@ -1799,10 +1799,11 @@ async function loadPresaleProducts() {
 // ── 이지어드민-카페24 상품명 매칭 알고리즘 ──────────────────────────
 function extractEzCore(name) {
   let core = String(name).trim();
+  // 괄호 내용 먼저 제거: (인디), (브레드), (신비), (아트웍) 등
+  // "-" 분리보다 먼저 해야 (세트-골지) → "골지)" 같은 잔여 괄호 방지
+  core = core.replace(/\([^)]*\)/g, '').trim();
   // "-" 뒤 핵심어 추출
   if (core.includes('-')) core = core.split('-').slice(1).join('-').trim();
-  // 괄호 내용 제거: (인디), (브레드), (신비), (아트웍) 등
-  core = core.replace(/\([^)]*\)/g, '').trim();
   // 특수문자 제거
   core = core.replace(/[☆★✩*]/g, '').trim();
   // 복종명이 핵심어에 다시 붙어있는 경우 제거
