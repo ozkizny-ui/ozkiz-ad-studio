@@ -334,11 +334,6 @@ input,select,textarea{font-family:var(--font-body)}
     <span class="nav-icon">✦</span>
     <span class="nav-label">USP 분석</span>
   </button>
-  <button class="nav-item" data-page="copy">
-    <span class="nav-icon">✏️</span>
-    <span class="nav-label">광고 문구</span>
-  </button>
-
   <div class="sb-section">광고 운영</div>
   <button class="nav-item" data-page="adsetting">
     <span class="nav-icon">🎯</span>
@@ -492,20 +487,6 @@ input,select,textarea{font-family:var(--font-body)}
     <button class="btn btn-primary" id="analyze-btn" onclick="analyzeUSP()" disabled>✦ USP 분석 시작</button>
   </div>
   <div id="usp-result" style="margin-top:20px"></div>
-</div>
-
-<!-- PAGE: COPY -->
-<div class="page" id="page-copy">
-  <div class="page-header">
-    <div class="page-title">광고 문구</div>
-    <div class="page-sub">실제 고객 말투 반영 카피 · CTA 포함</div>
-  </div>
-  <div id="copy-result">
-    <div class="empty-state">
-      <div class="empty-state-icon">✏️</div>
-      USP 분석 탭에서 먼저 제품을 분석해주세요
-    </div>
-  </div>
 </div>
 
 <!-- PAGE: AD SETTING -->
@@ -2338,7 +2319,6 @@ ${reviewTexts.map(r=>`- ${r}`).join('\n')}
     state.adCopies   = json.ad_copies || [];
     state.adConcepts = json.ad_concepts || [];
     renderUSP();
-    renderCopy();
   } catch(e) {
     alert('분석 오류: ' + e.message);
   } finally {
@@ -2360,51 +2340,7 @@ function renderUSP() {
   document.getElementById('usp-result').innerHTML = html;
 }
 
-function renderCopy() {
-  const copyPage = document.getElementById('copy-result');
-  let html = `<div class="sl">✍️ 광고 문구 5개</div>`;
-  state.adCopies.forEach((c,i) => {
-    html += `<div class="copy-card fade-in">
-      <div class="copy-badges">
-        <span class="tag purple">COPY ${String(i+1).padStart(2,'0')}</span>
-        <span class="tag gray">${c.tone}</span>
-      </div>
-      <div class="copy-headline">${c.headline}</div>
-      <div class="copy-body">${c.body}</div>
-      <div class="copy-footer">
-        <span class="cta-pill">${c.cta}</span>
-        <span class="copy-ref">💬 실제 리뷰 말투 참고</span>
-      </div>
-    </div>`;
-  });
 
-  html += `<div class="sl" style="margin-top:24px">🎬 광고 소재 기획 5개</div>`;
-  state.adConcepts.forEach((con,i) => {
-    html += `<div class="concept-card fade-in">
-      <div class="concept-top">
-        <span class="tag green">${con.format}</span>
-        <div class="concept-name">소재 ${i+1}. ${con.concept}</div>
-      </div>
-      <div class="concept-grid">
-        <div class="concept-field"><div class="concept-fl">📋 시나리오</div><div class="concept-fv">${con.scenario}</div></div>
-        <div class="concept-field"><div class="concept-fl">🖼 핵심 비주얼</div><div class="concept-fv">${con.key_visual}</div></div>
-        <div class="concept-field full"><div class="concept-fl">🎯 타겟 모먼트</div><div class="concept-fv">${con.target_moment}</div></div>
-      </div>
-    </div>`;
-  });
-
-  // 다운로드
-  const output = {
-    product: state.productData?.product_name,
-    generated_at: new Date().toLocaleString('ko-KR'),
-    usp: state.uspResult, ad_copies: state.adCopies, ad_concepts: state.adConcepts
-  };
-  html += `<div style="margin-top:16px">
-    <button class="btn btn-green" onclick='downloadJSON(${JSON.stringify(JSON.stringify(output))})'>⬇ 결과 다운로드 (JSON)</button>
-  </div>`;
-
-  copyPage.innerHTML = html;
-}
 
 function downloadJSON(jsonStr) {
   const blob = new Blob([jsonStr], {type:'application/json'});
