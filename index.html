@@ -515,14 +515,14 @@ const MALL_ID = 'ozkiz';
 const META_BASE = 'https://graph.facebook.com/v21.0';
 
 // ── 제외 키워드 ──────────────────────────────────────────────────
-const EXCLUDE_KEYWORDS = ['수선', '우일신', '일상화보', '옷체부', '데일리라이크', '(브레드)'];
+const EXCLUDE_KEYWORDS = ['수선', '우일신', '일상화보', '옷체부', '데일리라이크', '(브레드)', '부자재-한글', '부자재-간지', '부자재-매장쇼핑백', '부자재-인박스', '부자재-부츠인박스'];
 
 // ── STATE ────────────────────────────────────────────────────────
 const state = {
   cafe24Authenticated: false,
   geminiKey: localStorage.getItem('gemini_key') || '',
   inventoryData: [],
-  metaAds: [],
+  metaAds: JSON.parse(localStorage.getItem('meta_ads_cache') || '[]'),
   productData: null,
   reviews: [],
   uspResult: [],
@@ -918,6 +918,11 @@ async function fetchMetaAds() {
     });
 
     renderRoasResult(target);
+    // localStorage에 저장 (광고명/상태 정보만, 재고/노션 관련 제외하고 가볍게)
+    try {
+      const toSave = state.metaAds.map(r => ({ id: r.id, name: r.name, nameRaw: r.nameRaw, status: r.status }));
+      localStorage.setItem('meta_ads_cache', JSON.stringify(toSave));
+    } catch(e) {}
     const nAction = state.metaAds.filter(r => ['up','dn','off'].includes(r.action)).length;
     document.getElementById('badge-roas').textContent = nAction;
     document.getElementById('badge-roas').classList.toggle('hidden', nAction === 0);
