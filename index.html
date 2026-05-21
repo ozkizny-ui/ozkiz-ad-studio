@@ -2159,14 +2159,28 @@ function renderStockPage() {
       stockStatus = 'color_warn';
     }
 
+    // 광고 집행 여부: state.metaAds 상품명 매칭
+    const nameParsed = name.toLowerCase().replace(/[-\s]/g,'');
+    const hasAd = (state.metaAds || []).some(ad => {
+      const adName = (ad.name||'').toLowerCase().replace(/[-\s]/g,'');
+      return nameParsed.includes(adName) || adName.includes(nameParsed);
+    });
+
     return {
       name, skus, totalAvail, totalStore,
       total: totalAvail + totalStore,
       season: meta.season, category: meta.category,
       stockStatus, colorWarns,
-      notionEntry,
+      notionEntry, hasAd,
     };
-  }).filter(Boolean);
+  }).filter(p => {
+    // 재고 0 이하 + 예약판매 아닌 것 숨김
+    if (p.totalAvail <= 0 && !['presale_near','presale_far'].includes(p.stockStatus)) return false;
+    return true;
+  });
+
+  // 가용재고 많은 순 정렬
+  products.sort((a,b) => b.totalAvail - a.totalAvail);
 
   // 분류
   const alertItems = products.filter(p => ['size_warn','presale_far','color_warn'].includes(p.stockStatus));
@@ -2177,6 +2191,8 @@ function renderStockPage() {
   state._stockFilter   = state._stockFilter || '';
   state._stockSeasons  = state._stockSeasons || [];
   state._stockCategory = state._stockCategory || '';
+  state._stockAdFilter = state._stockAdFilter || '';
+  state._stockStatusFilter = state._stockStatusFilter || '';
 
   const seasonOpts = seasons.map(s =>
     `<option value="${s}" ${state._stockSeason===s?'selected':''}>${s}</option>`).join('');
@@ -2225,7 +2241,7 @@ function renderStockPage() {
       style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
       <option value="">전체 복종</option>${catOpts}
     </select>
-    <button class="btn btn-outline btn-sm" onclick="state._stockFilter='';state._stockSeasons=[];state._stockCategory='';closeSeasonDropdown();renderStockPage()">초기화</button>
+    <button class="btn btn-outline btn-sm" onclick="state._stockFilter='';state._stockSeasons=[];state._stockCategory='';state._stockAdFilter='';state._stockStatusFilter='';closeSeasonDropdown();renderStockPage()">초기화</button>
   </div>
   <div style="margin-bottom:10px">${strategyNote}</div>
   <div id="stock-table-wrap"></div>`;
@@ -2270,33 +2286,61 @@ document.addEventListener('click', e => {
 function renderStockTable() {
   const products = state._stockProducts || [];
   const filter   = (state._stockFilter||'').toLowerCase();
-  const season   = state._stockSeason || '';
   const category = state._stockCategory || '';
+  const adFilter = state._stockAdFilter || ''; // '' | 'on' | 'off'
+  const statusFilter = state._stockStatusFilter || '';
+
   const filtered = products.filter(p => {
     if (filter && !p.name.toLowerCase().includes(filter)) return false;
     if (state._stockSeasons && state._stockSeasons.length && !state._stockSeasons.includes(p.season)) return false;
     if (category && p.category !== category) return false;
+    if (adFilter === 'on'  && !p.hasAd) return false;
+    if (adFilter === 'off' &&  p.hasAd) return false;
+    if (statusFilter && p.stockStatus !== statusFilter) return false;
     return true;
   });
 
   // 테이블 헤더
+  const thStyle = 'padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em;white-space:nowrap';
+  const thRStyle = thStyle + ';text-align:right';
+  const thCStyle = thStyle + ';text-align:center';
+
   let html = `
+  <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+    <select onchange="state._stockAdFilter=this.value;renderStockTable()"
+      style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
+      <option value="" ${adFilter===''?'selected':''}>전체 광고</option>
+      <option value="on"  ${adFilter==='on'?'selected':''}>광고 집행 중</option>
+      <option value="off" ${adFilter==='off'?'selected':''}>광고 미집행</option>
+    </select>
+    <select onchange="state._stockStatusFilter=this.value;renderStockTable()"
+      style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
+      <option value="" ${statusFilter===''?'selected':''}>전체 상태</option>
+      <option value="ok"           ${statusFilter==='ok'?'selected':''}>재고 충분</option>
+      <option value="color_warn"   ${statusFilter==='color_warn'?'selected':''}>색상 품절 경고</option>
+      <option value="size_warn"    ${statusFilter==='size_warn'?'selected':''}>품절</option>
+      <option value="presale_near" ${statusFilter==='presale_near'?'selected':''}>예약판매 (3주 이내)</option>
+      <option value="presale_far"  ${statusFilter==='presale_far'?'selected':''}>예약판매 체크 확인</option>
+    </select>
+    <span style="font-size:11px;color:var(--muted);margin-left:4px">${filtered.length}개 표시 중</span>
+  </div>
   <table style="width:100%;border-collapse:collapse;font-size:12px">
     <thead>
       <tr style="background:var(--surface2);border-bottom:1px solid var(--border2)">
-        <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">상품명</th>
-        <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">시즌</th>
-        <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">복종</th>
-        <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">옵션</th>
-        <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">가용재고</th>
-        <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">매장총재고</th>
-        <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em">상태</th>
+        <th style="${thStyle}">상품명</th>
+        <th style="${thStyle}">시즌</th>
+        <th style="${thStyle}">복종</th>
+        <th style="${thStyle}">옵션</th>
+        <th style="${thRStyle}">가용재고</th>
+        <th style="${thRStyle}">매장총재고</th>
+        <th style="${thCStyle}">광고</th>
+        <th style="${thCStyle}">상태</th>
       </tr>
     </thead>
     <tbody>`;
 
-  // 재고없음 먼저, 그 다음 부족, 그 다음 충분 순
-  const sorted = [...filtered].sort((a,b) => a.total - b.total);
+  // 가용재고 많은 순 (이미 정렬된 상태지만 필터 후 재정렬)
+  const sorted = [...filtered].sort((a,b) => b.totalAvail - a.totalAvail);
 
   sorted.slice(0, 200).forEach(p => {
     const isAlert   = ['size_warn','presale_far','color_warn'].includes(p.stockStatus);
@@ -2323,8 +2367,11 @@ function renderStockTable() {
 
     // 첫 번째 SKU는 상품명 표시, 나머지는 빈칸 (rowspan 효과)
     const skuCount = p.skus.length;
+    const adTag = p.hasAd
+      ? `<span class="tag green">집행 중</span>`
+      : `<span class="tag gray">미집행</span>`;
     p.skus.forEach((sku, i) => {
-      const availColor = sku.avail === 0 ? 'color:var(--red)' : sku.avail < 5 ? 'color:var(--amber)' : 'color:var(--green)';
+      const availColor = sku.avail < 0 ? 'color:var(--amber)' : sku.avail === 0 ? 'color:var(--red)' : sku.avail < 5 ? 'color:var(--amber)' : 'color:var(--green)';
       const storeColor = sku.store === 0 ? 'color:var(--muted)' : 'color:var(--text)';
       const seasonTag = p.season ? `<span style="font-size:11px;color:var(--accent);background:var(--accent-l);padding:2px 7px;border-radius:100px;font-weight:500">${p.season}</span>` : '';
       const catTag = p.category ? `<span style="font-size:11px;color:var(--muted);background:var(--surface2);padding:2px 7px;border-radius:100px">${p.category}</span>` : '';
@@ -2338,14 +2385,15 @@ function renderStockTable() {
         <td style="padding:8px 12px;text-align:right;font-weight:600;${availColor}">${sku.avail}</td>
         <td style="padding:8px 12px;text-align:right;font-weight:500;${storeColor}">${sku.store}</td>
         ${i === 0
-          ? `<td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${statusTag}</td>`
+          ? `<td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${adTag}</td>
+             <td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${statusTag}</td>`
           : ''}
       </tr>`;
     });
   });
 
   if (filtered.length > 200) {
-    html += `<tr><td colspan="7" style="padding:12px;text-align:center;color:var(--muted);font-size:12px">
+    html += `<tr><td colspan="8" style="padding:12px;text-align:center;color:var(--muted);font-size:12px">
       상위 200개 표시 중 (전체 ${filtered.length}개) — 검색으로 좁혀보세요
     </td></tr>`;
   }
