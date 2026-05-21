@@ -878,8 +878,9 @@ async function fetchMetaAds() {
       const isCategoryAd = productName.includes('카테고리');
       if (isCategoryAd) {
         const { nb, action } = calcBudget(budget, roas, target, capUp, capDn, minB);
+        const offReason = action === 'off' ? 'roas' : null;
         return { id: ad.id, name: productName, nameRaw: ad.name, status: ad.status,
-                 budget, nb, action, roas, spend,
+                 budget, nb, action, offReason, roas, spend,
                  inv: { online: null, offline: null, skus: null },
                  stockAlerts: [], isPresale: false, isNegativeStock: false, isCategoryAd: true };
       }
@@ -936,11 +937,14 @@ async function fetchMetaAds() {
         }
       }
 
-      let action, nb;
-      if (stockKnown && shouldOff) { action = 'off'; nb = 0; }
-      else { ({ nb, action } = calcBudget(budget, roas, target, capUp, capDn, minB)); }
+      let action, nb, offReason = null;
+      if (stockKnown && shouldOff) { action = 'off'; nb = 0; offReason = 'stock'; }
+      else {
+        ({ nb, action } = calcBudget(budget, roas, target, capUp, capDn, minB));
+        if (action === 'off') offReason = 'roas';
+      }
       return { id: ad.id, name: productName, nameRaw: ad.name, status: ad.status,
-               budget, nb, action, roas, spend, inv, stockAlerts, isPresale, isNegativeStock: (inv.online||0) < 0 };
+               budget, nb, action, offReason, roas, spend, inv, stockAlerts, isPresale, isNegativeStock: (inv.online||0) < 0 };
     });
 
     renderRoasResult(target);
@@ -978,11 +982,11 @@ function renderRoasResult(target) {
     <div class="metric"><div class="metric-label">유지</div><div class="metric-value">${nHold}개</div></div>
   </div>`;
 
-  // OFF 대상
-  const offList = ads.filter(r=>r.action==='off');
-  if (offList.length) {
+  // 재고 사유 OFF 대상
+  const stockOffList = ads.filter(r => r.action==='off' && r.offReason==='stock');
+  if (stockOffList.length) {
     html += `<div class="sl">🔴 재고 부족 — OFF 대상</div>`;
-    offList.forEach(r => {
+    stockOffList.forEach(r => {
       const stockTxt = r.inv.online !== null ? `가용재고 합계 ${r.inv.online}개` : '재고 미확인';
       const tagLabel = r.isPresale ? '예약판매 — 3주 초과' : '품절 OFF';
       html += `<div class="ad-card warn fade-in">
@@ -992,6 +996,24 @@ function renderRoasResult(target) {
             <div class="ad-meta">${r.nameRaw.substring(0,55)} · ${stockTxt}</div>
           </div>
           <span class="tag red">${tagLabel}</span>
+        </div>
+      </div>`;
+    });
+  }
+
+  // ROAS 사유 OFF 대상 (ROAS=0 또는 효율 미달)
+  const roasOffList = ads.filter(r => r.action==='off' && r.offReason==='roas');
+  if (roasOffList.length) {
+    html += `<div class="sl">📉 효율 부진 — OFF 대상</div>`;
+    roasOffList.forEach(r => {
+      const reasonTxt = r.roas === 0 ? '구매 데이터 없음 (ROAS 0%)' : `ROAS ${r.roas.toFixed(0)}% · 목표 ${target}%`;
+      html += `<div class="ad-card warn fade-in">
+        <div class="ad-card-top">
+          <div>
+            <div class="ad-name">${r.name}</div>
+            <div class="ad-meta">${r.nameRaw.substring(0,55)} · ${reasonTxt} · 소진 ₩${fmt(r.spend)}</div>
+          </div>
+          <span class="tag red">효율 OFF</span>
         </div>
       </div>`;
     });
