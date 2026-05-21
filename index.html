@@ -371,7 +371,9 @@ input,select,textarea{font-family:var(--font-body)}
   <div class="btn-row">
     <button class="btn btn-outline" id="fetch-btn" onclick="fetchMetaAds()">🔄 데이터 불러오기</button>
     <button class="btn btn-primary" id="run-btn" onclick="runAll()" disabled>▶ 광고비 조정 실행</button>
+    <button class="btn btn-outline" id="rain-btn" onclick="checkWeatherAndBoost()" style="border-color:#4B9FE1;color:#4B9FE1">☔ 레인 아이템 증액 체크</button>
   </div>
+  <div id="weather-status" style="font-size:12px;color:var(--muted);margin-top:-4px;margin-bottom:8px"></div>
 
   <div id="roas-result">
     <div class="empty-state">
@@ -471,6 +473,8 @@ const state = {
   _notionLoading: false,
   // 재고 연동 현황 → ROAS 엔진 공유 맵
   _stockProductMap: null,
+  // 레인 아이템 증액
+  _rainBoostedAds: [],
 };
 
 // ── INIT ─────────────────────────────────────────────────────────
@@ -902,6 +906,136 @@ function isHighStock(skus) {
   if (hasLow) return false;
   const avg = skus.reduce((s, r) => s + r.avail, 0) / skus.length;
   return avg >= 30;
+}
+
+// ── 레인 아이템 키워드 ────────────────────────────────────────────
+const RAIN_KEYWORDS = ['우비', '장화', '우산'];
+
+function isRainItem(productName) {
+  return RAIN_KEYWORDS.some(kw => productName.includes(kw));
+}
+
+// ── 날씨 기반 레인 아이템 증액 ────────────────────────────────────
+async function checkWeatherAndBoost() {
+  const btn = document.getElementById('rain-btn');
+  const statusEl = document.getElementById('weather-status');
+  btn.innerHTML = '<span class="spinner"></span> 날씨 확인 중...';
+  btn.disabled = true;
+
+  try {
+    const r = await fetch(`${PROXY}/api/weather`);
+    const weather = await r.json();
+    if (weather.error) throw new Error(weather.error);
+
+    const { isRaining, emoji, precipitation, minTemp, maxTemp } = weather;
+
+    statusEl.innerHTML = `${emoji} 오늘 날씨 — 강수량 ${precipitation}mm · 최저 ${minTemp}°C · 최고 ${maxTemp}°C`;
+
+    if (!isRaining) {
+      statusEl.innerHTML += ` &nbsp;|&nbsp; <span style="color:var(--muted)">비 없음 — 레인 아이템 증액 불필요</span>`;
+      btn.innerHTML = '☔ 레인 아이템 증액 체크';
+      btn.disabled = false;
+      return;
+    }
+
+    // 비 오는 경우 → 레인 아이템 광고 증액 계산
+    if (!state.metaAds.length) {
+      statusEl.innerHTML += ` &nbsp;|&nbsp; <span style="color:var(--amber)">먼저 '데이터 불러오기'를 해주세요</span>`;
+      btn.innerHTML = '☔ 레인 아이템 증액 체크';
+      btn.disabled = false;
+      return;
+    }
+
+    const rainAds = state.metaAds.filter(ad => isRainItem(ad.name) && !ad.shouldOff);
+    if (!rainAds.length) {
+      statusEl.innerHTML += ` &nbsp;|&nbsp; <span style="color:var(--muted)">집행 중인 레인 아이템 광고 없음</span>`;
+      btn.innerHTML = '☔ 레인 아이템 증액 체크';
+      btn.disabled = false;
+      return;
+    }
+
+    // 증액 계산: 1만원 미만 → 2만원, 이상 → 50% 증액
+    const boosted = rainAds.map(ad => {
+      const newBudget = ad.budget < 10000
+        ? 20000
+        : Math.round(ad.budget * 1.5 / 1000) * 1000;
+      return { ...ad, rainBudget: newBudget };
+    });
+
+    statusEl.innerHTML += ` &nbsp;|&nbsp; <span style="color:#4B9FE1;font-weight:600">☔ 비 감지! 레인 아이템 ${rainAds.length}개 증액 대상</span>`;
+
+    // 확인 UI 렌더링
+    renderRainBoostPreview(boosted);
+    btn.innerHTML = '☔ 레인 아이템 증액 체크';
+    btn.disabled = false;
+
+  } catch(e) {
+    statusEl.innerHTML = `<span style="color:var(--red)">날씨 조회 오류: ${e.message}</span>`;
+    btn.innerHTML = '☔ 레인 아이템 증액 체크';
+    btn.disabled = false;
+  }
+}
+
+function renderRainBoostPreview(boostedAds) {
+  const W = v => v.toLocaleString();
+  const rows = boostedAds.map(ad => `
+    <tr style="border-bottom:0.5px solid var(--border)">
+      <td style="padding:8px 10px;font-weight:600">${ad.name}</td>
+      <td style="padding:8px 10px;text-align:right;color:var(--muted)">₩${W(ad.budget)}</td>
+      <td style="padding:8px 10px;text-align:right;font-weight:600;color:#4B9FE1">₩${W(ad.rainBudget)}</td>
+      <td style="padding:8px 10px;text-align:right;color:#4B9FE1">+${Math.round((ad.rainBudget/ad.budget-1)*100)}%</td>
+    </tr>`).join('');
+
+  const html = `
+  <div style="margin-top:12px;border:1px solid #4B9FE1;border-radius:10px;overflow:hidden">
+    <div style="background:#EBF5FF;padding:10px 14px;font-size:12px;font-weight:600;color:#4B9FE1;display:flex;align-items:center;justify-content:space-between">
+      <span>☔ 레인 아이템 예산 증액 미리보기</span>
+      <button onclick="applyRainBoost()" style="padding:6px 14px;border-radius:6px;background:#4B9FE1;color:white;font-size:12px;font-weight:600;border:none;cursor:pointer">▶ 증액 실행</button>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:var(--surface2)">
+        <th style="padding:7px 10px;text-align:left;font-size:11px;color:var(--muted)">광고명</th>
+        <th style="padding:7px 10px;text-align:right;font-size:11px;color:var(--muted)">현재 예산</th>
+        <th style="padding:7px 10px;text-align:right;font-size:11px;color:var(--muted)">증액 예산</th>
+        <th style="padding:7px 10px;text-align:right;font-size:11px;color:var(--muted)">증가율</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+
+  // roas-result 상단에 삽입
+  const existing = document.getElementById('rain-preview');
+  if (existing) existing.remove();
+  const div = document.createElement('div');
+  div.id = 'rain-preview';
+  div.innerHTML = html;
+  const resultEl = document.getElementById('roas-result');
+  resultEl.insertBefore(div, resultEl.firstChild);
+
+  // state에 저장
+  state._rainBoostedAds = boostedAds;
+}
+
+async function applyRainBoost() {
+  if (!state._rainBoostedAds?.length) return;
+  if (!confirm(`레인 아이템 ${state._rainBoostedAds.length}개 예산을 증액할까요?`)) return;
+
+  let ok = 0, fail = 0;
+  for (const ad of state._rainBoostedAds) {
+    try {
+      await fetch(`${PROXY}/api/meta?action=update_budget`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ad_id: ad.id, daily_budget: ad.rainBudget }),
+      });
+      ok++;
+    } catch { fail++; }
+  }
+
+  document.getElementById('rain-preview')?.remove();
+  document.getElementById('weather-status').innerHTML +=
+    ` &nbsp;|&nbsp; <span style="color:var(--green)">✅ 증액 완료 (${ok}개 성공${fail ? ` · ${fail}개 실패` : ''})</span>`;
+  state._rainBoostedAds = [];
 }
 
 async function fetchMetaAds() {
