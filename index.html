@@ -309,7 +309,7 @@ input,select,textarea{font-family:var(--font-body)}
 
   <button class="nav-item active" data-page="roas">
     <span class="nav-icon">⚡</span>
-    <span class="nav-label">ROAS 예산 엔진</span>
+    <span class="nav-label">Meta 광고 예산 조정</span>
     <span class="nav-badge hidden" id="badge-roas">0</span>
   </button>
   <button class="nav-item" data-page="stock">
@@ -450,7 +450,7 @@ const MALL_ID = 'ozkiz';
 const META_BASE = 'https://graph.facebook.com/v21.0';
 
 // ── 제외 키워드 ──────────────────────────────────────────────────
-const EXCLUDE_KEYWORDS = ['수선', '우일신', '일상화보', '옷체부', '데일리라이크', '(브레드)', '부자재-한글', '부자재-간지', '부자재-매장쇼핑백', '부자재-인박스', '부자재-부츠인박스'];
+const EXCLUDE_KEYWORDS = ['수선', '우일신', '일상화보', '옷체부', '데일리라이크', '(브레드)', '부자재-한글', '부자재-간지', '부자재-매장쇼핑백', '부자재-인박스', '부자재-부츠인박스', '사은품', '별봉', '동물선물상자', '오입고반송', '마이이니셜(팬던트)', '스티커', '오즈툰'];
 
 // ── STATE ────────────────────────────────────────────────────────
 const state = {
@@ -503,22 +503,12 @@ document.addEventListener('DOMContentLoaded', () => {
       state.strategyData = JSON.parse(savedStrat);
       document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 (저장됨)`;
     }
-    // 매칭 결과 복원
-    const savedMatching = localStorage.getItem('matching_data');
-    if (savedMatching) {
-      state._matchingRows = JSON.parse(savedMatching);
-      console.log(`✓ 매칭 데이터 복원됨 (${state._matchingRows.length}개)`);
-    }
   } catch(e) { console.log('복원 실패:', e); }
 
   initNav();
   initUpload();
   initGeminiInput();
   if (state.inventoryData.length) renderStockPage();
-  // 이지어드민 데이터 있고 매칭 데이터 없으면 자동 매칭
-  if (state.inventoryData.length && !state._matchingRows) {
-    triggerMatching();
-  }
 });
 
 async function checkCafe24Auth() {
@@ -563,13 +553,6 @@ function initNav() {
       document.getElementById('page-' + btn.dataset.page).classList.add('active');
       // 페이지별 렌더링
       if (btn.dataset.page === 'stock') renderStockPage();
-      if (btn.dataset.page === 'matching') {
-        if (!state._matchingRows) {
-          triggerMatching().then(() => renderMatchingPage());
-        } else {
-          renderMatchingPage();
-        }
-      }
       if (btn.dataset.page === 'adsetting') renderAdSettingPage();
     });
   });
@@ -607,8 +590,6 @@ function initUpload() {
         } catch(e) { console.log('저장 실패:', e); }
         document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 로드됨`;
         renderStockPage();
-        // 이지어드민 업로드 시 카페24 매칭 자동 시작
-        triggerMatching();
       } catch(err) {
         alert('파일 읽기 오류: ' + err.message);
       }
@@ -2011,55 +1992,6 @@ function fileToBase64(file) {
   });
 }
 
-// ── 매칭 트리거 ──────────────────────────────────────────────────
-async function triggerMatching() {
-  if (!state.inventoryData.length) return;
-  // 카페24 데이터 로드 (아직 없으면)
-  if (!state._presaleLoaded && !state._presaleLoading) {
-    state._presaleLoading = true;
-    await loadPresaleProducts();
-  } else if (state._presaleLoading) {
-    // 로딩 중이면 대기
-    return;
-  }
-  // 매칭 실행
-  const cafe24Products = state._cafe24Products || [];
-  if (!cafe24Products.length) return;
-
-  const nameKey = Object.keys(state.inventoryData[0]).find(k => k.includes('상품명'));
-  const EXCLUDE = ['수선','우일신','일상화보','옷체부','데일리라이크','(브레드)','(신비)'];
-  const ezNames = [...new Set(state.inventoryData.map(r => String(r[nameKey]||'').trim()).filter(Boolean))];
-  const filtered = ezNames.filter(n => !EXCLUDE.some(kw => n.includes(kw)));
-
-  const rows = filtered.map(ezName => {
-    const core = extractEzCore(ezName);
-    const matched = matchEzToCafe24(ezName, cafe24Products);
-    return { ezName, core, matched };
-  });
-
-  state._matchingRows = rows;
-
-  // localStorage에 저장 (matched는 product_no, product_name만 저장)
-  try {
-    const slim = rows.map(r => ({
-      ezName: r.ezName,
-      core: r.core,
-      matched: r.matched ? { product_no: r.matched.product_no, product_name: r.matched.product_name } : null
-    }));
-    localStorage.setItem('matching_data', JSON.stringify(slim));
-  } catch(e) { console.log('매칭 저장 실패:', e); }
-
-  console.log(`✓ 매칭 완료: ${rows.filter(r=>r.matched).length}/${rows.length}개`);
-}
-
-// stub: 매칭 탭에서 호출하는 구 함수 — 노션으로 대체됨, 카페24 연동 시 복원
-async function loadPresaleProducts() {
-  state._presaleLoaded  = true;
-  state._presaleLoading = false;
-  state._cafe24Products = [];
-  state._presaleProductNos = new Set();
-}
-
 async function loadNotionPresale() {
   if (state._notionLoaded) return;
   try {
@@ -2075,159 +2007,6 @@ async function loadNotionPresale() {
     state._notionPresale = [];
     state._notionLoaded  = true;
   }
-}
-
-
-// ── 이지어드민-카페24 상품명 매칭 알고리즘 ──────────────────────────
-function extractEzCore(name) {
-  let core = String(name).trim();
-  // 괄호 내용 먼저 제거: (인디), (브레드), (신비), (아트웍) 등
-  // "-" 분리보다 먼저 해야 (세트-골지) → "골지)" 같은 잔여 괄호 방지
-  core = core.replace(/\([^)]*\)/g, '').trim();
-  // "-" 뒤 핵심어 추출
-  if (core.includes('-')) core = core.split('-').slice(1).join('-').trim();
-  // 특수문자 제거
-  core = core.replace(/[☆★✩*]/g, '').trim();
-  // 복종명이 핵심어에 다시 붙어있는 경우 제거
-  const 복종목록 = ['슬립온','장화','운동화','부츠','샌들','구두','실내화','아쿠아','젤리','원피스','세트','상의','하의','아우터','실내복','수영복','잡화','가방','우비','우산','스키복','발레복','한복','스펀지'];
-  for (const 복종 of 복종목록) {
-    if (core.endsWith(복종)) core = core.slice(0, -복종.length).trim();
-  }
-  return core.toLowerCase();
-}
-
-function matchEzToCafe24(ezName, cafe24Products) {
-  const core = extractEzCore(ezName);
-  if (!core || core.length < 2) return null;
-  for (const p of cafe24Products) {
-    const c24Clean = p.product_name.replace(/\[.*?\]/g, '').toLowerCase().trim();
-    if (c24Clean.includes(core) || core.includes(c24Clean.replace(/\s+/g, ''))) {
-      return p;
-    }
-  }
-  return null;
-}
-
-function renderMatchingPage() {
-  const container = document.getElementById('matching-result');
-  const ezData = state.inventoryData;
-  const cafe24Products = state._cafe24Products || [];
-
-  if (!ezData.length) {
-    container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔗</div>이지어드민 파일을 업로드하면 매칭 결과가 표시됩니다</div>`;
-    return;
-  }
-  if (!cafe24Products.length) {
-    container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⏳</div>카페24 상품 데이터 로딩 중...<br><small>잠시 후 다시 클릭해주세요</small></div>`;
-    // 아직 안 로드됐으면 로드 시작
-    if (!state._presaleLoaded && !state._presaleLoading) {
-      state._presaleLoading = true;
-      loadPresaleProducts();
-    }
-    return;
-  }
-
-  // 이지어드민 상품명 중복 제거
-  const nameKey = Object.keys(ezData[0]).find(k => k.includes('상품명'));
-  const repCodeKey = Object.keys(ezData[0]).find(k => k.includes('대표상품코드'));
-  const ezNames = [...new Set(ezData.map(r => String(r[nameKey]||'').trim()).filter(Boolean))];
-
-  // EXCLUDE_KEYWORDS 필터
-  const EXCLUDE = ['수선','우일신','일상화보','옷체부','데일리라이크','(브레드)','(신비)'];
-  const filtered = ezNames.filter(n => !EXCLUDE.some(kw => n.includes(kw)));
-
-  // 매칭
-  const rows = filtered.map(ezName => {
-    const core = extractEzCore(ezName);
-    const matched = matchEzToCafe24(ezName, cafe24Products);
-    return { ezName, core, matched };
-  });
-
-  const totalCount = rows.length;
-  const matchedCount = rows.filter(r => r.matched).length;
-  const unmatchedCount = totalCount - matchedCount;
-
-  container.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-      <div style="font-size:13px;color:var(--text2)">
-        전체 <b style="color:var(--text)">${totalCount}개</b> &nbsp;·&nbsp;
-        매칭 <b style="color:var(--green)">${matchedCount}개</b> &nbsp;·&nbsp;
-        미매칭 <b style="color:var(--red)">${unmatchedCount}개</b>
-      </div>
-      <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-        <select id="match-filter" onchange="renderMatchingPage()" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--surface2)">
-          <option value="all">전체 보기</option>
-          <option value="matched">매칭됨만</option>
-          <option value="unmatched">미매칭만</option>
-        </select>
-        <button onclick="downloadMatchingExcel()" class="btn btn-primary btn-sm">⬇ 엑셀 다운로드</button>
-      </div>
-    </div>
-    <div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:12px">
-        <thead>
-          <tr style="background:var(--surface2);position:sticky;top:0">
-            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;white-space:nowrap">이지어드민 상품명</th>
-            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;white-space:nowrap">추출 핵심어</th>
-            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;white-space:nowrap">카페24 매칭 상품명</th>
-            <th style="padding:8px 12px;text-align:center;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;white-space:nowrap">상태</th>
-          </tr>
-        </thead>
-        <tbody id="matching-tbody"></tbody>
-      </table>
-    </div>
-  `;
-
-  // 필터 적용
-  const filterVal = document.getElementById('match-filter')?.value || 'all';
-  const filtered2 = rows.filter(r => {
-    if (filterVal === 'matched') return !!r.matched;
-    if (filterVal === 'unmatched') return !r.matched;
-    return true;
-  });
-
-  const tbody = document.getElementById('matching-tbody');
-  tbody.innerHTML = filtered2.map(r => `
-    <tr style="border-bottom:1px solid var(--border);${!r.matched ? 'background:rgba(255,80,80,0.04)' : ''}">
-      <td style="padding:8px 12px;color:var(--text)">${r.ezName}</td>
-      <td style="padding:8px 12px;color:var(--text2);font-family:monospace">${r.core || '-'}</td>
-      <td style="padding:8px 12px;color:var(--text)">${r.matched ? r.matched.product_name : '<span style="color:var(--red)">미매칭</span>'}</td>
-      <td style="padding:8px 12px;text-align:center">${r.matched
-        ? '<span style="color:var(--green);font-weight:600">✓</span>'
-        : '<span style="color:var(--red);font-weight:600">✗</span>'
-      }</td>
-    </tr>
-  `).join('');
-
-  // 전체 rows를 state에 저장 (엑셀 다운로드용)
-  state._matchingRows = rows;
-}
-
-function downloadMatchingExcel() {
-  const rows = state._matchingRows || [];
-  if (!rows.length) return;
-
-  const headers = ['이지어드민 상품명', '추출 핵심어', '카페24 매칭 상품명', '매칭 여부'];
-  const data = rows.map(r => [
-    r.ezName,
-    r.core || '',
-    r.matched ? r.matched.product_name : '',
-    r.matched ? '매칭됨' : '미매칭'
-  ]);
-
-  // CSV로 다운로드 (엑셀에서 열 수 있음)
-  const BOM = '\uFEFF';
-  const csvContent = BOM + [headers, ...data].map(row =>
-    row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
-  ).join('\n');
-
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `상품매칭현황_${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 function renderStockPage() {
