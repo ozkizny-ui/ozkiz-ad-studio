@@ -534,6 +534,8 @@ const state = {
   _notionPresale: [],
   _notionLoaded:  false,
   _notionLoading: false,
+  // 재고 연동 현황 → ROAS 엔진 공유 맵
+  _stockProductMap: null,
 };
 
 // ── INIT ─────────────────────────────────────────────────────────
@@ -808,15 +810,20 @@ function matchInventory(productName) {
   const matchedRows = [];
   for (const row of state.inventoryData) {
     const rowName = String(row[nameKey]||'').toLowerCase().replace(/[-\s]/g, '');
-    if (rowName.includes(parsed) || parsed.includes(rowName)) {
-      const { colors, sizes } = parseOptionTokens(row[optKey]||'');
-      matchedRows.push({
-        option: String(row[optKey]||''),
-        avail:  parseInt(String(row[availKey]||0).replace(/,/g, '')) || 0,
-        color:  colors[0] || '',
-        size:   sizes[0]  || '',
-      });
-    }
+    if (!rowName) continue;
+    // 엄격한 매칭: 양쪽 다 4글자 이상일 때만 포함 관계 허용
+    const exactMatch = rowName === parsed;
+    const forwardMatch = rowName.length >= 4 && parsed.includes(rowName);
+    const reverseMatch = parsed.length >= 4 && rowName.includes(parsed);
+    if (!exactMatch && !forwardMatch && !reverseMatch) continue;
+
+    const { colors, sizes } = parseOptionTokens(row[optKey]||'');
+    matchedRows.push({
+      option: String(row[optKey]||''),
+      avail:  parseInt(String(row[availKey]||0).replace(/,/g, '')) || 0,
+      color:  colors[0] || '',
+      size:   sizes[0]  || '',
+    });
   }
 
   if (!matchedRows.length) return { online: null, offline: null, skus: null };
@@ -862,50 +869,52 @@ async function fetchMetaAds() {
       const spend = parseFloat(ins.spend || 0);
       const inv = matchInventory(productName);
       const stockKnown = inv.online !== null;
-      const totalAvail = inv.online || 0;
-      const isNegativeStock = totalAvail < 0; // 음수 재고 = 예약판매 중
 
-      // 노션 매칭 헬퍼
-      const findNotionEntry = (name) => {
-        const pName = name.toLowerCase().replace(/[-\s]/g,'');
-        return (state._notionPresale || []).find(n =>
-          pName.includes(n.name.toLowerCase().replace(/[-\s]/g,'')) ||
-          n.name.toLowerCase().replace(/[-\s]/g,'').includes(pName)
-        );
-      };
+      // ── 재고 연동 현황에서 계산된 stockStatus 참조 ──
+      // 동일한 기준으로 판단하기 위해 _stockProductMap 우선 사용
+      const pKey = productName.toLowerCase().replace(/[-\s]/g,'');
+      const mappedStatus = state._stockProductMap
+        ? Object.entries(state._stockProductMap).find(([k]) =>
+            k === pKey || k.includes(pKey) || pKey.includes(k)
+          )?.[1]
+        : null;
 
       let stockAlerts = [];
       let shouldOff = false;
       let isPresale = false;
 
-      if (stockKnown && inv.skus) {
+      if (mappedStatus) {
+        // 재고 연동 현황 결과 그대로 사용
+        if (mappedStatus === 'size_warn') { shouldOff = true; }
+        else if (mappedStatus === 'presale_far') { shouldOff = true; isPresale = true; }
+        else if (mappedStatus === 'presale_near') { shouldOff = false; isPresale = true; }
+        // ok, color_warn → 광고 유지
+      } else if (stockKnown && inv.skus) {
+        // _stockProductMap 없을 때 (재고 탭 아직 로드 안 됨) → 기존 로직으로 폴백
         const { alerts } = analyzeStockAlerts(inv.skus);
         stockAlerts = alerts;
-
-        // ── 음수 재고: 예약판매 더블체크 ──
+        const totalAvail = inv.online || 0;
+        const isNegativeStock = totalAvail < 0;
+        const findNotionEntry = (name) => {
+          const n = name.toLowerCase().replace(/[-\s]/g,'');
+          return (state._notionPresale || []).find(e =>
+            n.includes(e.name.toLowerCase().replace(/[-\s]/g,'')) ||
+            e.name.toLowerCase().replace(/[-\s]/g,'').includes(n)
+          );
+        };
         if (isNegativeStock) {
           const notionEntry = findNotionEntry(productName);
-          if (notionEntry && notionEntry.arrivalDate) {
-            // 노션에 입고일 있으면 예약판매 확정 → 광고 유지
-            isPresale = true;
-            shouldOff = false;
-          } else {
-            // 노션에 없으면 재고 이슈 → OFF
-            shouldOff = true;
-          }
-        }
-        // ── 사이즈 품절 경고 (양수지만 60% 이상 ≤3) ──
-        else {
+          isPresale = !!(notionEntry?.arrivalDate);
+          shouldOff = !isPresale;
+        } else {
           const sizeWarn = alerts.find(a => a.type === 'size_warn');
           if (sizeWarn) {
             const notionEntry = findNotionEntry(productName);
-            if (notionEntry && notionEntry.arrivalDate) {
+            if (notionEntry?.arrivalDate) {
               const daysUntil = Math.ceil((new Date(notionEntry.arrivalDate) - new Date()) / 86400000);
-              if (daysUntil <= 21) { isPresale = true; shouldOff = false; }
-              else                 { isPresale = true; shouldOff = true; }  // 3주 초과
-            } else {
-              shouldOff = true; // 노션에 없음 → 품절
-            }
+              isPresale = true;
+              shouldOff = daysUntil > 21;
+            } else { shouldOff = true; }
           }
         }
       }
@@ -914,7 +923,7 @@ async function fetchMetaAds() {
       if (stockKnown && shouldOff) { action = 'off'; nb = 0; }
       else { ({ nb, action } = calcBudget(budget, roas, target, capUp, capDn, minB)); }
       return { id: ad.id, name: productName, nameRaw: ad.name, status: ad.status,
-               budget, nb, action, roas, spend, inv, stockAlerts, isPresale, isNegativeStock };
+               budget, nb, action, roas, spend, inv, stockAlerts, isPresale, isNegativeStock: (inv.online||0) < 0 };
     });
 
     renderRoasResult(target);
@@ -923,6 +932,8 @@ async function fetchMetaAds() {
       const toSave = state.metaAds.map(r => ({ id: r.id, name: r.name, nameRaw: r.nameRaw, status: r.status }));
       localStorage.setItem('meta_ads_cache', JSON.stringify(toSave));
     } catch(e) {}
+    // 재고 탭도 광고 집행 여부 반영해서 재렌더링
+    if (state.inventoryData.length) renderStockPage();
     const nAction = state.metaAds.filter(r => ['up','dn','off'].includes(r.action)).length;
     document.getElementById('badge-roas').textContent = nAction;
     document.getElementById('badge-roas').classList.toggle('hidden', nAction === 0);
@@ -2186,6 +2197,19 @@ function renderStockPage() {
 
   // 가용재고 많은 순 정렬
   products.sort((a,b) => b.totalAvail - a.totalAvail);
+
+  // ── ROAS 엔진에서 참조할 수 있도록 상품명 → stockStatus 맵 저장 ──
+  // 필터링된 것 + 제외된 것(품절) 모두 포함해야 하므로 전체 grouped 기준으로 다시 빌드
+  state._stockProductMap = {};
+  Object.keys(grouped).forEach(name => {
+    const p = products.find(p => p.name === name);
+    if (p) {
+      state._stockProductMap[name.toLowerCase().replace(/[-\s]/g,'')] = p.stockStatus;
+    } else {
+      // 필터링으로 숨겨진 것 (재고 0 + 예약판매 아님) → 품절로 처리
+      state._stockProductMap[name.toLowerCase().replace(/[-\s]/g,'')] = 'size_warn';
+    }
+  });
 
   // 분류
   const alertItems = products.filter(p => ['size_warn','presale_far','color_warn'].includes(p.stockStatus));
