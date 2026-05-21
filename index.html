@@ -530,6 +530,10 @@ const state = {
   adConcepts: [],
   completedAlerts: JSON.parse(localStorage.getItem('completed_alerts') || '[]'),
   strategyData: [],  // 전략파일 데이터
+  // 노션 예판 데이터
+  _notionPresale: [],
+  _notionLoaded:  false,
+  _notionLoading: false,
 };
 
 // ── INIT ─────────────────────────────────────────────────────────
@@ -742,40 +746,83 @@ function showAlert(containerId, msg, type='info') {
 
 function parseAdName(raw) { return raw.split(';')[0].trim(); }
 
-function matchInventory(productName) {
-  if (!state.inventoryData.length) return { online: null, offline: null };
-  const cols = Object.keys(state.inventoryData[0]);
-  const nameKey  = cols.find(k => k.includes('상품명')) || cols[0];
-  const availKey = cols.find(k => k.includes('가용재고'));
-  const storeKey = cols.find(k => k.includes('매장총재고'));
-
-  const parsed = productName.toLowerCase().replace(/[-\s]/g,'');
-
-  // 상품명 기준으로 매칭되는 SKU 전체 합산
-  let totalAvail = 0, totalStore = 0, matched = false;
-  for (const row of state.inventoryData) {
-    const rowName = String(row[nameKey]||'').toLowerCase().replace(/[-\s]/g,'');
-    // 광고소재명이 상품명에 포함되거나, 상품명이 광고소재명에 포함되면 매칭
-    if (rowName.includes(parsed) || parsed.includes(rowName) || similarity(parsed, rowName) > 0.6) {
-      totalAvail += parseInt(row[availKey]||0);
-      totalStore += parseInt(row[storeKey]||0);
-      matched = true;
-    }
-  }
-  if (!matched) return { online: null, offline: null };
-  return { online: totalAvail, offline: totalStore };
+// ── 옵션 파싱: 색상(한글) / 사이즈(숫자) 자동 구분 ──────────────
+function parseOptionTokens(optionStr) {
+  // ':베이지, :140' → { colors: ['베이지'], sizes: ['140'] }
+  const tokens = String(optionStr||'').split(',').map(t => t.replace(/^[:\s]+/,'').trim()).filter(Boolean);
+  const colors = [], sizes = [];
+  tokens.forEach(t => {
+    if (/^\d+$/.test(t)) sizes.push(t);
+    else if (t) colors.push(t);
+  });
+  return { colors, sizes };
 }
 
-function similarity(a, b) {
-  if (!a || !b) return 0;
-  const longer = a.length > b.length ? a : b;
-  const shorter = a.length > b.length ? b : a;
-  if (longer.length === 0) return 1;
-  let matches = 0;
-  for (let i = 0; i < shorter.length; i++) {
-    if (longer.includes(shorter[i])) matches++;
+// ── 재고 판단 핵심 로직 ──────────────────────────────────────────
+// skus: [{option, avail, color, size}]
+// 반환: { alerts: [{type:'color_warn'|'size_warn', label, notionStatus}], totalAvail }
+function analyzeStockAlerts(skus) {
+  const THRESHOLD = 3;    // 가용재고 ≤ 이 값이면 품절 위기
+  const RATIO     = 0.6;  // 60% 이상이면 품절 판정
+
+  // 색상이 있는지 체크
+  const hasColor = skus.some(s => s.color);
+
+  const alerts = [];
+
+  if (hasColor) {
+    // 색상별 그룹핑
+    const byColor = {};
+    skus.forEach(s => {
+      const c = s.color || '기타';
+      if (!byColor[c]) byColor[c] = [];
+      byColor[c].push(s);
+    });
+    Object.entries(byColor).forEach(([color, rows]) => {
+      const lowCount = rows.filter(r => r.avail <= THRESHOLD).length;
+      if (lowCount / rows.length >= RATIO) {
+        alerts.push({ type: 'color_warn', label: `${color} 품절 경고`, color });
+      }
+    });
+  } else {
+    // 사이즈만 있는 경우
+    const lowCount = skus.filter(s => s.avail <= THRESHOLD).length;
+    if (skus.length > 0 && lowCount / skus.length >= RATIO) {
+      alerts.push({ type: 'size_warn', label: '품절' });
+    }
   }
-  return matches / longer.length;
+
+  return { alerts, totalAvail: skus.reduce((s, r) => s + r.avail, 0) };
+}
+
+// ── matchInventory: 광고명 → SKU rows 반환 ───────────────────────
+function matchInventory(productName) {
+  if (!state.inventoryData.length) return { online: null, offline: null, skus: null };
+  const cols    = Object.keys(state.inventoryData[0]);
+  const nameKey  = cols.find(k => k.includes('상품명')) || cols[0];
+  const availKey = cols.find(k => k.includes('가용재고'));
+  const optKey   = cols.find(k => k.includes('옵션'));
+
+  const parsed = productName.toLowerCase().replace(/[-\s]/g, '');
+
+  const matchedRows = [];
+  for (const row of state.inventoryData) {
+    const rowName = String(row[nameKey]||'').toLowerCase().replace(/[-\s]/g, '');
+    if (rowName.includes(parsed) || parsed.includes(rowName)) {
+      const { colors, sizes } = parseOptionTokens(row[optKey]||'');
+      matchedRows.push({
+        option: String(row[optKey]||''),
+        avail:  parseInt(String(row[availKey]||0).replace(/,/g, '')) || 0,
+        color:  colors[0] || '',
+        size:   sizes[0]  || '',
+      });
+    }
+  }
+
+  if (!matchedRows.length) return { online: null, offline: null, skus: null };
+
+  const totalAvail = matchedRows.reduce((s, r) => s + r.avail, 0);
+  return { online: totalAvail, offline: 0, skus: matchedRows };
 }
 
 function calcBudget(current, roas, target, capUp, capDn, minB) {
@@ -814,14 +861,60 @@ async function fetchMetaAds() {
       const roas = roasData[0] ? parseFloat(roasData[0].value) * 100 : 0;
       const spend = parseFloat(ins.spend || 0);
       const inv = matchInventory(productName);
-      const total = (inv.online || 0) + (inv.offline || 0);
       const stockKnown = inv.online !== null;
-      const isPresale = false; // 카페24 연동 시 확인
+      const totalAvail = inv.online || 0;
+      const isNegativeStock = totalAvail < 0; // 음수 재고 = 예약판매 중
+
+      // 노션 매칭 헬퍼
+      const findNotionEntry = (name) => {
+        const pName = name.toLowerCase().replace(/[-\s]/g,'');
+        return (state._notionPresale || []).find(n =>
+          pName.includes(n.name.toLowerCase().replace(/[-\s]/g,'')) ||
+          n.name.toLowerCase().replace(/[-\s]/g,'').includes(pName)
+        );
+      };
+
+      let stockAlerts = [];
+      let shouldOff = false;
+      let isPresale = false;
+
+      if (stockKnown && inv.skus) {
+        const { alerts } = analyzeStockAlerts(inv.skus);
+        stockAlerts = alerts;
+
+        // ── 음수 재고: 예약판매 더블체크 ──
+        if (isNegativeStock) {
+          const notionEntry = findNotionEntry(productName);
+          if (notionEntry && notionEntry.arrivalDate) {
+            // 노션에 입고일 있으면 예약판매 확정 → 광고 유지
+            isPresale = true;
+            shouldOff = false;
+          } else {
+            // 노션에 없으면 재고 이슈 → OFF
+            shouldOff = true;
+          }
+        }
+        // ── 사이즈 품절 경고 (양수지만 60% 이상 ≤3) ──
+        else {
+          const sizeWarn = alerts.find(a => a.type === 'size_warn');
+          if (sizeWarn) {
+            const notionEntry = findNotionEntry(productName);
+            if (notionEntry && notionEntry.arrivalDate) {
+              const daysUntil = Math.ceil((new Date(notionEntry.arrivalDate) - new Date()) / 86400000);
+              if (daysUntil <= 21) { isPresale = true; shouldOff = false; }
+              else                 { isPresale = true; shouldOff = true; }  // 3주 초과
+            } else {
+              shouldOff = true; // 노션에 없음 → 품절
+            }
+          }
+        }
+      }
+
       let action, nb;
-      if (stockKnown && total === 0 && !isPresale) { action = 'off'; nb = 0; }
+      if (stockKnown && shouldOff) { action = 'off'; nb = 0; }
       else { ({ nb, action } = calcBudget(budget, roas, target, capUp, capDn, minB)); }
       return { id: ad.id, name: productName, nameRaw: ad.name, status: ad.status,
-               budget, nb, action, roas, spend, inv, isPresale };
+               budget, nb, action, roas, spend, inv, stockAlerts, isPresale, isNegativeStock };
     });
 
     renderRoasResult(target);
@@ -855,17 +948,35 @@ function renderRoasResult(target) {
   // OFF 대상
   const offList = ads.filter(r=>r.action==='off');
   if (offList.length) {
-    html += `<div class="sl">🔴 재고 없음 — OFF 대상</div>`;
+    html += `<div class="sl">🔴 재고 부족 — OFF 대상</div>`;
     offList.forEach(r => {
-      const stockTxt = r.inv.online !== null ? `온라인 ${r.inv.online}개 · 오프라인 ${r.inv.offline}개` : '재고 미확인';
-      html += `<div class="ad-card ${r.isPresale?'hold':'warn'} fade-in">
+      const stockTxt = r.inv.online !== null ? `가용재고 합계 ${r.inv.online}개` : '재고 미확인';
+      const tagLabel = r.isPresale ? '예약판매 — 3주 초과' : '품절 OFF';
+      html += `<div class="ad-card warn fade-in">
         <div class="ad-card-top">
           <div>
             <div class="ad-name">${r.name}</div>
             <div class="ad-meta">${r.nameRaw.substring(0,55)} · ${stockTxt}</div>
-            ${r.isPresale ? `<div class="alert warn" style="margin-top:6px;margin-bottom:0;font-size:11px">📅 카페24 예약판매 확인 — OFF 제외</div>` : ''}
           </div>
-          <span class="tag ${r.isPresale?'amber':'red'}">${r.isPresale?'예약판매 유지':'재고없음 OFF'}</span>
+          <span class="tag red">${tagLabel}</span>
+        </div>
+      </div>`;
+    });
+  }
+
+  // 색상 품절 경고 (광고는 유지, 경고만 표시)
+  const colorWarnList = ads.filter(r => r.action !== 'off' && r.stockAlerts && r.stockAlerts.some(a => a.type === 'color_warn'));
+  if (colorWarnList.length) {
+    html += `<div class="sl">🟡 색상 품절 경고 — 광고 유지 중</div>`;
+    colorWarnList.forEach(r => {
+      const warns = r.stockAlerts.filter(a => a.type === 'color_warn').map(a => a.label).join(' · ');
+      html += `<div class="ad-card hold fade-in">
+        <div class="ad-card-top">
+          <div>
+            <div class="ad-name">${r.name}</div>
+            <div class="ad-meta" style="color:var(--amber)">${warns}</div>
+          </div>
+          <span class="tag amber">색상 품절</span>
         </div>
       </div>`;
     });
@@ -1773,25 +1884,28 @@ async function triggerMatching() {
   console.log(`✓ 매칭 완료: ${rows.filter(r=>r.matched).length}/${rows.length}개`);
 }
 
+// stub: 매칭 탭에서 호출하는 구 함수 — 노션으로 대체됨, 카페24 연동 시 복원
 async function loadPresaleProducts() {
-  if (state._presaleLoaded) return;
+  state._presaleLoaded  = true;
+  state._presaleLoading = false;
+  state._cafe24Products = [];
+  state._presaleProductNos = new Set();
+}
+
+async function loadNotionPresale() {
+  if (state._notionLoaded) return;
   try {
-    const r = await fetch(`${PROXY}/api/cafe24-presale`);
-    if (r.status === 401) {
-      state._presaleProducts = new Set();
-      state._presaleLoaded = true;
-      return;
-    }
-    const data = await r.json();
-    // 카페24 예판 상품의 product_no 목록 저장
-    state._presaleProductNos = new Set(data.presale_product_nos || []);
-    // 전체 카페24 상품 목록 저장 (매칭용)
-    state._cafe24Products = data.all_products || [];
-    state._presaleLoaded = true;
+    // 노션 DB 조회 — proxy를 통해 호출 (CORS 우회)
+    const res = await fetch(`${PROXY}/api/notion-presale`);
+    if (!res.ok) throw new Error('노션 API 오류');
+    const data = await res.json();
+    // [{name: '샌들-드림스파클LED', arrivalDate: '2026-04-30'}, ...]
+    state._notionPresale = data.items || [];
+    state._notionLoaded  = true;
     renderStockPage();
   } catch(e) {
-    state._presaleProducts = new Set();
-    state._presaleLoaded = true;
+    state._notionPresale = [];
+    state._notionLoaded  = true;
   }
 }
 
@@ -1950,10 +2064,10 @@ function downloadMatchingExcel() {
 
 function renderStockPage() {
   if (!state.inventoryData.length) return;
-  // 카페24 예판 목록 로드 (아직 안 됐으면)
-  if (!state._presaleLoaded && !state._presaleLoading) {
-    state._presaleLoading = true;
-    loadPresaleProducts();
+  // 노션 예판 목록 로드 (아직 안 됐으면)
+  if (!state._notionLoaded && !state._notionLoading) {
+    state._notionLoading = true;
+    loadNotionPresale();
   }
   const data = state.inventoryData;
 
@@ -2001,33 +2115,65 @@ function renderStockPage() {
     });
   });
 
-  // 상품별 집계 + 전략파일 매칭
-  // 카페24에서 가져온 예판 상품 목록 (상품명 기준)
+  // 상품별 집계 + 재고 알럿 판단
+  const NOTION_MAP = {};
+  (state._notionPresale || []).forEach(n => { NOTION_MAP[n.name] = n; });
+
   const products = Object.entries(grouped).map(([name, skus]) => {
     const totalAvail = skus.reduce((s,r)=>s+r.avail,0);
     const totalStore = skus.reduce((s,r)=>s+r.store,0);
     const meta = strategyMap[name] || { season: '', category: '' };
 
-    // 카페24 product_no와 이지어드민 대표상품코드로 정확히 매칭
-    const presaleNos = state._presaleProductNos || new Set();
-    const repCode = skus[0]?.repCode || '';
-    const isPresale = repCode ? presaleNos.has(repCode) : false;
-    if (isPresale) {
-      return { name, skus, totalAvail, totalStore, total: totalStore,
-               season: meta.season, category: meta.category, isPresale: true };
+    // 새 품절 판단
+    const { alerts } = analyzeStockAlerts(skus);
+    const isNegativeStock = totalAvail < 0; // 음수 재고 = 예약판매 중
+
+    // 노션 매칭 (상품명 부분 포함 매칭)
+    const nKey = Object.keys(NOTION_MAP).find(k =>
+      name.toLowerCase().replace(/[-\s]/g,'').includes(k.toLowerCase().replace(/[-\s]/g,'')) ||
+      k.toLowerCase().replace(/[-\s]/g,'').includes(name.toLowerCase().replace(/[-\s]/g,''))
+    );
+    const notionEntry = nKey ? NOTION_MAP[nKey] : null;
+
+    // 재고 상태 판단
+    let stockStatus = 'ok';
+    const colorWarns = alerts.filter(a => a.type === 'color_warn');
+    const sizeWarn   = alerts.find(a => a.type === 'size_warn');
+
+    // ── 음수 재고: 예약판매 더블체크 ──
+    if (isNegativeStock) {
+      if (notionEntry && notionEntry.arrivalDate) {
+        const daysUntil = Math.ceil((new Date(notionEntry.arrivalDate) - new Date()) / 86400000);
+        stockStatus = daysUntil <= 21 ? 'presale_near' : 'presale_far';
+      } else {
+        stockStatus = 'size_warn'; // 노션에 없으면 품절로 표시
+      }
+    } else if (sizeWarn) {
+      if (notionEntry && notionEntry.arrivalDate) {
+        const daysUntil = Math.ceil((new Date(notionEntry.arrivalDate) - new Date()) / 86400000);
+        stockStatus = daysUntil <= 21 ? 'presale_near' : 'presale_far';
+      } else {
+        stockStatus = 'size_warn';
+      }
+    } else if (colorWarns.length) {
+      stockStatus = 'color_warn';
     }
-    // 예판 아니고 가용재고 ≤ 0 → 숨김
-    if (totalAvail <= 0) return null;
-    // 가용재고 > 0 → 정상
-    return { name, skus, totalAvail, totalStore, total: totalAvail + totalStore,
-             season: meta.season, category: meta.category, isPresale: false };
+
+    return {
+      name, skus, totalAvail, totalStore,
+      total: totalAvail + totalStore,
+      season: meta.season, category: meta.category,
+      stockStatus, colorWarns,
+      notionEntry,
+    };
   }).filter(Boolean);
 
-  const zero = products.filter(p => p.total === 0);
-  const low  = products.filter(p => p.total > 0 && p.total < 10);
-  const ok   = products.filter(p => p.total >= 10);
+  // 분류
+  const alertItems = products.filter(p => ['size_warn','presale_far','color_warn'].includes(p.stockStatus));
+  const presaleNear = products.filter(p => p.stockStatus === 'presale_near');
+  const ok   = products.filter(p => p.stockStatus === 'ok');
 
-  state._stockProducts = products;
+  state._stockProducts = [...alertItems, ...presaleNear, ...ok];
   state._stockFilter   = state._stockFilter || '';
   state._stockSeasons  = state._stockSeasons || [];
   state._stockCategory = state._stockCategory || '';
@@ -2043,8 +2189,8 @@ function renderStockPage() {
 
   let html = `
   <div class="metrics" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
-    <div class="metric"><div class="metric-label">재고 없음</div><div class="metric-value dn">${zero.length}개</div></div>
-    <div class="metric"><div class="metric-label">재고 부족 (10개 미만)</div><div class="metric-value amber">${low.length}개</div></div>
+    <div class="metric"><div class="metric-label">품절/경고</div><div class="metric-value dn">${alertItems.length}개</div></div>
+    <div class="metric"><div class="metric-label">예약판매 (입고 3주 이내)</div><div class="metric-value amber">${presaleNear.length}개</div></div>
     <div class="metric"><div class="metric-label">재고 충분</div><div class="metric-value up">${ok.length}개</div></div>
   </div>
 
@@ -2153,17 +2299,27 @@ function renderStockTable() {
   const sorted = [...filtered].sort((a,b) => a.total - b.total);
 
   sorted.slice(0, 200).forEach(p => {
-    const isZero = p.total === 0;
-    const isLow  = p.total > 0 && p.total < 10;
-    const rowBg  = isZero ? '#FEF5F5' : isLow ? '#FEF7ED' : 'var(--surface)';
-    const isNegative = p.totalAvail < 0;
-    const statusTag = p.isPresale
-      ? `<span class="tag amber">예약판매${isNegative ? ' (' + p.totalAvail + ')' : ''}</span>`
-      : isZero
-      ? `<span class="tag red">재고없음</span>`
-      : isLow
-      ? `<span class="tag amber">부족</span>`
-      : `<span class="tag green">충분</span>`;
+    const isAlert   = ['size_warn','presale_far','color_warn'].includes(p.stockStatus);
+    const isNear    = p.stockStatus === 'presale_near';
+    const rowBg     = isAlert ? '#FEF5F5' : isNear ? '#FEF7ED' : 'var(--surface)';
+
+    // 노션 입고일 표시
+    const arrivalLabel = p.notionEntry?.arrivalDate
+      ? ` · 입고 ${p.notionEntry.arrivalDate}` : '';
+
+    let statusTag;
+    if (p.stockStatus === 'size_warn') {
+      statusTag = `<span class="tag red">품절</span>`;
+    } else if (p.stockStatus === 'presale_far') {
+      statusTag = `<span class="tag amber">예약판매 체크 확인${arrivalLabel}</span>`;
+    } else if (p.stockStatus === 'presale_near') {
+      statusTag = `<span class="tag green">예약판매${arrivalLabel}</span>`;
+    } else if (p.stockStatus === 'color_warn') {
+      const warns = p.colorWarns.map(a => a.label).join(', ');
+      statusTag = `<span class="tag amber" title="${warns}">색상 품절 경고</span>`;
+    } else {
+      statusTag = `<span class="tag green">충분</span>`;
+    }
 
     // 첫 번째 SKU는 상품명 표시, 나머지는 빈칸 (rowspan 효과)
     const skuCount = p.skus.length;
