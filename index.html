@@ -307,7 +307,6 @@ input,select,textarea{font-family:var(--font-body)}
   </div>
   <div class="sb-divider"></div>
 
-  <div class="sb-section">자동화</div>
   <button class="nav-item active" data-page="roas">
     <span class="nav-icon">⚡</span>
     <span class="nav-label">ROAS 예산 엔진</span>
@@ -318,14 +317,11 @@ input,select,textarea{font-family:var(--font-body)}
     <span class="nav-label">재고 연동 현황</span>
   </button>
 
-  <div class="sb-section">추천</div>
 
-  <div class="sb-section">소재 기획</div>
   <button class="nav-item" data-page="usp">
     <span class="nav-icon">✦</span>
     <span class="nav-label">USP 분석</span>
   </button>
-  <div class="sb-section">광고 운영</div>
   <button class="nav-item" data-page="adsetting">
     <span class="nav-icon">🎯</span>
     <span class="nav-label">광고 세팅</span>
@@ -2265,6 +2261,7 @@ function renderStockPage() {
 
   // 시즌/복종 필터 옵션 추출
   const seasons   = [...new Set(Object.values(strategyMap).map(r=>r.season).filter(Boolean))].sort();
+  seasons.push('계절없음');
   const categories = [...new Set(Object.values(strategyMap).map(r=>r.category).filter(Boolean))].sort();
 
   // 상품명 기준으로 그룹핑
@@ -2344,6 +2341,7 @@ function renderStockPage() {
       season: meta.season, category: meta.category,
       stockStatus, colorWarns,
       notionEntry, hasAd,
+      highStock: isHighStock(skus),
     };
   }).filter(p => {
     // 재고 0 이하 + 예약판매 아닌 것 숨김
@@ -2430,7 +2428,7 @@ function renderStockPage() {
   </div>
   <div style="margin-bottom:10px">
     <button onclick="applyQuickFilter()" style="padding:7px 14px;border-radius:8px;font-size:12px;font-weight:500;border:none;background:var(--accent);color:white;cursor:pointer">
-      ⚡ 지금 팔아야 하는데 광고 없는 것
+      ⚡ 광고 집행 요망
     </button>
     <span style="font-size:11px;color:var(--muted);margin-left:8px">현재 시즌 + 재고 많음 + 광고 미집행</span>
   </div>
@@ -2513,10 +2511,10 @@ function applyQuickFilter() {
   const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
   const month = kstNow.getUTCMonth() + 1; // 1~12
   let seasons = [];
-  if ([3,4,5].includes(month)) seasons = ['봄', '봄여름', '사계절'];
-  else if ([6,7,8].includes(month)) seasons = ['여름', '봄여름', '사계절'];
-  else if ([9,10,11].includes(month)) seasons = ['가을', '가을겨울', '사계절'];
-  else seasons = ['겨울', '가을겨울', '사계절'];
+  if ([3,4,5].includes(month)) seasons = ['봄/가을', '사계절'];
+  else if ([6,7,8].includes(month)) seasons = ['여름', '사계절'];
+  else if ([9,10,11].includes(month)) seasons = ['봄/가을', '사계절'];
+  else seasons = ['겨울', '사계절'];
 
   state._stockSeasons      = seasons;
   state._stockAdFilter     = 'off';
@@ -2570,7 +2568,13 @@ function renderStockTable() {
 
   const filtered = products.filter(p => {
     if (filter && !p.name.toLowerCase().includes(filter)) return false;
-    if (state._stockSeasons && state._stockSeasons.length && !state._stockSeasons.includes(p.season)) return false;
+    if (state._stockSeasons && state._stockSeasons.length) {
+      const wantsNone = state._stockSeasons.includes('계절없음');
+      const otherSeasons = state._stockSeasons.filter(s => s !== '계절없음');
+      const matchesOther = otherSeasons.length && otherSeasons.includes(p.season);
+      const matchesNone  = wantsNone && !p.season;
+      if (!matchesOther && !matchesNone) return false;
+    }
     if (category && p.category !== category) return false;
     if (adFilter === 'on'  && !p.hasAd) return false;
     if (adFilter === 'off' &&  p.hasAd) return false;
