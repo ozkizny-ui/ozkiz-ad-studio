@@ -347,14 +347,8 @@ input,select,textarea{font-family:var(--font-body)}
       <input type="file" id="inventory-file" accept=".xlsx,.xls,.csv">
       <div class="upload-zone-text" id="upload-text">📂 현재고조회 업로드</div>
     </label>
+    <div id="upload-date-label" style="font-size:10px;color:var(--muted);margin-top:4px;display:none"></div>
     <div class="upload-status hidden" id="upload-status"></div>
-    <div style="margin-top:8px">
-      <span class="sb-upload-label">전략파일</span>
-      <label class="upload-zone" id="strategy-zone">
-        <input type="file" id="strategy-file" accept=".xlsx,.xls,.csv">
-        <div class="upload-zone-text" id="strategy-text">📂 전략파일 업로드</div>
-      </label>
-    </div>
   </div>
 
   <div class="sb-upload" style="border-top:1px solid var(--border);padding-top:12px">
@@ -376,44 +370,19 @@ input,select,textarea{font-family:var(--font-body)}
 <!-- PAGE: ROAS -->
 <div class="page active" id="page-roas">
   <div class="page-header">
-    <div class="page-title">ROAS 기반 예산 조정</div>
-    <div class="page-sub">최근 4시간 실적 기준 · 직접 승인 후 실행</div>
+    <div class="page-title">광고비 조정 규칙 엔진</div>
+    <div class="page-sub">오늘 실적 기준 · 현재 시각 적용 규칙 확인 후 실행</div>
   </div>
-
-
-
-  <details class="settings-box" open>
-    <summary>조정 설정</summary>
-    <div class="form-row col4">
-      <div class="form-group">
-        <label>목표 ROAS (%)</label>
-        <input type="number" id="target-roas" value="300" min="50" max="2000" step="50">
-      </div>
-      <div class="form-group">
-        <label>최대 증액 (%)</label>
-        <input type="number" id="cap-up" value="50" min="10" max="200" step="10">
-      </div>
-      <div class="form-group">
-        <label>최대 감액 (%)</label>
-        <input type="number" id="cap-dn" value="50" min="10" max="90" step="10">
-      </div>
-      <div class="form-group">
-        <label>최소 일예산 (₩)</label>
-        <input type="number" id="min-budget" value="5000" min="1000" step="1000">
-      </div>
-    </div>
-    <div class="settings-hint">조정 공식: 새 예산 = 현재 예산 × (현재 ROAS ÷ 목표 ROAS), 캡 범위 내 적용</div>
-  </details>
 
   <div class="btn-row">
     <button class="btn btn-outline" id="fetch-btn" onclick="fetchMetaAds()">🔄 데이터 불러오기</button>
-    <button class="btn btn-primary" id="run-btn" onclick="runAll()" disabled>▶ 승인 & 실행</button>
+    <button class="btn btn-primary" id="run-btn" onclick="runAll()" disabled>▶ 광고비 조정 실행</button>
   </div>
 
   <div id="roas-result">
     <div class="empty-state">
       <div class="empty-state-icon">📊</div>
-      '데이터 불러오기'를 눌러 최근 4시간 광고 실적을 가져오세요
+      '데이터 불러오기'를 눌러 오늘 광고 실적을 가져오세요
     </div>
   </div>
 </div>
@@ -557,11 +526,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (savedInv) {
       state.inventoryData = JSON.parse(savedInv);
       document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 (저장됨)`;
-    }
-    const savedStrat = localStorage.getItem('strategy_data');
-    if (savedStrat) {
-      state.strategyData = JSON.parse(savedStrat);
-      document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 (저장됨)`;
+      const savedDate = localStorage.getItem('inventory_upload_date');
+      if (savedDate) {
+        const el = document.getElementById('upload-date-label');
+        if (el) { el.textContent = `업로드: ${savedDate}`; el.style.display = 'block'; }
+      }
     }
     // 매칭 결과 복원
     const savedMatching = localStorage.getItem('matching_data');
@@ -658,6 +627,12 @@ function initUpload() {
             '가용재고': r[availKey]||0, '매장총재고': r[storeKey]||0
           }));
           localStorage.setItem('inventory_data', JSON.stringify(slim));
+          // 업로드 날짜 저장
+          const now = new Date();
+          const dateStr = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+          localStorage.setItem('inventory_upload_date', dateStr);
+          const dateEl = document.getElementById('upload-date-label');
+          if (dateEl) { dateEl.textContent = `업로드: ${dateStr}`; dateEl.style.display = 'block'; }
         } catch(e) { console.log('저장 실패:', e); }
         document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 로드됨`;
         renderStockPage();
@@ -665,40 +640,6 @@ function initUpload() {
         triggerMatching();
       } catch(err) {
         alert('파일 읽기 오류: ' + err.message);
-      }
-    };
-    reader.readAsBinaryString(file);
-  });
-
-  document.getElementById('strategy-file').addEventListener('change', e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      try {
-        const wb = XLSX.read(ev.target.result, { type: 'binary' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        // header:1 로 읽어서 두 번째 행을 헤더로
-        const raw = XLSX.utils.sheet_to_json(ws, { header: 1 });
-        const headers = raw[1]; // 두 번째 행이 실제 헤더
-        state.strategyData = raw.slice(2).map(row => {
-          const obj = {};
-          headers.forEach((h, i) => { if (h) obj[String(h).trim()] = row[i]; });
-          return obj;
-        }).filter(r => r['상품명']);
-        // localStorage에 필요한 컬럼만 저장
-        try {
-          const slimStrat = state.strategyData.map(r => ({
-            '상품명': r['상품명']||'',
-            '시즌': r['시즌']||'',
-            '복종': r[' 복종']||r['복종']||''
-          }));
-          localStorage.setItem('strategy_data', JSON.stringify(slimStrat));
-        } catch(e) { console.log('전략파일 저장 실패:', e); }
-        document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 로드됨`;
-        if (state.inventoryData.length) renderStockPage();
-      } catch(err) {
-        alert('전략파일 오류: ' + err.message);
       }
     };
     reader.readAsBinaryString(file);
@@ -844,15 +785,145 @@ function calcBudget(current, roas, target, capUp, capDn, minB) {
 }
 
 // ── FETCH META ADS ───────────────────────────────────────────────
+// ── KST 현재 시각 (분 단위) ─────────────────────────────────────
+function kstMinutes() {
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 3600 * 1000);
+  return kst.getUTCHours() * 60 + kst.getUTCMinutes();
+}
+
+// ── 광고비 조정 규칙 정의 ────────────────────────────────────────
+// triggerMin: KST 분 기준, dir: 'up'|'dn'|'off'
+const BUDGET_RULES = [
+  {
+    id: 'r1', triggerMin: 8*60, dir: 'dn',
+    label: '오전 8:00 · 장바구니 ≤2 + ROAS ≤150% → ₩20,000',
+    check: (ad) => ad.cart <= 2 && ad.roas <= 150 && ad.roas > 0,
+    calc:  (ad) => ad.budget > 20000 ? 20000 : ad.budget,
+  },
+  {
+    id: 'r2', triggerMin: 8*60, dir: 'up',
+    label: '오전 8:00 · 장바구니 ≥5 → ₩30,000',
+    check: (ad) => ad.cart >= 5 && ad.budget < 30000 && ad.roas <= 200,
+    calc:  (ad) => 30000,
+  },
+  {
+    id: 'r3', triggerMin: 8*60+10, dir: 'up',
+    label: '오전 8:10 · ROAS ≥250% → 구매전환값의 120%',
+    check: (ad) => ad.roas >= 250 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    calc:  (ad) => Math.round(ad.purchaseValue * 1.2 / 1000) * 1000,
+  },
+  {
+    id: 'r4a', triggerMin: 9*60+50, dir: 'up',
+    label: '오전 9:50 · 구매 ≥2 + ROAS ≥300% → 현재예산 +20%',
+    check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.roas < 500,
+    calc:  (ad) => Math.round(ad.budget * 1.2 / 1000) * 1000,
+  },
+  {
+    id: 'r4b', triggerMin: 9*60+50, dir: 'up',
+    label: '오전 9:50 · 구매 ≥2 + ROAS ≥500% → 현재예산 +30%',
+    check: (ad) => ad.purchases >= 2 && ad.roas >= 500 && ad.roas < 700,
+    calc:  (ad) => Math.round(ad.budget * 1.3 / 1000) * 1000,
+  },
+  {
+    id: 'r4c', triggerMin: 9*60+50, dir: 'up',
+    label: '오전 9:50 · 구매 ≥2 + ROAS ≥700% → 현재예산 +40%',
+    check: (ad) => ad.purchases >= 2 && ad.roas >= 700,
+    calc:  (ad) => Math.round(ad.budget * 1.4 / 1000) * 1000,
+  },
+  {
+    id: 'r5', triggerMin: 10*60, dir: 'up',
+    label: '오전 10:00 · 구매 1건 + ROAS ≥300% → 구매전환값의 100%',
+    check: (ad) => ad.purchases >= 1 && ad.purchases < 2 && ad.roas >= 300 && ad.purchaseValue > 0,
+    calc:  (ad) => Math.round(ad.purchaseValue / 1000) * 1000,
+  },
+  {
+    id: 'r6', triggerMin: 10*60+10, dir: 'dn',
+    label: '오전 10:10 · 장바구니 0 + ROAS ≤150% → ₩15,000',
+    check: (ad) => ad.cart === 0 && ad.roas <= 150 && ad.roas > 0,
+    calc:  (ad) => ad.budget > 15000 ? 15000 : ad.budget,
+  },
+  {
+    id: 'r7', triggerMin: 12*60, dir: 'dn',
+    label: '오후 12:00 · ROAS ≤150% → 구매전환값의 70%',
+    check: (ad) => ad.roas <= 150 && ad.roas > 0 && ad.purchaseValue > 0,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.7 / 1000) * 1000,
+  },
+  {
+    id: 'r8', triggerMin: 12*60+10, dir: 'up',
+    label: '오후 12:10 · ROAS ≥300% → 구매전환값의 120%',
+    check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    calc:  (ad) => Math.round(ad.purchaseValue * 1.2 / 1000) * 1000,
+  },
+  {
+    id: 'r9', triggerMin: 12*60+30, dir: 'up',
+    label: '오후 12:30 · 예산 ≤5000 + ROAS ≥300% → 구매전환값의 40%',
+    check: (ad) => ad.budget <= 5000 && ad.roas >= 300 && ad.purchaseValue > 0,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.4 / 1000) * 1000,
+  },
+  {
+    id: 'r10', triggerMin: 15*60, dir: 'dn',
+    label: '오후 3:00 · ROAS ≤100% → 구매전환값의 50%',
+    check: (ad) => ad.roas <= 100 && ad.roas > 0 && ad.purchaseValue > 0,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
+  },
+  {
+    id: 'r11', triggerMin: 15*60+10, dir: 'up',
+    label: '오후 3:10 · ROAS ≥300% → 구매전환값의 100%',
+    check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    calc:  (ad) => Math.round(ad.purchaseValue / 1000) * 1000,
+  },
+  {
+    id: 'r12', triggerMin: 18*60, dir: 'dn',
+    label: '오후 6:00 · ROAS ≤100% → 구매전환값의 50%',
+    check: (ad) => ad.roas <= 100 && ad.roas > 0 && ad.purchaseValue > 0,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
+  },
+  {
+    id: 'r13', triggerMin: 18*60, dir: 'dn',
+    label: '오후 6:00 · ROAS 0% → ₩10,000',
+    check: (ad) => ad.roas === 0,
+    calc:  (ad) => ad.budget > 10000 ? 10000 : ad.budget,
+  },
+  {
+    id: 'r14', triggerMin: 18*60+5, dir: 'up',
+    label: '오후 6:05 · ROAS ≥400% → 구매전환값의 60%',
+    check: (ad) => ad.roas >= 400 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.6 / 1000) * 1000,
+  },
+  {
+    id: 'r15', triggerMin: 18*60+10, dir: 'up',
+    label: '오후 6:10 · ROAS ≥300% → 구매전환값의 50%',
+    check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
+  },
+  {
+    id: 'r16', triggerMin: 21*60, dir: 'dn',
+    label: '오후 9:00 · ROAS ≤200% → 구매전환값의 50%',
+    check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
+  },
+];
+
+// 현재 시각 기준 적용할 규칙들 (가장 최근 발동 시각까지)
+function getActiveRules() {
+  const now = kstMinutes();
+  return BUDGET_RULES.filter(r => r.triggerMin <= now);
+}
+
+// 재고 많음 판단: 옵션당 평균 ≥30 AND 가용재고 ≤3 옵션 없음
+function isHighStock(skus) {
+  if (!skus || !skus.length) return false;
+  const hasLow = skus.some(s => s.avail <= 3);
+  if (hasLow) return false;
+  const avg = skus.reduce((s, r) => s + r.avail, 0) / skus.length;
+  return avg >= 30;
+}
+
 async function fetchMetaAds() {
   const btn = document.getElementById('fetch-btn');
   btn.innerHTML = '<span class="spinner"></span> 불러오는 중...';
   btn.disabled = true;
-
-  const target = parseInt(document.getElementById('target-roas').value);
-  const capUp  = parseInt(document.getElementById('cap-up').value);
-  const capDn  = parseInt(document.getElementById('cap-dn').value);
-  const minB   = parseInt(document.getElementById('min-budget').value);
 
   // _stockProductMap이 없으면 재고 탭 먼저 계산 (품절 판단 기준 동기화)
   if (!state._stockProductMap && state.inventoryData.length) {
@@ -861,7 +932,119 @@ async function fetchMetaAds() {
   }
 
   try {
-    const res = await fetch(`${PROXY}/api/meta?action=get_ads&hours=4`);
+    const res = await fetch(`${PROXY}/api/meta?action=get_ads`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    const ads = data.data || [];
+    state.metaAds = ads.map(ad => {
+      const productName = parseAdName(ad.name || '');
+      const budget = parseInt(ad.daily_budget || 0);
+      const ins = (ad.insights?.data || [{}])[0];
+
+      // ROAS
+      const roasData = ins.purchase_roas || [];
+      const roas = roasData[0] ? Math.round(parseFloat(roasData[0].value) * 100) : 0;
+      const spend = parseFloat(ins.spend || 0);
+
+      // 장바구니, 구매건수, 구매전환값
+      const actions = ins.actions || [];
+      const actionValues = ins.action_values || [];
+      const getAction = (type) => {
+        const a = actions.find(a => a.action_type === type);
+        return a ? parseFloat(a.value) : 0;
+      };
+      const getActionValue = (type) => {
+        const a = actionValues.find(a => a.action_type === type);
+        return a ? parseFloat(a.value) : 0;
+      };
+      const cart = Math.round(getAction('add_to_cart'));
+      const purchases = getAction('purchase');
+      const purchaseValue = getActionValue('purchase');
+
+      // 카테고리 광고는 재고 체크 불필요
+      const isCategoryAd = productName.includes('카테고리');
+
+      // 재고 상태
+      const inv = isCategoryAd ? { online: null, offline: null, skus: null } : matchInventory(productName);
+      const pKey = productName.toLowerCase().replace(/[-\s]/g,'');
+      const mappedStatus = state._stockProductMap
+        ? Object.entries(state._stockProductMap).find(([k]) =>
+            k === pKey || k.includes(pKey) || pKey.includes(k)
+          )?.[1]
+        : null;
+
+      let shouldOff = false, isPresale = false;
+      if (!isCategoryAd && mappedStatus) {
+        if (mappedStatus === 'size_warn') shouldOff = true;
+        else if (mappedStatus === 'presale_far') { shouldOff = true; isPresale = true; }
+        else if (mappedStatus === 'presale_near') { isPresale = true; }
+      } else if (!isCategoryAd && inv.skus) {
+        const { alerts } = analyzeStockAlerts(inv.skus);
+        const sizeWarn = alerts.find(a => a.type === 'size_warn');
+        if ((inv.online||0) < 0) {
+          const ne = (state._notionPresale||[]).find(e => pKey.includes(e.name.toLowerCase().replace(/[-\s]/g,'')) || e.name.toLowerCase().replace(/[-\s]/g,'').includes(pKey));
+          isPresale = !!(ne?.arrivalDate); shouldOff = !isPresale;
+        } else if (sizeWarn) {
+          const ne = (state._notionPresale||[]).find(e => pKey.includes(e.name.toLowerCase().replace(/[-\s]/g,'')) || e.name.toLowerCase().replace(/[-\s]/g,'').includes(pKey));
+          if (ne?.arrivalDate) { const d = Math.ceil((new Date(ne.arrivalDate)-new Date())/86400000); isPresale=true; shouldOff=d>21; }
+          else shouldOff = true;
+        }
+      }
+
+      // 재고 많음 태그
+      const highStock = !isCategoryAd && isHighStock(inv.skus);
+
+      // 현재 시각 기준 적용 규칙 계산
+      const adData = { roas, budget, cart, purchases, purchaseValue, spend };
+      let nb = budget, action = 'hold', appliedRule = null;
+
+      if (shouldOff) {
+        nb = 0; action = 'off';
+      } else {
+        const activeRules = getActiveRules();
+        for (const rule of activeRules) {
+          if (rule.check(adData)) {
+            const newB = Math.max(rule.calc(adData), 1000);
+            if (newB !== budget) {
+              nb = newB;
+              action = rule.dir;
+              appliedRule = rule;
+              break; // 첫 번째 매칭 규칙만 적용
+            }
+          }
+        }
+      }
+
+      // 다음에 발동 예정인 규칙 (현재 시각 이후)
+      const now = kstMinutes();
+      const upcomingRule = BUDGET_RULES.find(r => r.triggerMin > now && r.check(adData));
+
+      return {
+        id: ad.id, name: productName, nameRaw: ad.name, status: ad.status,
+        budget, nb, action, roas, spend, cart, purchases, purchaseValue,
+        inv, shouldOff, isPresale, highStock, isCategoryAd,
+        appliedRule, upcomingRule,
+      };
+    });
+
+    renderRoasResult();
+    try {
+      const toSave = state.metaAds.map(r => ({ id: r.id, name: r.name, nameRaw: r.nameRaw, status: r.status }));
+      localStorage.setItem('meta_ads_cache', JSON.stringify(toSave));
+    } catch(e) {}
+    if (state.inventoryData.length) renderStockPage();
+    const nAction = state.metaAds.filter(r => r.action !== 'hold').length;
+    document.getElementById('badge-roas').textContent = nAction;
+    document.getElementById('badge-roas').classList.toggle('hidden', nAction === 0);
+    document.getElementById('run-btn').disabled = nAction === 0;
+  } catch(e) {
+    showAlert('roas-result', '오류: ' + e.message, 'error');
+  } finally {
+    btn.innerHTML = '🔄 데이터 불러오기';
+    btn.disabled = false;
+  }
+}
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
@@ -878,9 +1061,8 @@ async function fetchMetaAds() {
       const isCategoryAd = productName.includes('카테고리');
       if (isCategoryAd) {
         const { nb, action } = calcBudget(budget, roas, target, capUp, capDn, minB);
-        const offReason = action === 'off' ? 'roas' : null;
         return { id: ad.id, name: productName, nameRaw: ad.name, status: ad.status,
-                 budget, nb, action, offReason, roas, spend,
+                 budget, nb, action, roas, spend,
                  inv: { online: null, offline: null, skus: null },
                  stockAlerts: [], isPresale: false, isNegativeStock: false, isCategoryAd: true };
       }
@@ -937,153 +1119,149 @@ async function fetchMetaAds() {
         }
       }
 
-      let action, nb, offReason = null;
-      if (stockKnown && shouldOff) { action = 'off'; nb = 0; offReason = 'stock'; }
-      else {
-        ({ nb, action } = calcBudget(budget, roas, target, capUp, capDn, minB));
-        if (action === 'off') offReason = 'roas';
-      }
-      return { id: ad.id, name: productName, nameRaw: ad.name, status: ad.status,
-               budget, nb, action, offReason, roas, spend, inv, stockAlerts, isPresale, isNegativeStock: (inv.online||0) < 0 };
-    });
 
-    renderRoasResult(target);
-    // localStorage에 저장 (광고명/상태 정보만, 재고/노션 관련 제외하고 가볍게)
-    try {
-      const toSave = state.metaAds.map(r => ({ id: r.id, name: r.name, nameRaw: r.nameRaw, status: r.status }));
-      localStorage.setItem('meta_ads_cache', JSON.stringify(toSave));
-    } catch(e) {}
-    // 재고 탭도 광고 집행 여부 반영해서 재렌더링
-    if (state.inventoryData.length) renderStockPage();
-    const nAction = state.metaAds.filter(r => ['up','dn','off'].includes(r.action)).length;
-    document.getElementById('badge-roas').textContent = nAction;
-    document.getElementById('badge-roas').classList.toggle('hidden', nAction === 0);
-    document.getElementById('run-btn').disabled = nAction === 0;
-  } catch(e) {
-    showAlert('roas-result', '오류: ' + e.message, 'error');
-  } finally {
-    btn.innerHTML = '🔄 데이터 불러오기';
-    btn.disabled = false;
-  }
-}
-
-function renderRoasResult(target) {
+function renderRoasResult() {
   const ads = state.metaAds;
+  const now = kstMinutes();
+  const h = Math.floor(now/60), m = now%60;
+  const timeLabel = `${h < 12 ? '오전' : '오후'} ${h > 12 ? h-12 : h}:${String(m).padStart(2,'0')}`;
+
   const nUp   = ads.filter(r=>r.action==='up').length;
   const nDn   = ads.filter(r=>r.action==='dn').length;
   const nOff  = ads.filter(r=>r.action==='off').length;
   const nHold = ads.filter(r=>r.action==='hold').length;
 
-  let html = `
+  // 발동 이력 저장 (오늘 하루치)
+  const todayKey = new Date().toISOString().split('T')[0];
+  let history = JSON.parse(localStorage.getItem('budget_rule_history') || '{}');
+  if (history.date !== todayKey) history = { date: todayKey, logs: [] };
+  const appliedRules = [...new Set(ads.filter(r=>r.appliedRule).map(r=>r.appliedRule.id))];
+  appliedRules.forEach(ruleId => {
+    if (!history.logs.find(l => l.ruleId === ruleId)) {
+      const rule = BUDGET_RULES.find(r => r.id === ruleId);
+      const count = ads.filter(r => r.appliedRule?.id === ruleId).length;
+      history.logs.push({ ruleId, label: rule.label, count, time: timeLabel });
+    }
+  });
+  try { localStorage.setItem('budget_rule_history', JSON.stringify(history)); } catch(e) {}
+
+  // 필터 상태
+  const filterAction = state._roasFilter || 'all';
+  const W = (v) => v.toLocaleString();
+
+  const filterBar = `
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+    <div style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px">
+      <i class="ti ti-clock" style="font-size:14px"></i> ${timeLabel} 기준
+    </div>
+    <div style="margin-left:auto;display:flex;gap:6px">
+      ${['all','up','dn','off','hold'].map(f => `
+        <button onclick="state._roasFilter='${f}';renderRoasResult()"
+          style="padding:5px 12px;border-radius:100px;font-size:12px;border:0.5px solid var(--border2);
+          background:${filterAction===f?'var(--accent)':'var(--surface)'};
+          color:${filterAction===f?'white':'var(--text)'};cursor:pointer">
+          ${{all:'전체',up:'증액',dn:'감액',off:'OFF',hold:'유지'}[f]}
+        </button>`).join('')}
+    </div>
+  </div>`;
+
+  const metrics = `
   <div class="metrics">
-    <div class="metric"><div class="metric-label">증액 대상</div><div class="metric-value up">${nUp}개</div></div>
-    <div class="metric"><div class="metric-label">감액 대상</div><div class="metric-value dn">${nDn}개</div></div>
-    <div class="metric"><div class="metric-label">OFF 대상</div><div class="metric-value dn">${nOff}개</div></div>
+    <div class="metric"><div class="metric-label">증액</div><div class="metric-value up">${nUp}개</div></div>
+    <div class="metric"><div class="metric-label">감액</div><div class="metric-value dn">${nDn}개</div></div>
+    <div class="metric"><div class="metric-label">OFF</div><div class="metric-value dn">${nOff}개</div></div>
     <div class="metric"><div class="metric-label">유지</div><div class="metric-value">${nHold}개</div></div>
   </div>`;
 
-  // 재고 사유 OFF 대상
-  const stockOffList = ads.filter(r => r.action==='off' && r.offReason==='stock');
-  if (stockOffList.length) {
-    html += `<div class="sl">🔴 재고 부족 — OFF 대상</div>`;
-    stockOffList.forEach(r => {
-      const stockTxt = r.inv.online !== null ? `가용재고 합계 ${r.inv.online}개` : '재고 미확인';
-      const tagLabel = r.isPresale ? '예약판매 — 3주 초과' : '품절 OFF';
-      html += `<div class="ad-card warn fade-in">
-        <div class="ad-card-top">
-          <div>
-            <div class="ad-name">${r.name}</div>
-            <div class="ad-meta">${r.nameRaw.substring(0,55)} · ${stockTxt}</div>
-          </div>
-          <span class="tag red">${tagLabel}</span>
-        </div>
-      </div>`;
-    });
-  }
+  // 테이블 행 생성
+  const thS = 'padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);white-space:nowrap;border-bottom:1px solid var(--border2);background:var(--surface2)';
+  const thR = thS + ';text-align:right';
+  const thC = thS + ';text-align:center';
 
-  // ROAS 사유 OFF 대상 (ROAS=0 또는 효율 미달)
-  const roasOffList = ads.filter(r => r.action==='off' && r.offReason==='roas');
-  if (roasOffList.length) {
-    html += `<div class="sl">📉 효율 부진 — OFF 대상</div>`;
-    roasOffList.forEach(r => {
-      const reasonTxt = r.roas === 0 ? '구매 데이터 없음 (ROAS 0%)' : `ROAS ${r.roas.toFixed(0)}% · 목표 ${target}%`;
-      html += `<div class="ad-card warn fade-in">
-        <div class="ad-card-top">
-          <div>
-            <div class="ad-name">${r.name}</div>
-            <div class="ad-meta">${r.nameRaw.substring(0,55)} · ${reasonTxt} · 소진 ₩${fmt(r.spend)}</div>
-          </div>
-          <span class="tag red">효율 OFF</span>
-        </div>
-      </div>`;
-    });
-  }
+  let filteredAds = ads;
+  if (filterAction !== 'all') filteredAds = ads.filter(r => r.action === filterAction);
 
-  // 색상 품절 경고 (광고는 유지, 경고만 표시)
-  const colorWarnList = ads.filter(r => r.action !== 'off' && r.stockAlerts && r.stockAlerts.some(a => a.type === 'color_warn'));
-  if (colorWarnList.length) {
-    html += `<div class="sl">🟡 색상 품절 경고 — 광고 유지 중</div>`;
-    colorWarnList.forEach(r => {
-      const warns = r.stockAlerts.filter(a => a.type === 'color_warn').map(a => a.label).join(' · ');
-      html += `<div class="ad-card hold fade-in">
-        <div class="ad-card-top">
-          <div>
-            <div class="ad-name">${r.name}</div>
-            <div class="ad-meta" style="color:var(--amber)">${warns}</div>
-          </div>
-          <span class="tag amber">색상 품절</span>
-        </div>
-      </div>`;
-    });
-  }
+  const rows = filteredAds.map(r => {
+    const actionTag = r.action === 'up'
+      ? `<span class="tag green">▲ 증액</span>`
+      : r.action === 'dn'
+      ? `<span class="tag amber">▼ 감액</span>`
+      : r.action === 'off'
+      ? `<span class="tag red">${r.isPresale ? '예약판매 — 3주 초과' : '품절 OFF'}</span>`
+      : `<span class="tag gray">유지</span>`;
 
-  // 예산 조정
-  const adjList = ads.filter(r=>['up','dn'].includes(r.action));
-  if (adjList.length) {
-    html += `<div class="sl">⚡ 효율 기반 — 예산 조정 대상</div>`;
-    adjList.forEach(r => {
-      const pct = Math.abs(Math.round((r.nb/r.budget-1)*100));
-      const arrow = r.action==='up' ? '▲' : '▼';
-      const roasColor = r.roas >= target ? 'var(--green)' : 'var(--red)';
-      const fillW = Math.min(r.roas/(target*2)*100, 100);
-      const targetW = Math.min(target/(target*2)*100, 100);
-      html += `<div class="ad-card ${r.action==='up'?'ok':'warn'} fade-in">
-        <div class="ad-card-top">
-          <div style="flex:1;min-width:0">
-            <div class="ad-name">${r.name}</div>
-            <div class="ad-meta">현재 ROAS <b style="color:${roasColor}">${r.roas.toFixed(0)}%</b> · 목표 ${target}% · 소진 ₩${fmt(r.spend)}</div>
-            <div class="roas-bar-wrap">
-              <div class="roas-bar-bg">
-                <div class="roas-bar-fill" style="width:${fillW}%;background:${roasColor}"></div>
-                <div class="roas-bar-target" style="left:${targetW}%"></div>
-              </div>
-              <div class="roas-bar-labels"><span>현재 ${r.roas.toFixed(0)}%</span><span>목표 ${target}%</span></div>
-            </div>
-          </div>
-          <div class="ad-right">
-            <span class="tag ${r.action==='up'?'green':'red'}">${arrow} ${pct}%</span>
-            <div class="ad-budget-change ${r.action}">₩${fmt(r.budget)} → ₩${fmt(r.nb)}</div>
-          </div>
-        </div>
-      </div>`;
-    });
-  }
+    const stockTag = r.shouldOff
+      ? `<span class="tag red" style="font-size:10px">품절</span>`
+      : r.isPresale
+      ? `<span class="tag blue" style="font-size:10px">예약판매</span>`
+      : r.highStock
+      ? `<span class="tag green" style="font-size:10px">재고 많음</span>`
+      : '';
 
-  // 유지
-  const holdList = ads.filter(r=>r.action==='hold');
-  if (holdList.length) {
-    html += `<div class="sl">✓ 유지 (${holdList.length}개)</div>`;
-    holdList.forEach(r => {
-      html += `<div class="ad-card fade-in">
-        <div class="ad-card-top">
-          <div><div class="ad-name">${r.name}</div><div class="ad-meta">ROAS ${r.roas.toFixed(0)}% · ₩${fmt(r.budget)}</div></div>
-          <span class="tag gray">유지</span>
-        </div>
-      </div>`;
-    });
-  }
+    const budgetChange = r.action !== 'hold' && r.action !== 'off'
+      ? `<span style="color:var(--muted);font-size:11px;text-decoration:line-through">₩${W(r.budget)}</span>
+         <span style="font-weight:600;color:${r.action==='up'?'var(--green)':'var(--red)'}"> → ₩${W(r.nb)}</span>`
+      : r.action === 'off'
+      ? `<span style="color:var(--red);font-weight:600">OFF</span>`
+      : `<span style="color:var(--muted)">₩${W(r.budget)}</span>`;
 
-  document.getElementById('roas-result').innerHTML = html;
+    const ruleLabel = r.appliedRule
+      ? `<span style="font-size:10px;background:var(--surface2);padding:2px 7px;border-radius:100px;color:var(--muted)">${r.appliedRule.label}</span>`
+      : r.upcomingRule
+      ? `<span style="font-size:10px;background:#FEF7ED;padding:2px 7px;border-radius:100px;color:#633806">예정: ${r.upcomingRule.label}</span>`
+      : '';
+
+    const rowBg = r.action === 'off' ? '#FEF5F5'
+      : r.action === 'up' ? '#F2FBF5'
+      : r.action === 'dn' ? '#FEFAEC'
+      : 'var(--surface)';
+
+    return `<tr style="background:${rowBg};border-bottom:0.5px solid var(--border)">
+      <td style="padding:8px 10px">
+        <div style="font-weight:600;font-size:13px">${r.name}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${ruleLabel}</div>
+      </td>
+      <td style="padding:8px 10px;text-align:center">${stockTag}</td>
+      <td style="padding:8px 10px;text-align:right;font-weight:600;color:${r.roas>=300?'var(--green)':r.roas>0?'var(--text)':'var(--muted)'}">${r.roas}%</td>
+      <td style="padding:8px 10px;text-align:right">${r.cart}</td>
+      <td style="padding:8px 10px;text-align:right">${r.purchases.toFixed(1)}</td>
+      <td style="padding:8px 10px;text-align:right">₩${W(Math.round(r.purchaseValue))}</td>
+      <td style="padding:8px 10px;text-align:right">${budgetChange}</td>
+      <td style="padding:8px 10px;text-align:center">${actionTag}</td>
+    </tr>`;
+  }).join('');
+
+  const table = `
+  <div style="overflow-x:auto;border-radius:10px;border:0.5px solid var(--border2)">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr>
+        <th style="${thS}">광고명</th>
+        <th style="${thC}">재고</th>
+        <th style="${thR}">ROAS</th>
+        <th style="${thR}">장바구니</th>
+        <th style="${thR}">구매</th>
+        <th style="${thR}">구매전환값</th>
+        <th style="${thR}">예산 변경</th>
+        <th style="${thC}">조정</th>
+      </tr></thead>
+      <tbody>${rows || '<tr><td colspan="8" style="padding:20px;text-align:center;color:var(--muted)">해당 항목 없음</td></tr>'}</tbody>
+    </table>
+  </div>`;
+
+  // 발동 이력
+  const logs = history.logs || [];
+  const historyHtml = logs.length ? `
+  <div style="margin-top:1.5rem">
+    <div class="sl">📋 오늘 발동 이력</div>
+    ${logs.map(l => `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:0.5px solid var(--border);font-size:12px">
+      <div style="min-width:52px;font-weight:600;color:var(--muted)">${l.time}</div>
+      <div style="flex:1;color:var(--muted)">${l.label}</div>
+      <div style="color:var(--muted)">${l.count}개</div>
+    </div>`).join('')}
+  </div>` : '';
+
+  document.getElementById('roas-result').innerHTML = metrics + filterBar + table + historyHtml;
 }
 
 // ── RUN ALL ──────────────────────────────────────────────────────
@@ -1095,7 +1273,7 @@ async function runAll() {
   let ok = 0, fail = 0;
   for (const r of state.metaAds) {
     try {
-      if (r.action === 'off' && !r.isPresale) {
+      if (r.action === 'off') {
         await fetch(`${PROXY}/api/meta?action=toggle_ad`,
           { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:r.id, status:'PAUSED'}) });
         ok++;
@@ -1106,7 +1284,7 @@ async function runAll() {
       }
     } catch { fail++; }
   }
-  btn.innerHTML = '▶ 승인 & 실행';
+  btn.innerHTML = '▶ 광고비 조정 실행';
   btn.disabled = false;
   showAlert('roas-result', `✅ 완료! 성공 ${ok}개 · 실패 ${fail}개`, 'success');
 }
