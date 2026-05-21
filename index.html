@@ -936,7 +936,7 @@ async function fetchMetaAds() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
-    const ads = data.data || [];
+    const ads = (data.data || []).filter(ad => ad.status === 'ACTIVE');
     state.metaAds = ads.map(ad => {
       const productName = parseAdName(ad.name || '');
       const budget = parseInt(ad.daily_budget || 0);
