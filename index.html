@@ -854,6 +854,12 @@ async function fetchMetaAds() {
   const capDn  = parseInt(document.getElementById('cap-dn').value);
   const minB   = parseInt(document.getElementById('min-budget').value);
 
+  // _stockProductMap이 없으면 재고 탭 먼저 계산 (품절 판단 기준 동기화)
+  if (!state._stockProductMap && state.inventoryData.length) {
+    if (!state._notionLoaded) await loadNotionPresale();
+    renderStockPage();
+  }
+
   try {
     const res = await fetch(`${PROXY}/api/meta?action=get_ads&hours=4`);
     const data = await res.json();
@@ -867,6 +873,17 @@ async function fetchMetaAds() {
       const roasData = ins.purchase_roas || [];
       const roas = roasData[0] ? parseFloat(roasData[0].value) * 100 : 0;
       const spend = parseFloat(ins.spend || 0);
+
+      // 카테고리 광고는 재고 체크 불필요 → ROAS만 계산
+      const isCategoryAd = productName.includes('카테고리');
+      if (isCategoryAd) {
+        const { nb, action } = calcBudget(budget, roas, target, capUp, capDn, minB);
+        return { id: ad.id, name: productName, nameRaw: ad.name, status: ad.status,
+                 budget, nb, action, roas, spend,
+                 inv: { online: null, offline: null, skus: null },
+                 stockAlerts: [], isPresale: false, isNegativeStock: false, isCategoryAd: true };
+      }
+
       const inv = matchInventory(productName);
       const stockKnown = inv.online !== null;
 
