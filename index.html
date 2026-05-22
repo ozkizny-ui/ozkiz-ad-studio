@@ -1026,7 +1026,7 @@ async function applyRainBoost() {
       await fetch(`${PROXY}/api/meta?action=update_budget`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ad_id: ad.id, daily_budget: ad.rainBudget }),
+        body: JSON.stringify({ ad_id: ad.adsetId || ad.id, daily_budget: ad.rainBudget }),
       });
       ok++;
     } catch { fail++; }
@@ -1057,7 +1057,7 @@ async function fetchMetaAds() {
     const ads = (data.data || []).filter(ad => ad.effective_status === 'ACTIVE');
     state.metaAds = ads.map(ad => {
       const productName = parseAdName(ad.name || '');
-      const budget = parseInt(ad.daily_budget || 0);
+      const budget = parseInt(ad.adset?.daily_budget || ad.daily_budget || 0);
       const ins = (ad.insights?.data || [{}])[0];
 
       // ROAS
@@ -1139,7 +1139,7 @@ async function fetchMetaAds() {
       const upcomingRule = BUDGET_RULES.find(r => r.triggerMin > now && r.check(adData));
 
       return {
-        id: ad.id, name: productName, nameRaw: ad.name, status: ad.status,
+        id: ad.id, adsetId: ad.adset?.id, name: productName, nameRaw: ad.name, status: ad.status,
         budget, nb, action, roas, spend, cart, purchases, purchaseValue,
         inv, shouldOff, isPresale, highStock, isCategoryAd,
         appliedRule, upcomingRule,
@@ -1344,6 +1344,7 @@ async function runAll() {
   btn.innerHTML = '<span class="spinner"></span> 실행 중...';
   btn.disabled = true;
   let ok = 0, fail = 0;
+  const updatedAdsets = new Set(); // 중복 adset 호출 방지
   for (const r of state.metaAds) {
     try {
       if (r.action === 'off') {
@@ -1351,8 +1352,11 @@ async function runAll() {
           { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:r.id, status:'PAUSED'}) });
         ok++;
       } else if (['up','dn'].includes(r.action)) {
+        const targetId = r.adsetId || r.id;
+        if (updatedAdsets.has(targetId)) continue; // 같은 adset 중복 스킵
+        updatedAdsets.add(targetId);
         await fetch(`${PROXY}/api/meta?action=update_budget`,
-          { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:r.id, daily_budget:r.nb}) });
+          { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:targetId, daily_budget:r.nb}) });
         ok++;
       }
     } catch { fail++; }
