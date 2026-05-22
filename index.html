@@ -1165,6 +1165,21 @@ async function fetchMetaAds() {
 }
 
 
+function setRoasSort(key) {
+  if (state._roasSortKey === key) {
+    state._roasSortDir = state._roasSortDir === 'desc' ? 'asc' : 'desc';
+  } else {
+    state._roasSortKey = key;
+    state._roasSortDir = 'desc';
+  }
+  renderRoasResult();
+}
+
+function sortIcon(key) {
+  if (state._roasSortKey !== key) return '<span style="opacity:.3">↕</span>';
+  return state._roasSortDir === 'desc' ? '↓' : '↑';
+}
+
 function renderRoasResult() {
   const ads = state.metaAds;
   const now = kstMinutes();
@@ -1226,6 +1241,14 @@ function renderRoasResult() {
   let filteredAds = ads;
   if (filterAction !== 'all') filteredAds = ads.filter(r => r.action === filterAction);
 
+  // 정렬
+  const sortKey = state._roasSortKey || 'spend';
+  const sortDir = state._roasSortDir || 'desc';
+  filteredAds = [...filteredAds].sort((a, b) => {
+    const va = a[sortKey] ?? 0, vb = b[sortKey] ?? 0;
+    return sortDir === 'desc' ? vb - va : va - vb;
+  });
+
   const rows = filteredAds.map(r => {
     const actionTag = r.action === 'up'
       ? `<span class="tag green">▲ 증액</span>`
@@ -1285,12 +1308,12 @@ function renderRoasResult() {
       <thead><tr>
         <th style="${thS}">제품명 / 소재명</th>
         <th style="${thC}">재고</th>
-        <th style="${thR}">ROAS</th>
-        <th style="${thR}">장바구니</th>
-        <th style="${thR}">구매</th>
-        <th style="${thR}">구매전환값</th>
-        <th style="${thR}">소진액</th>
-        <th style="${thR}">현재 예산</th>
+        <th style="${thR};cursor:pointer" onclick="setRoasSort('roas')">${sortIcon('roas')} ROAS</th>
+        <th style="${thR};cursor:pointer" onclick="setRoasSort('cart')">${sortIcon('cart')} 장바구니</th>
+        <th style="${thR};cursor:pointer" onclick="setRoasSort('purchases')">${sortIcon('purchases')} 구매</th>
+        <th style="${thR};cursor:pointer" onclick="setRoasSort('purchaseValue')">${sortIcon('purchaseValue')} 구매전환값</th>
+        <th style="${thR};cursor:pointer;color:var(--accent)" onclick="setRoasSort('spend')">${sortIcon('spend')} 소진액</th>
+        <th style="${thR};cursor:pointer" onclick="setRoasSort('budget')">${sortIcon('budget')} 현재 예산</th>
         <th style="${thR}">조정 예산</th>
         <th style="${thC}">조정</th>
       </tr></thead>
