@@ -1273,9 +1273,10 @@ function renderRoasResult() {
       ? `<span style="color:var(--red);font-weight:600">OFF</span>`
       : `<span style="color:var(--muted)">₩${W(r.budget)}</span>`;
 
-    const ruleLabel = r.appliedRule
+    const now = kstMinutes();
+    const ruleLabel = r.appliedRule && Math.abs(r.appliedRule.triggerMin - now) <= 180
       ? `<span style="font-size:10px;background:var(--surface2);padding:2px 7px;border-radius:100px;color:var(--muted)">${r.appliedRule.label}</span>`
-      : r.upcomingRule
+      : r.upcomingRule && (r.upcomingRule.triggerMin - now) <= 180
       ? `<span style="font-size:10px;background:#FEF7ED;padding:2px 7px;border-radius:100px;color:#633806">예정: ${r.upcomingRule.label}</span>`
       : '';
 
@@ -1291,10 +1292,10 @@ function renderRoasResult() {
         <div style="margin-top:3px">${ruleLabel}</div>
       </td>
       <td style="padding:8px 10px;text-align:center">${stockTag}</td>
-      <td style="padding:8px 10px;text-align:right;font-weight:600;color:${r.roas>=300?'var(--green)':r.roas>0?'var(--text)':'var(--muted)'}">${r.roas}%</td>
       <td style="padding:8px 10px;text-align:right">${r.cart}</td>
       <td style="padding:8px 10px;text-align:right">${r.purchases.toFixed(1)}</td>
       <td style="padding:8px 10px;text-align:right">₩${W(Math.round(r.purchaseValue))}</td>
+      <td style="padding:8px 10px;text-align:right;font-weight:600;color:${r.roas>=300?'var(--green)':r.roas>0?'var(--text)':'var(--muted)'}">${r.roas}%</td>
       <td style="padding:8px 10px;text-align:right;color:var(--muted)">₩${W(Math.round(r.spend))}</td>
       <td style="padding:8px 10px;text-align:right;color:var(--muted)">₩${W(r.budget)}</td>
       <td style="padding:8px 10px;text-align:right">${budgetChange}</td>
@@ -1308,10 +1309,10 @@ function renderRoasResult() {
       <thead><tr>
         <th style="${thS}">제품명 / 소재명</th>
         <th style="${thC}">재고</th>
-        <th style="${thR};cursor:pointer" onclick="setRoasSort('roas')">${sortIcon('roas')} ROAS</th>
         <th style="${thR};cursor:pointer" onclick="setRoasSort('cart')">${sortIcon('cart')} 장바구니</th>
         <th style="${thR};cursor:pointer" onclick="setRoasSort('purchases')">${sortIcon('purchases')} 구매</th>
         <th style="${thR};cursor:pointer" onclick="setRoasSort('purchaseValue')">${sortIcon('purchaseValue')} 구매전환값</th>
+        <th style="${thR};cursor:pointer;color:var(--accent)" onclick="setRoasSort('roas')">${sortIcon('roas')} ROAS</th>
         <th style="${thR};cursor:pointer;color:var(--accent)" onclick="setRoasSort('spend')">${sortIcon('spend')} 소진액</th>
         <th style="${thR};cursor:pointer" onclick="setRoasSort('budget')">${sortIcon('budget')} 현재 예산</th>
         <th style="${thR}">조정 예산</th>
