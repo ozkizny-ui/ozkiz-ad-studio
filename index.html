@@ -1366,11 +1366,13 @@ async function runAll() {
         ok++;
       } else if (['up','dn'].includes(r.action)) {
         const targetId = r.adsetId || r.id;
-        if (updatedAdsets.has(targetId)) continue; // 같은 adset 중복 스킵
+        if (updatedAdsets.has(targetId)) { console.log(`⏭ 중복 스킵: ${r.name} adsetId=${targetId}`); continue; }
         updatedAdsets.add(targetId);
-        await fetch(`${PROXY}/api/meta?action=update_budget`,
+        const resp = await fetch(`${PROXY}/api/meta?action=update_budget`,
           { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:targetId, daily_budget:r.nb}) });
-        ok++;
+        const respData = await resp.json();
+        console.log(`예산 변경 [${r.name}] adsetId=${targetId} budget=${r.nb}`, respData);
+        if (respData.error) { console.error('❌ 실패:', respData.error); fail++; } else ok++;
       }
     } catch { fail++; }
   }
