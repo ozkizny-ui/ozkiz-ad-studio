@@ -317,6 +317,10 @@ input,select,textarea{font-family:var(--font-body)}
     <span class="nav-label">재고 연동 현황</span>
   </button>
 
+  <button class="nav-item" data-page="rules">
+    <span class="nav-icon">⚙️</span>
+    <span class="nav-label">예산 규칙 편집</span>
+  </button>
 
   <button class="nav-item" data-page="usp">
     <span class="nav-icon">✦</span>
@@ -395,6 +399,15 @@ input,select,textarea{font-family:var(--font-body)}
       왼쪽 사이드바에서 이지어드민 엑셀을 먼저 업로드해주세요
     </div>
   </div>
+</div>
+
+<!-- PAGE: RULES -->
+<div class="page" id="page-rules">
+  <div class="page-header">
+    <div class="page-title">예산 규칙 편집</div>
+    <div class="page-sub">시간대별 자동 예산 조정 규칙 · 영구 저장</div>
+  </div>
+  <div id="rules-editor"></div>
 </div>
 
 <!-- PAGE: USP -->
@@ -480,6 +493,7 @@ const state = {
 // ── INIT ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   updateStatusUI();
+  loadCustomRules(); // 저장된 규칙 커스터마이즈 로드
   // 카페24 인증 결과 처리
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('auth') === 'success') {
@@ -557,6 +571,7 @@ function initNav() {
       document.getElementById('page-' + btn.dataset.page).classList.add('active');
       // 페이지별 렌더링
       if (btn.dataset.page === 'stock') renderStockPage();
+      if (btn.dataset.page === 'rules') renderRulesEditor();
       if (btn.dataset.page === 'adsetting') renderAdSettingPage();
     });
   });
@@ -797,8 +812,14 @@ const BUDGET_RULES = [
   },
   {
     id: 'r3', triggerMin: 8*60+10, dir: 'up',
-    label: '오전 8:10 · ROAS ≥250% → 구매전환값의 120%',
-    check: (ad) => ad.roas >= 250 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    label: '오전 8:10 · ROAS ≥300% → 구매전환값의 100%',
+    check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    calc:  (ad) => Math.round(ad.purchaseValue * 1.0 / 1000) * 1000,
+  },
+  {
+    id: 'r3b', triggerMin: 8*60+20, dir: 'up',
+    label: '오전 8:20 · 구매 ≥2 + ROAS ≥250% → 구매전환값의 120%',
+    check: (ad) => ad.purchases >= 2 && ad.roas >= 250 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
     calc:  (ad) => Math.round(ad.purchaseValue * 1.2 / 1000) * 1000,
   },
   {
@@ -1067,6 +1088,7 @@ async function fetchMetaAds() {
     if (data.error) throw new Error(data.error);
 
     const ads = (data.data || []).filter(ad => ad.effective_status === 'ACTIVE');
+    state._selectedAds = null; // 새 데이터 로드시 전체 선택으로 리셋
     state.metaAds = ads.map(ad => {
       const productName = parseAdName(ad.name || '');
       const budget = parseInt(ad.adset?.daily_budget || ad.daily_budget || 0);
@@ -1107,7 +1129,7 @@ async function fetchMetaAds() {
       let shouldOff = false, isPresale = false;
       if (!isCategoryAd && mappedStatus) {
         if (mappedStatus === 'size_warn') shouldOff = true;
-        else if (mappedStatus === 'presale_far') { shouldOff = true; isPresale = true; }
+        else if (mappedStatus === 'presale_far') { isPresale = true; } // 예약판매는 OFF 안 함
         else if (mappedStatus === 'presale_near') { isPresale = true; }
       } else if (!isCategoryAd && inv.skus) {
         const { alerts } = analyzeStockAlerts(inv.skus);
@@ -1117,7 +1139,7 @@ async function fetchMetaAds() {
           isPresale = !!(ne?.arrivalDate); shouldOff = !isPresale;
         } else if (sizeWarn) {
           const ne = (state._notionPresale||[]).find(e => pKey.includes(e.name.toLowerCase().replace(/[-\s]/g,'')) || e.name.toLowerCase().replace(/[-\s]/g,'').includes(pKey));
-          if (ne?.arrivalDate) { const d = Math.ceil((new Date(ne.arrivalDate)-new Date())/86400000); isPresale=true; shouldOff=d>21; }
+          if (ne?.arrivalDate) { const d = Math.ceil((new Date(ne.arrivalDate)-new Date())/86400000); isPresale=true; shouldOff=false; } // 예약판매는 OFF 안 함
           else shouldOff = true;
         }
       }
@@ -1190,6 +1212,93 @@ function setRoasSort(key) {
 function sortIcon(key) {
   if (state._roasSortKey !== key) return '<span style="opacity:.3">↕</span>';
   return state._roasSortDir === 'desc' ? '↓' : '↑';
+}
+
+// ── 규칙 편집 ────────────────────────────────────────────────────
+function loadCustomRules() {
+  try {
+    const saved = localStorage.getItem('custom_budget_rules');
+    if (saved) {
+      const customs = JSON.parse(saved);
+      customs.forEach(c => {
+        const rule = BUDGET_RULES.find(r => r.id === c.id);
+        if (rule) {
+          rule.label      = c.label;
+          rule.triggerMin = c.triggerMin;
+          rule.disabled   = c.disabled || false;
+        }
+      });
+    }
+  } catch(e) {}
+}
+
+function saveCustomRules() {
+  const toSave = BUDGET_RULES.map(r => ({
+    id: r.id, label: r.label, triggerMin: r.triggerMin, disabled: r.disabled || false
+  }));
+  localStorage.setItem('custom_budget_rules', JSON.stringify(toSave));
+}
+
+function renderRulesEditor() {
+  const el = document.getElementById('rules-editor');
+  if (!el) return;
+
+  const fmtTime = (min) => {
+    const h = Math.floor(min/60), m = min%60;
+    return `${h < 12 ? '오전' : '오후'} ${h > 12 ? h-12 : h === 0 ? 12 : h}:${String(m).padStart(2,'0')}`;
+  };
+
+  let html = `
+  <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">규칙을 비활성화하거나 발동 시각을 수정할 수 있어요. 변경사항은 자동 저장돼요.</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="background:var(--surface2);border-bottom:1px solid var(--border2)">
+      <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:48px">활성</th>
+      <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px">규칙 설명</th>
+      <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:140px">발동 시각</th>
+      <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:60px">방향</th>
+    </tr></thead><tbody>`;
+
+  BUDGET_RULES.forEach((rule, i) => {
+    const disabled = rule.disabled || false;
+    const h = Math.floor(rule.triggerMin/60);
+    const m = rule.triggerMin % 60;
+    const rowBg = disabled ? 'opacity:.45' : '';
+    html += `<tr style="border-bottom:0.5px solid var(--border);${rowBg}">
+      <td style="padding:8px 12px;text-align:center">
+        <input type="checkbox" ${disabled ? '' : 'checked'}
+          onchange="BUDGET_RULES[${i}].disabled=!this.checked;saveCustomRules();renderRulesEditor()"
+          style="width:16px;height:16px;cursor:pointer">
+      </td>
+      <td style="padding:8px 12px;color:var(--text)">${rule.label}</td>
+      <td style="padding:8px 12px;text-align:center">
+        <input type="number" value="${h}" min="0" max="23" style="width:36px;padding:3px 5px;border:1px solid var(--border2);border-radius:4px;font-size:12px;text-align:center"
+          onchange="BUDGET_RULES[${i}].triggerMin=parseInt(this.value)*60+${m};saveCustomRules()">
+        :
+        <input type="number" value="${m}" min="0" max="59" style="width:36px;padding:3px 5px;border:1px solid var(--border2);border-radius:4px;font-size:12px;text-align:center"
+          onchange="BUDGET_RULES[${i}].triggerMin=${h}*60+parseInt(this.value);saveCustomRules()">
+      </td>
+      <td style="padding:8px 12px;text-align:center">
+        <span class="tag ${rule.dir==='up'?'green':'red'}" style="font-size:10px">${rule.dir==='up'?'▲ 증액':'▼ 감액'}</span>
+      </td>
+    </tr>`;
+  });
+
+  html += `</tbody></table>`;
+  el.innerHTML = html;
+}
+
+// ── 체크박스 선택 실행 ───────────────────────────────────────────
+function toggleAdSelect(id, checked) {
+  if (!state._selectedAds) state._selectedAds = new Set(state.metaAds.filter(r=>r.action!=='hold').map(r=>r.id));
+  if (checked) state._selectedAds.add(id);
+  else state._selectedAds.delete(id);
+}
+
+function toggleSelectAll(checked) {
+  state._selectedAds = checked
+    ? new Set(state.metaAds.filter(r=>r.action!=='hold').map(r=>r.id))
+    : new Set();
+  renderRoasResult();
 }
 
 function renderRoasResult() {
@@ -1297,7 +1406,11 @@ function renderRoasResult() {
       : r.action === 'dn' ? '#FEFAEC'
       : 'var(--surface)';
 
+    const isSelected = !state._selectedAds || state._selectedAds.has(r.id);
     return `<tr style="background:${rowBg};border-bottom:0.5px solid var(--border)">
+      <td style="padding:8px 10px;text-align:center">
+        ${r.action !== 'hold' ? `<input type="checkbox" ${isSelected?'checked':''} onchange="toggleAdSelect('${r.id}',this.checked)" style="width:15px;height:15px;cursor:pointer">` : ''}
+      </td>
       <td style="padding:8px 10px;min-width:160px">
         <div style="font-weight:600;font-size:13px">${r.name}</div>
         <div style="font-size:10px;color:var(--muted);margin-top:2px;word-break:break-all">${r.nameRaw}</div>
@@ -1319,6 +1432,7 @@ function renderRoasResult() {
   <div style="overflow-x:auto;border-radius:10px;border:0.5px solid var(--border2)">
     <table style="width:100%;border-collapse:collapse;font-size:12px">
       <thead><tr>
+        <th style="${thC};width:40px"><input type="checkbox" checked onchange="toggleSelectAll(this.checked)" style="width:15px;height:15px;cursor:pointer"></th>
         <th style="${thS}">제품명 / 소재명</th>
         <th style="${thC}">재고</th>
         <th style="${thR};cursor:pointer" onclick="setRoasSort('cart')">${sortIcon('cart')} 장바구니</th>
@@ -1330,7 +1444,7 @@ function renderRoasResult() {
         <th style="${thR}">조정 예산</th>
         <th style="${thC}">조정</th>
       </tr></thead>
-      <tbody>${rows || '<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted)">해당 항목 없음</td></tr>'}</tbody>
+      <tbody>${rows || '<tr><td colspan="11" style="padding:20px;text-align:center;color:var(--muted)">해당 항목 없음</td></tr>'}</tbody>
     </table>
   </div>`;
 
@@ -1358,7 +1472,10 @@ async function runAll() {
   btn.disabled = true;
   let ok = 0, fail = 0;
   const updatedAdsets = new Set(); // 중복 adset 호출 방지
-  for (const r of state.metaAds) {
+  const toRun = state.metaAds.filter(r =>
+    !state._selectedAds || state._selectedAds.has(r.id)
+  );
+  for (const r of toRun) {
     try {
       if (r.action === 'off') {
         await fetch(`${PROXY}/api/meta?action=toggle_ad`,
@@ -2321,7 +2438,7 @@ function renderStockPage() {
   });
 
   // 분류
-  const alertItems = products.filter(p => ['size_warn','presale_far','color_warn'].includes(p.stockStatus));
+  const alertItems = products.filter(p => ['size_warn','color_warn'].includes(p.stockStatus));
   const presaleNear = products.filter(p => p.stockStatus === 'presale_near');
   const ok   = products.filter(p => p.stockStatus === 'ok');
 
