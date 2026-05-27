@@ -455,7 +455,9 @@ const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsIn
 const sbHeaders = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
 
 async function sbGet(table, select='*') {
-  const r = await fetch(`${SB_URL}/rest/v1/${table}?select=${select}`, { headers: sbHeaders });
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?select=${select}`, {
+    headers: { ...sbHeaders, 'Range-Unit': 'items', 'Range': '0-999999' }
+  });
   return r.json();
 }
 async function sbUpsert(table, rows) {
