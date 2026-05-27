@@ -312,14 +312,13 @@ input,select,textarea{font-family:var(--font-body)}
     <span class="nav-label">Meta 광고 예산 조정</span>
     <span class="nav-badge hidden" id="badge-roas">0</span>
   </button>
-  <button class="nav-item" data-page="stock">
-    <span class="nav-icon">📦</span>
-    <span class="nav-label">재고 연동 현황</span>
-  </button>
-
   <button class="nav-item" data-page="rules">
     <span class="nav-icon">⚙️</span>
     <span class="nav-label">예산 규칙 편집</span>
+  </button>
+  <button class="nav-item" data-page="stock">
+    <span class="nav-icon">📦</span>
+    <span class="nav-label">재고 연동 현황</span>
   </button>
 
   <button class="nav-item" data-page="usp">
@@ -347,17 +346,6 @@ input,select,textarea{font-family:var(--font-body)}
         <div class="upload-zone-text" id="strategy-text">📂 전략파일 업로드</div>
       </label>
     </div>
-  </div>
-
-  <div class="sb-upload" style="border-top:1px solid var(--border);padding-top:12px">
-    <span class="sb-upload-label">Gemini API 키</span>
-    <div style="display:flex;gap:4px">
-      <input type="password" id="gemini-key-input" placeholder="AIza..." 
-        style="flex:1;padding:5px 8px;font-size:11px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);min-width:0">
-      <button onclick="saveGeminiKey()" 
-        style="padding:5px 8px;font-size:11px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);cursor:pointer;white-space:nowrap">저장</button>
-    </div>
-    <div id="gemini-key-status" style="font-size:10px;color:var(--muted);margin-top:3px"></div>
   </div>
 
 </aside>
@@ -460,6 +448,38 @@ input,select,textarea{font-family:var(--font-body)}
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────
 const PROXY   = 'https://ozkiz-proxy.vercel.app';
+
+// ── Supabase ──────────────────────────────────────────────────────
+const SB_URL  = 'https://baucagnqmtmaqlybjyzc.supabase.co';
+const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJhdWNhZ25xbXRtYXFseWJqeXpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4MTU5MjksImV4cCI6MjA5NTM5MTkyOX0.dSqKeeb52GqM2pkegadLhBiBzzqmcZ1vAVm5aBvr0pA';
+const sbHeaders = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
+
+async function sbGet(table, select='*') {
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?select=${select}`, { headers: sbHeaders });
+  return r.json();
+}
+async function sbUpsert(table, rows) {
+  await fetch(`${SB_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(rows),
+  });
+}
+async function sbDelete(table) {
+  await fetch(`${SB_URL}/rest/v1/${table}?id=gte.0`, { method: 'DELETE', headers: sbHeaders });
+}
+async function sbSettingGet(key) {
+  const r = await fetch(`${SB_URL}/rest/v1/app_settings?key=eq.${key}&select=value`, { headers: sbHeaders });
+  const d = await r.json();
+  return d[0]?.value || null;
+}
+async function sbSettingSet(key, value) {
+  await fetch(`${SB_URL}/rest/v1/app_settings`, {
+    method: 'POST',
+    headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({ key, value }),
+  });
+}
 const GEMINI_KEY = ''; // 사용자가 직접 입력하거나 별도 관리
 const MALL_ID = 'ozkiz';
 const META_BASE = 'https://graph.facebook.com/v21.0';
@@ -470,7 +490,7 @@ const EXCLUDE_KEYWORDS = ['수선', '우일신', '일상화보', '옷체부', '�
 // ── STATE ────────────────────────────────────────────────────────
 const state = {
   cafe24Authenticated: false,
-  geminiKey: localStorage.getItem('gemini_key') || '',
+  geminiKey: '',
   inventoryData: [],
   metaAds: JSON.parse(localStorage.getItem('meta_ads_cache') || '[]'),
   productData: null,
@@ -493,8 +513,7 @@ const state = {
 // ── INIT ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   updateStatusUI();
-  loadCustomRules(); // 저장된 규칙 커스터마이즈 로드
-  // 카페24 인증 결과 처리
+  loadCustomRules();
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('auth') === 'success') {
     history.replaceState({}, '', window.location.pathname);
@@ -504,24 +523,14 @@ document.addEventListener('DOMContentLoaded', () => {
     history.replaceState({}, '', window.location.pathname);
   }
 
-  // localStorage에서 파일 데이터 복원 (새로고침 후에도 유지)
+  // Supabase에서 데이터 로드 (비동기)
+  loadFromSupabase();
+
+  // meta_ads_cache는 localStorage 유지 (세션성)
   try {
-    const savedInv = localStorage.getItem('inventory_data');
-    if (savedInv) {
-      state.inventoryData = JSON.parse(savedInv);
-      document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 (저장됨)`;
-      const savedDate = localStorage.getItem('inventory_upload_date');
-      if (savedDate) {
-        const el = document.getElementById('upload-date-label');
-        if (el) { el.textContent = `업로드: ${savedDate}`; el.style.display = 'block'; }
-      }
-    }
-    const savedStrat = localStorage.getItem('strategy_data');
-    if (savedStrat) {
-      state.strategyData = JSON.parse(savedStrat);
-      document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 (저장됨)`;
-    }
-  } catch(e) { console.log('복원 실패:', e); }
+    const saved = localStorage.getItem('meta_ads_cache');
+    if (saved) state.metaAds = JSON.parse(saved);
+  } catch(e) {}
 
   initNav();
   initUpload();
@@ -577,6 +586,63 @@ function initNav() {
   });
 }
 
+// ── Supabase 데이터 로드 ─────────────────────────────────────────
+async function loadFromSupabase() {
+  try {
+    // 이지어드민 재고
+    const invRows = await sbGet('inventory', 'name,option,avail,store,updated_at');
+    if (invRows && invRows.length) {
+      state.inventoryData = invRows.map(r => ({
+        '상품명': r.name, '옵션': r.option || '', '가용재고': r.avail, '매장총재고': r.store,
+      }));
+      document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 (저장됨)`;
+      // 업로드 날짜 (첫 번째 행의 updated_at)
+      if (invRows[0]?.updated_at) {
+        const d = new Date(invRows[0].updated_at);
+        const kst = new Date(d.getTime() + 9*3600*1000);
+        const dateStr = `${kst.getUTCFullYear()}.${String(kst.getUTCMonth()+1).padStart(2,'0')}.${String(kst.getUTCDate()).padStart(2,'0')} ${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}`;
+        const el = document.getElementById('upload-date-label');
+        if (el) { el.textContent = `업로드: ${dateStr}`; el.style.display = 'block'; }
+      }
+    }
+
+    // 전략파일
+    const stratRows = await sbGet('strategy', 'name,season,category');
+    if (stratRows && stratRows.length) {
+      state.strategyData = stratRows.map(r => ({ name: r.name, season: r.season||'', category: r.category||'' }));
+      document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 (저장됨)`;
+    }
+
+    // 재고 데이터 있으면 재고 탭 렌더
+    if (state.inventoryData.length) renderStockPage();
+
+  } catch(e) { console.log('Supabase 로드 실패:', e); }
+}
+
+// ── Supabase 데이터 저장 ─────────────────────────────────────────
+async function saveInventoryToSupabase(slim) {
+  try {
+    await sbDelete('inventory');
+    // 1000개씩 청크로 나눠서 업로드
+    for (let i = 0; i < slim.length; i += 1000) {
+      const chunk = slim.slice(i, i+1000).map(r => ({
+        name: r['상품명'], option: r['옵션'], avail: r['가용재고'], store: r['매장총재고'],
+      }));
+      await sbUpsert('inventory', chunk);
+    }
+  } catch(e) { console.log('재고 Supabase 저장 실패:', e); }
+}
+
+async function saveStrategyToSupabase(data) {
+  try {
+    await fetch(`${SB_URL}/rest/v1/strategy?id=gte.0`, { method: 'DELETE', headers: sbHeaders });
+    const rows = data.map(r => ({ name: r.name, season: r.season, category: r.category }));
+    for (let i = 0; i < rows.length; i += 1000) {
+      await sbUpsert('strategy', rows.slice(i, i+1000));
+    }
+  } catch(e) { console.log('전략파일 Supabase 저장 실패:', e); }
+}
+
 // ── UPLOAD ───────────────────────────────────────────────────────
 function initUpload() {
   document.getElementById('inventory-file').addEventListener('change', e => {
@@ -599,11 +665,11 @@ function initUpload() {
             '상품명': r[nameKey]||'', '옵션': r[optKey]||'',
             '가용재고': r[availKey]||0, '매장총재고': r[storeKey]||0
           }));
-          localStorage.setItem('inventory_data', JSON.stringify(slim));
-          // 업로드 날짜 저장
+          // Supabase에 저장
+          saveInventoryToSupabase(slim);
+          // 업로드 날짜 표시
           const now = new Date();
           const dateStr = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-          localStorage.setItem('inventory_upload_date', dateStr);
           const dateEl = document.getElementById('upload-date-label');
           if (dateEl) { dateEl.textContent = `업로드: ${dateStr}`; dateEl.style.display = 'block'; }
         } catch(e) { console.log('저장 실패:', e); }
@@ -639,7 +705,7 @@ function initUpload() {
         })).filter(r => r.name);
         // localStorage에 저장
         try {
-          localStorage.setItem('strategy_data', JSON.stringify(state.strategyData));
+          saveStrategyToSupabase(state.strategyData);
         } catch(e) {}
         document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 로드됨`;
         if (state.inventoryData.length) { state._stockProductMap = null; renderStockPage(); }
@@ -651,9 +717,9 @@ function initUpload() {
 
 // ── GEMINI KEY INPUT ─────────────────────────────────────────────
 function initGeminiInput() {
-  const key = localStorage.getItem('gemini_key');
+  // Gemini 키는 loadFromSupabase()에서 로드됨
+  const key = state.geminiKey;
   if (key) {
-    state.geminiKey = key;
     const input = document.getElementById('gemini-key-input');
     if (input) input.value = key;
     const status = document.getElementById('gemini-key-status');
@@ -670,7 +736,7 @@ function saveGeminiKey() {
     return;
   }
   state.geminiKey = key;
-  localStorage.setItem('gemini_key', key);
+  sbSettingSet('gemini_key', key);
   if (status) status.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>';
 }
 
@@ -2855,11 +2921,6 @@ async function selectProduct(no, name) {
 // ── GEMINI ANALYZE ───────────────────────────────────────────────
 async function analyzeUSP() {
   if (!state.productData) return;
-  let geminiKey = state.geminiKey;
-  if (!geminiKey) {
-    alert('사이드바 하단에서 Gemini API 키를 먼저 저장해주세요!');
-    return;
-  }
 
   const btn = document.getElementById('analyze-btn');
   btn.innerHTML = '<span class="spinner" style="border-top-color:var(--accent);border-color:rgba(0,0,0,.1)"></span> AI 분석 중...';
@@ -2880,18 +2941,15 @@ ${reviewTexts.map(r=>`- ${r}`).join('\n')}
 {"usp_list":[{"title":"제목","desc":"설명","evidence":"리뷰근거"},{"title":"제목","desc":"설명","evidence":"리뷰근거"},{"title":"제목","desc":"설명","evidence":"리뷰근거"},{"title":"제목","desc":"설명","evidence":"리뷰근거"},{"title":"제목","desc":"설명","evidence":"리뷰근거"}],"ad_copies":[{"headline":"헤드라인(15자이내)","body":"본문(40자이내)","cta":"CTA","tone":"말투"},{"headline":"헤드라인","body":"본문","cta":"CTA","tone":"말투"},{"headline":"헤드라인","body":"본문","cta":"CTA","tone":"말투"},{"headline":"헤드라인","body":"본문","cta":"CTA","tone":"말투"},{"headline":"헤드라인","body":"본문","cta":"CTA","tone":"말투"}],"ad_concepts":[{"concept":"컨셉","format":"카드뉴스/릴스/배너","scenario":"시나리오","key_visual":"비주얼","target_moment":"모먼트"},{"concept":"컨셉","format":"형식","scenario":"시나리오","key_visual":"비주얼","target_moment":"모먼트"},{"concept":"컨셉","format":"형식","scenario":"시나리오","key_visual":"비주얼","target_moment":"모먼트"},{"concept":"컨셉","format":"형식","scenario":"시나리오","key_visual":"비주얼","target_moment":"모먼트"},{"concept":"컨셉","format":"형식","scenario":"시나리오","key_visual":"비주얼","target_moment":"모먼트"}]}`;
 
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        contents:[{parts:[{text:geminiPrompt}]}],
-        generationConfig:{ maxOutputTokens:4096, temperature:0.7 }
-      })
+    const res = await fetch(`${PROXY}/api/claude`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: geminiPrompt, max_tokens: 4096 }),
     });
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    if (!raw) throw new Error('Gemini 응답이 비어있습니다');
+    if (data.error) throw new Error(data.error);
+    const raw = data.text || '';
+    if (!raw) throw new Error('Claude 응답이 비어있습니다');
     // JSON 추출 (```json ... ``` 또는 { ... } 패턴)
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('JSON 형식을 찾을 수 없습니다: ' + raw.slice(0,100));
