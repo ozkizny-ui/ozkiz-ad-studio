@@ -455,10 +455,19 @@ const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsIn
 const sbHeaders = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
 
 async function sbGet(table, select='*') {
-  const r = await fetch(`${SB_URL}/rest/v1/${table}?select=${select}`, {
-    headers: { ...sbHeaders, 'Range-Unit': 'items', 'Range': '0-999999' }
-  });
-  return r.json();
+  const PAGE = 1000;
+  let all = [];
+  for (let from = 0; ; from += PAGE) {
+    const to = from + PAGE - 1;
+    const r = await fetch(`${SB_URL}/rest/v1/${table}?select=${select}`, {
+      headers: { ...sbHeaders, 'Range-Unit': 'items', 'Range': `${from}-${to}` }
+    });
+    const chunk = await r.json();
+    if (!Array.isArray(chunk) || chunk.length === 0) break;
+    all = all.concat(chunk);
+    if (chunk.length < PAGE) break;
+  }
+  return all;
 }
 async function sbUpsert(table, rows) {
   await fetch(`${SB_URL}/rest/v1/${table}`, {
