@@ -1243,18 +1243,13 @@ function renderRulesEditor() {
   const el = document.getElementById('rules-editor');
   if (!el) return;
 
-  const fmtTime = (min) => {
-    const h = Math.floor(min/60), m = min%60;
-    return `${h < 12 ? '오전' : '오후'} ${h > 12 ? h-12 : h === 0 ? 12 : h}:${String(m).padStart(2,'0')}`;
-  };
-
   let html = `
-  <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">규칙을 비활성화하거나 발동 시각을 수정할 수 있어요. 변경사항은 자동 저장돼요.</div>
+  <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">규칙 설명, 발동 시각, 활성 여부를 수정하고 저장 버튼을 눌러주세요.</div>
   <table style="width:100%;border-collapse:collapse;font-size:12px">
     <thead><tr style="background:var(--surface2);border-bottom:1px solid var(--border2)">
       <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:48px">활성</th>
       <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px">규칙 설명</th>
-      <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:140px">발동 시각</th>
+      <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:120px">발동 시각</th>
       <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:60px">방향</th>
     </tr></thead><tbody>`;
 
@@ -1265,17 +1260,19 @@ function renderRulesEditor() {
     const rowBg = disabled ? 'opacity:.45' : '';
     html += `<tr style="border-bottom:0.5px solid var(--border);${rowBg}">
       <td style="padding:8px 12px;text-align:center">
-        <input type="checkbox" ${disabled ? '' : 'checked'}
-          onchange="BUDGET_RULES[${i}].disabled=!this.checked;saveCustomRules();renderRulesEditor()"
+        <input type="checkbox" id="rule-active-${i}" ${disabled ? '' : 'checked'}
           style="width:16px;height:16px;cursor:pointer">
       </td>
-      <td style="padding:8px 12px;color:var(--text)">${rule.label}</td>
-      <td style="padding:8px 12px;text-align:center">
-        <input type="number" value="${h}" min="0" max="23" style="width:36px;padding:3px 5px;border:1px solid var(--border2);border-radius:4px;font-size:12px;text-align:center"
-          onchange="BUDGET_RULES[${i}].triggerMin=parseInt(this.value)*60+${m};saveCustomRules()">
-        :
-        <input type="number" value="${m}" min="0" max="59" style="width:36px;padding:3px 5px;border:1px solid var(--border2);border-radius:4px;font-size:12px;text-align:center"
-          onchange="BUDGET_RULES[${i}].triggerMin=${h}*60+parseInt(this.value);saveCustomRules()">
+      <td style="padding:8px 12px">
+        <input type="text" id="rule-label-${i}" value="${rule.label}"
+          style="width:100%;padding:5px 8px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
+      </td>
+      <td style="padding:8px 12px;text-align:center;white-space:nowrap">
+        <input type="number" id="rule-h-${i}" value="${h}" min="0" max="23"
+          style="width:46px;padding:4px 5px;border:1px solid var(--border2);border-radius:6px;font-size:12px;text-align:center;background:var(--surface);color:var(--text)">
+        <span style="margin:0 2px">:</span>
+        <input type="number" id="rule-m-${i}" value="${m}" min="0" max="59"
+          style="width:46px;padding:4px 5px;border:1px solid var(--border2);border-radius:6px;font-size:12px;text-align:center;background:var(--surface);color:var(--text)">
       </td>
       <td style="padding:8px 12px;text-align:center">
         <span class="tag ${rule.dir==='up'?'green':'red'}" style="font-size:10px">${rule.dir==='up'?'▲ 증액':'▼ 감액'}</span>
@@ -1283,8 +1280,32 @@ function renderRulesEditor() {
     </tr>`;
   });
 
-  html += `</tbody></table>`;
+  html += `</tbody></table>
+  <div style="margin-top:16px;text-align:right">
+    <button onclick="saveRulesFromEditor()" style="padding:9px 24px;border-radius:8px;background:var(--accent);color:white;font-size:13px;font-weight:600;border:none;cursor:pointer">💾 저장</button>
+  </div>`;
+
   el.innerHTML = html;
+}
+
+function saveRulesFromEditor() {
+  BUDGET_RULES.forEach((rule, i) => {
+    const labelEl  = document.getElementById(`rule-label-${i}`);
+    const hEl      = document.getElementById(`rule-h-${i}`);
+    const mEl      = document.getElementById(`rule-m-${i}`);
+    const activeEl = document.getElementById(`rule-active-${i}`);
+    if (labelEl)  rule.label      = labelEl.value.trim();
+    if (hEl && mEl) rule.triggerMin = parseInt(hEl.value)*60 + parseInt(mEl.value);
+    if (activeEl) rule.disabled   = !activeEl.checked;
+  });
+  saveCustomRules();
+  renderRulesEditor();
+  // 저장 완료 토스트
+  const toast = document.createElement('div');
+  toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1D9E75;color:white;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:500;z-index:9999';
+  toast.textContent = '✅ 규칙이 저장됐어요';
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2500);
 }
 
 // ── 체크박스 선택 실행 ───────────────────────────────────────────
