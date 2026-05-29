@@ -1443,7 +1443,20 @@ function saveRulesFromEditor() {
     if (hEl && mEl) rule.triggerMin = parseInt(hEl.value)*60 + parseInt(mEl.value);
     if (activeEl) rule.disabled   = !activeEl.checked;
   });
-  saveCustomRules();
+  saveCustomRules(); // localStorage 백업
+
+  // Supabase에도 저장 (trigger_min, disabled만)
+  const rows = BUDGET_RULES.map(r => ({
+    id: r.id,
+    trigger_min: r.triggerMin,
+    disabled: r.disabled || false,
+  }));
+  fetch(`${SB_URL}/rest/v1/budget_rules`, {
+    method: 'POST',
+    headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(rows),
+  }).catch(e => console.log('규칙 Supabase 저장 실패:', e));
+
   renderRulesEditor();
   // 저장 완료 토스트
   const toast = document.createElement('div');
@@ -1618,13 +1631,13 @@ function renderRoasResult() {
   </div>`;
 
   // 발동 이력 (7일치)
-  const allHistory = JSON.parse(localStorage.getItem('budget_rule_history_v2') || '{}');
-  const historyDates = Object.keys(allHistory).sort().reverse(); // 최신순
+  const allHistoryDisplay = JSON.parse(localStorage.getItem('budget_rule_history_v2') || '{}');
+  const historyDates = Object.keys(allHistoryDisplay).sort().reverse(); // 최신순
   const historyHtml = historyDates.length ? `
   <div style="margin-top:1.5rem">
     <div class="sl">📋 규칙 매칭 현황 (미실행 · 조정 실행 버튼 누르기 전까지 실제 적용 안 됨) · 최근 7일</div>
     ${historyDates.map(date => {
-      const logs = allHistory[date] || [];
+      const logs = allHistoryDisplay[date] || [];
       const isToday = date === todayKey;
       return `
       <div style="margin-bottom:12px">
