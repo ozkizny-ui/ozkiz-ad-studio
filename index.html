@@ -1320,7 +1320,75 @@ function renderRulesEditor() {
   const el = document.getElementById('rules-editor');
   if (!el) return;
 
-  let html = `
+  // ── 전략 인사이트 카드 ──────────────────────────────────────────
+  const now = kstMinutes();
+  const activeRules = BUDGET_RULES.filter(r => !r.disabled && r.triggerMin <= now);
+  const upRules  = activeRules.filter(r => r.dir === 'up').length;
+  const dnRules  = activeRules.filter(r => r.dir === 'dn').length;
+  const totalRules = BUDGET_RULES.filter(r => !r.disabled).length;
+
+  // 현재 규칙 구조 분석 → 목표(ROAS 250-300%, 매출 극대화) 대비 추천
+  const insights = [
+    {
+      type: 'info',
+      icon: '🎯',
+      title: '현재 전략 방향',
+      desc: '아침 보수적 감액 → 오전 중 성과 확인 → 증액 구조로, ROAS 250-300% 유지에 적합한 설계예요. 오후 감액은 예산 소진 후 ROAS 하락 방어에 효과적이에요.',
+    },
+    {
+      type: 'tip',
+      icon: '💡',
+      title: '매출 극대화 관점 추천',
+      desc: 'ROAS 300% 이상인 소재는 오후 감액 규칙에서 제외하는 조건을 추가하면, 효율 좋은 소재는 계속 태우면서 비효율 소재만 감액하는 정밀 운영이 가능해요.',
+    },
+    {
+      type: 'tip',
+      icon: '📈',
+      title: '증액 조건 개선 포인트',
+      desc: '현재 증액 조건 대부분이 "예산 ≤ 구매전환값"일 때만 작동해요. ROAS 500% 이상 고효율 소재는 구매전환값보다 예산이 높아도 증액을 허용하면 매출 극대화에 유리해요.',
+    },
+    {
+      type: 'caution',
+      icon: '⚠️',
+      title: '오전 8시 감액 타이밍',
+      desc: '오전 8시 감액(장바구니 ≤2 + ROAS ≤150%)은 당일 데이터 축적이 부족한 시점이에요. 전날 성과가 좋았던 소재는 예외 처리하는 조건을 넣는 것도 고려해봐요.',
+    },
+    {
+      type: 'ok',
+      icon: '✅',
+      title: '오후 감액 전략',
+      desc: '오후 12시·3시·6시 단계적 감액은 예산 소진 후 ROAS 하락을 방어하는 좋은 구조예요. 현재 방향 유지 추천.',
+    },
+  ];
+
+  const cardColors = {
+    info:    { bg: '#EBF5FF', border: '#4B9FE1', text: '#0C447C' },
+    tip:     { bg: '#F0FBF4', border: '#1D9E75', text: '#0A5E40' },
+    caution: { bg: '#FEF7ED', border: '#F59E0B', text: '#78350F' },
+    ok:      { bg: '#F0FBF4', border: '#1D9E75', text: '#0A5E40' },
+  };
+
+  const insightHtml = `
+  <div style="margin-bottom:20px">
+    <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text)">
+      🧠 목표 분석 — ROAS 250~300% 유지 + 매출 극대화
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      ${insights.map(ins => {
+        const c = cardColors[ins.type];
+        return `<div style="background:${c.bg};border:1px solid ${c.border};border-radius:10px;padding:12px 14px">
+          <div style="font-size:12px;font-weight:600;color:${c.text};margin-bottom:4px">${ins.icon} ${ins.title}</div>
+          <div style="font-size:11px;color:var(--text);line-height:1.6">${ins.desc}</div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);padding:8px 12px;background:var(--surface2);border-radius:8px">
+      📊 현재 활성 규칙 ${totalRules}개 · 오늘 발동 완료 ${activeRules.length}개 (증액 ${upRules}개 / 감액 ${dnRules}개)
+      &nbsp;·&nbsp; 최근 7일 이력: ${Object.keys(JSON.parse(localStorage.getItem('budget_rule_history_v2')||'{}')).length}일치 저장됨
+    </div>
+  </div>`;
+
+  let html = insightHtml + `
   <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">규칙 설명, 발동 시각, 활성 여부를 수정하고 저장 버튼을 눌러주세요.</div>
   <table style="width:100%;border-collapse:collapse;font-size:12px">
     <thead><tr style="background:var(--surface2);border-bottom:1px solid var(--border2)">
@@ -1410,19 +1478,22 @@ function renderRoasResult() {
   const nOff  = ads.filter(r=>r.action==='off').length;
   const nHold = ads.filter(r=>r.action==='hold').length;
 
-  // 발동 이력 저장 (오늘 하루치)
-  const todayKey = new Date().toISOString().split('T')[0];
-  let history = JSON.parse(localStorage.getItem('budget_rule_history') || '{}');
-  if (history.date !== todayKey) history = { date: todayKey, logs: [] };
+  // 발동 이력 저장 (7일치 누적)
+  const todayKey = new Date(Date.now() + 9*3600*1000).toISOString().split('T')[0]; // KST
+  let allHistory = JSON.parse(localStorage.getItem('budget_rule_history_v2') || '{}');
+  if (!allHistory[todayKey]) allHistory[todayKey] = [];
   const appliedRules = [...new Set(ads.filter(r=>r.appliedRule).map(r=>r.appliedRule.id))];
   appliedRules.forEach(ruleId => {
-    if (!history.logs.find(l => l.ruleId === ruleId)) {
+    if (!allHistory[todayKey].find(l => l.ruleId === ruleId)) {
       const rule = BUDGET_RULES.find(r => r.id === ruleId);
       const count = ads.filter(r => r.appliedRule?.id === ruleId).length;
-      history.logs.push({ ruleId, label: rule.label, count, time: timeLabel });
+      allHistory[todayKey].push({ ruleId, label: rule.label, count, time: timeLabel });
     }
   });
-  try { localStorage.setItem('budget_rule_history', JSON.stringify(history)); } catch(e) {}
+  // 7일 초과 날짜 제거
+  const keys = Object.keys(allHistory).sort();
+  while (keys.length > 7) { delete allHistory[keys.shift()]; }
+  try { localStorage.setItem('budget_rule_history_v2', JSON.stringify(allHistory)); } catch(e) {}
 
   // 필터 상태
   const filterAction = state._roasFilter || 'all';
@@ -1546,17 +1617,28 @@ function renderRoasResult() {
     </table>
   </div>`;
 
-  // 발동 이력
-  const logs = history.logs || [];
-  const historyHtml = logs.length ? `
+  // 발동 이력 (7일치)
+  const allHistory = JSON.parse(localStorage.getItem('budget_rule_history_v2') || '{}');
+  const historyDates = Object.keys(allHistory).sort().reverse(); // 최신순
+  const historyHtml = historyDates.length ? `
   <div style="margin-top:1.5rem">
-    <div class="sl">📋 규칙 매칭 현황 (미실행 · 조정 실행 버튼 누르기 전까지 실제 적용 안 됨)</div>
-    ${logs.map(l => `
-    <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:0.5px solid var(--border);font-size:12px">
-      <div style="min-width:52px;font-weight:600;color:var(--muted)">${l.time}</div>
-      <div style="flex:1;color:var(--muted)">${l.label}</div>
-      <div style="color:var(--muted)">${l.count}개</div>
-    </div>`).join('')}
+    <div class="sl">📋 규칙 매칭 현황 (미실행 · 조정 실행 버튼 누르기 전까지 실제 적용 안 됨) · 최근 7일</div>
+    ${historyDates.map(date => {
+      const logs = allHistory[date] || [];
+      const isToday = date === todayKey;
+      return `
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;font-weight:600;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--border2);margin-bottom:4px">
+          ${date} ${isToday ? '<span style="color:var(--accent);margin-left:4px">오늘</span>' : ''}
+        </div>
+        ${logs.map(l => `
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border);font-size:12px">
+          <div style="min-width:52px;font-weight:600;color:var(--muted)">${l.time}</div>
+          <div style="flex:1;color:var(--muted)">${l.label}</div>
+          <div style="color:var(--muted)">${l.count}개</div>
+        </div>`).join('')}
+      </div>`;
+    }).join('')}
   </div>` : '';
 
   document.getElementById('roas-result').innerHTML = metrics + filterBar + table + historyHtml;
