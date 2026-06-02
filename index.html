@@ -1480,7 +1480,7 @@ function toggleSelectAll(checked) {
   renderRoasResult();
 }
 
-function renderRoasResult() {
+async function renderRoasResult() {
   const ads = state.metaAds;
   const now = kstMinutes();
   const h = Math.floor(now/60), m = now%60;
@@ -1631,30 +1631,80 @@ function renderRoasResult() {
   </div>`;
 
   // 발동 이력 (7일치)
+  // 로컬 이력 (수동 실행분)
   const allHistoryDisplay = JSON.parse(localStorage.getItem('budget_rule_history_v2') || '{}');
-  const historyDates = Object.keys(allHistoryDisplay).sort().reverse(); // 최신순
-  const historyHtml = historyDates.length ? `
-  <div style="margin-top:1.5rem">
-    <div class="sl">📋 규칙 매칭 현황 (미실행 · 조정 실행 버튼 누르기 전까지 실제 적용 안 됨) · 최근 7일</div>
-    ${historyDates.map(date => {
-      const logs = allHistoryDisplay[date] || [];
-      const isToday = date === todayKey;
-      return `
-      <div style="margin-bottom:12px">
-        <div style="font-size:11px;font-weight:600;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--border2);margin-bottom:4px">
-          ${date} ${isToday ? '<span style="color:var(--accent);margin-left:4px">오늘</span>' : ''}
-        </div>
-        ${logs.map(l => `
-        <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border);font-size:12px">
-          <div style="min-width:52px;font-weight:600;color:var(--muted)">${l.time}</div>
-          <div style="flex:1;color:var(--muted)">${l.label}</div>
-          <div style="color:var(--muted)">${l.count}개</div>
-        </div>`).join('')}
-      </div>`;
-    }).join('')}
-  </div>` : '';
 
-  document.getElementById('roas-result').innerHTML = metrics + filterBar + table + historyHtml;
+  // Supabase 자동 실행 로그도 같이 표시 (비동기 로드)
+  const historyContainer = document.createElement('div');
+  historyContainer.style.marginTop = '1.5rem';
+  historyContainer.innerHTML = `<div class="sl">📋 광고비 조정 이력 · 최근 7일 (🤖 자동실행 + 🖐 수동실행)</div>
+    <div style="font-size:12px;color:var(--muted);padding:8px 0">로딩 중...</div>`;
+
+  document.getElementById('roas-result').innerHTML = metrics + filterBar + table;
+  document.getElementById('roas-result').appendChild(historyContainer);
+
+  // Supabase에서 자동 실행 로그 조회
+  try {
+    const since = new Date(Date.now() - 7*24*3600*1000).toISOString();
+    const r = await fetch(`${SB_URL}/rest/v1/budget_rule_logs?select=*&executed_at=gte.${since}&order=executed_at.desc&limit=200`, { headers: sbHeaders });
+    const sbLogs = await r.json();
+
+    // 날짜별 그룹핑
+    const grouped = {};
+    // 수동 실행 이력 (localStorage)
+    Object.entries(allHistoryDisplay).forEach(([date, logs]) => {
+      if (!grouped[date]) grouped[date] = [];
+      logs.forEach(l => grouped[date].push({ type: 'manual', time: l.time, label: l.label, count: l.count }));
+    });
+    // 자동 실행 이력 (Supabase)
+    if (Array.isArray(sbLogs)) {
+      sbLogs.forEach(l => {
+        const kst = new Date(new Date(l.executed_at).getTime() + 9*3600*1000);
+        const date = kst.toISOString().split('T')[0];
+        const h = kst.getUTCHours(), m = kst.getUTCMinutes();
+        const timeLabel = `${h < 12 ? '오전' : '오후'} ${h > 12 ? h-12 : h}:${String(m).padStart(2,'0')}`;
+        if (!grouped[date]) grouped[date] = [];
+        grouped[date].push({ type: 'auto', time: timeLabel, adName: l.ad_name, ruleLabel: l.rule_label, oldBudget: l.old_budget, newBudget: l.new_budget, success: l.success });
+      });
+    }
+
+    const dates = Object.keys(grouped).sort().reverse();
+    if (!dates.length) { historyContainer.innerHTML = `<div class="sl">📋 광고비 조정 이력</div><div style="font-size:12px;color:var(--muted);padding:8px 0">이력 없음</div>`; return; }
+
+    const W = v => (v||0).toLocaleString();
+    historyContainer.innerHTML = `<div class="sl">📋 광고비 조정 이력 · 최근 7일 (🤖 자동실행 + 🖐 수동실행)</div>` +
+      dates.map(date => {
+        const isToday = date === todayKey;
+        const dayLogs = grouped[date] || [];
+        return `<div style="margin-bottom:12px">
+          <div style="font-size:11px;font-weight:600;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--border2);margin-bottom:4px">
+            ${date} ${isToday ? '<span style="color:var(--accent);margin-left:4px">오늘</span>' : ''}
+          </div>
+          ${dayLogs.map(l => l.type === 'auto'
+            ? `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border);font-size:12px">
+                <div style="min-width:52px;font-weight:600;color:var(--muted)">${l.time}</div>
+                <div style="min-width:16px">🤖</div>
+                <div style="flex:1">
+                  <div style="color:var(--text)">${l.adName}</div>
+                  <div style="color:var(--muted);font-size:11px">${l.ruleLabel}</div>
+                </div>
+                <div style="text-align:right;font-size:11px">
+                  <span style="color:var(--muted)">₩${W(l.oldBudget)}</span>
+                  <span style="color:var(--accent)"> → ₩${W(l.newBudget)}</span>
+                </div>
+              </div>`
+            : `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border);font-size:12px">
+                <div style="min-width:52px;font-weight:600;color:var(--muted)">${l.time}</div>
+                <div style="min-width:16px">🖐</div>
+                <div style="flex:1;color:var(--muted)">${l.label}</div>
+                <div style="color:var(--muted)">${l.count}개</div>
+              </div>`
+          ).join('')}
+        </div>`;
+      }).join('');
+  } catch(e) {
+    historyContainer.innerHTML = `<div class="sl">📋 광고비 조정 이력</div><div style="font-size:12px;color:var(--muted)">로드 실패: ${e.message}</div>`;
+  }
 }
 
 // ── RUN ALL ──────────────────────────────────────────────────────
