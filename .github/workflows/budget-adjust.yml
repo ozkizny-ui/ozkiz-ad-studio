@@ -2,25 +2,12 @@ name: 광고비 자동 조정
 
 on:
   schedule:
-    # KST = UTC+9, 각 발동 시각을 UTC로 변환
-    - cron: '0 23 * * *'   # KST 08:00 (UTC 23:00 전날)
-    - cron: '10 23 * * *'  # KST 08:10
-    - cron: '20 23 * * *'  # KST 08:20
-    - cron: '50 0 * * *'   # KST 09:50
-    - cron: '0 1 * * *'    # KST 10:00
-    - cron: '10 1 * * *'   # KST 10:10
-    - cron: '50 2 * * *'   # KST 11:50
-    - cron: '0 3 * * *'    # KST 12:00
-    - cron: '10 3 * * *'   # KST 12:10
-    - cron: '30 3 * * *'   # KST 12:30
-    - cron: '50 5 * * *'   # KST 14:50
-    - cron: '0 6 * * *'    # KST 15:00
-    - cron: '10 6 * * *'   # KST 15:10
-    - cron: '0 9 * * *'    # KST 18:00
-    - cron: '5 9 * * *'    # KST 18:05
-    - cron: '10 9 * * *'   # KST 18:10
-    - cron: '0 12 * * *'   # KST 21:00
-  workflow_dispatch:        # 수동 실행 가능
+    # catch-up 방식: GitHub cron 지연(30~70분)을 견디도록 운영시간(KST 08~21시)에
+    # 15분 간격으로 호출. 실제 발동/중복방지는 auto-adjust.js가 budget_rule_logs로 판단.
+    # KST = UTC+9 (KST 08:00 = UTC 23:00 전날, KST 21:00 = UTC 12:00)
+    - cron: '*/15 23 * * *'    # UTC 23:00,23:15,23:30,23:45 = KST 08:00~08:45
+    - cron: '*/15 0-12 * * *'  # UTC 00:00~12:45 = KST 09:00~21:45
+  workflow_dispatch:           # 수동 실행 가능
 
 jobs:
   adjust:
