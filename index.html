@@ -609,10 +609,11 @@ function initNav() {
 async function loadFromSupabase() {
   try {
     // 이지어드민 재고
-    const invRows = await sbGet('inventory', 'name,option,avail,store,updated_at');
+    const invRows = await sbGet('inventory', 'name,option,avail,store,rep_code,updated_at');
     if (invRows && invRows.length) {
       state.inventoryData = invRows.map(r => ({
         '상품명': r.name, '옵션': r.option || '', '가용재고': r.avail, '매장총재고': r.store,
+        '대표상품코드': r.rep_code || '',
       }));
       document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 (저장됨)`;
       // 업로드 날짜 (첫 번째 행의 updated_at)
@@ -661,6 +662,7 @@ async function saveInventoryToSupabase(slim) {
     for (let i = 0; i < slim.length; i += 1000) {
       const chunk = slim.slice(i, i+1000).map(r => ({
         name: r['상품명'], option: r['옵션'], avail: r['가용재고'], store: r['매장총재고'],
+        rep_code: r['대표상품코드'] || '',
       }));
       await sbUpsert('inventory', chunk);
     }
@@ -708,9 +710,11 @@ function initUpload() {
           const optKey   = cols.find(k=>k.includes('옵션'));
           const availKey = cols.find(k=>k.includes('가용재고'));
           const storeKey = cols.find(k=>k.includes('매장총재고'));
+          const repKey   = cols.find(k=>k.includes('대표상품코드'));
           const slim = state.inventoryData.map(r => ({
             '상품명': r[nameKey]||'', '옵션': r[optKey]||'',
-            '가용재고': r[availKey]||0, '매장총재고': r[storeKey]||0
+            '가용재고': r[availKey]||0, '매장총재고': r[storeKey]||0,
+            '대표상품코드': repKey ? (r[repKey]||'') : ''
           }));
           // Supabase에 저장
           saveInventoryToSupabase(slim);
