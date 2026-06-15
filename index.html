@@ -613,7 +613,7 @@ async function loadFromSupabase() {
     if (invRows && invRows.length) {
       state.inventoryData = invRows.map(r => ({
         '상품명': r.name, '옵션': r.option || '', '가용재고': r.avail, '매장총재고': r.store,
-        '대표상품코드': r.rep_code || '',
+        '카페24 상품코드': r.rep_code || '',
       }));
       document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 (저장됨)`;
       // 업로드 날짜 (첫 번째 행의 updated_at)
@@ -662,7 +662,7 @@ async function saveInventoryToSupabase(slim) {
     for (let i = 0; i < slim.length; i += 1000) {
       const chunk = slim.slice(i, i+1000).map(r => ({
         name: r['상품명'], option: r['옵션'], avail: r['가용재고'], store: r['매장총재고'],
-        rep_code: r['대표상품코드'] || '',
+        rep_code: r['카페24 상품코드'] || '',
       }));
       await sbUpsert('inventory', chunk);
     }
@@ -710,11 +710,12 @@ function initUpload() {
           const optKey   = cols.find(k=>k.includes('옵션'));
           const availKey = cols.find(k=>k.includes('가용재고'));
           const storeKey = cols.find(k=>k.includes('매장총재고'));
-          const repKey   = cols.find(k=>k.includes('대표상품코드'));
+          // 카페24 상품코드(P코드) = SERA 매칭 키 (숫자형 '대표상품코드' 아님)
+          const repKey   = cols.find(k=>k.includes('카페24') && k.includes('상품코드'));
           const slim = state.inventoryData.map(r => ({
             '상품명': r[nameKey]||'', '옵션': r[optKey]||'',
             '가용재고': r[availKey]||0, '매장총재고': r[storeKey]||0,
-            '대표상품코드': repKey ? (r[repKey]||'') : ''
+            '카페24 상품코드': repKey ? (r[repKey]||'') : ''
           }));
           // Supabase에 저장
           saveInventoryToSupabase(slim);
@@ -2660,17 +2661,20 @@ function renderStockPage() {
   const normSeraName = s => String(s||'')
     .replace(/^\[[^\]]*\]\s*/, '')   // "[신제품 5% 추가적립]" 같은 prefix 제거
     .toLowerCase().replace(/[-\s]/g,'');
+  const normCode = c => String(c||'').trim().toUpperCase();   // P코드 형식 차이 방지
   const seraByCode = {};
   const seraByName = {};
   (state._seraData || []).forEach(r => {
-    if (r.code) seraByCode[r.code] = r;
+    const ck = normCode(r.code);
+    if (ck) seraByCode[ck] = r;
     const nk = normSeraName(r.name);
     if (nk && !seraByName[nk]) seraByName[nk] = r;
   });
   let seraMatchCode = 0, seraMatchName = 0;
   const findSeraMatch = (name, repCode) => {
-    // 1) P코드 매칭 (원본 XLS 직접 업로드 시에만 repCode 존재)
-    if (repCode && seraByCode[repCode]) { seraMatchCode++; return seraByCode[repCode]; }
+    // 1) P코드(카페24 상품코드) 매칭 — 양쪽 trim+대문자 정규화
+    const ck = normCode(repCode);
+    if (ck && seraByCode[ck]) { seraMatchCode++; return seraByCode[ck]; }
     // 2) 상품명 fallback (정규화 후 정확 일치 → 부분 포함)
     const nk = normSeraName(name);
     if (!nk) return null;
@@ -2694,8 +2698,8 @@ function renderStockPage() {
     // 제외 키워드 포함된 상품 숨김
     if (EXCLUDE_KEYWORDS.some(kw => name.includes(kw))) return;
     if (!grouped[name]) grouped[name] = [];
-    // 대표상품코드 컬럼 찾기
-    const repCodeKey = Object.keys(row).find(k => k.includes('대표상품코드'));
+    // 카페24 상품코드(P코드) 컬럼 찾기 — SERA 매칭 키
+    const repCodeKey = Object.keys(row).find(k => k.includes('카페24') && k.includes('상품코드'));
     const repCode = repCodeKey ? String(row[repCodeKey]||'').trim() : '';
     grouped[name].push({
       option,
