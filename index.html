@@ -346,6 +346,13 @@ input,select,textarea{font-family:var(--font-body)}
         <div class="upload-zone-text" id="strategy-text">📂 전략파일 업로드</div>
       </label>
     </div>
+    <div style="margin-top:8px">
+      <span class="sb-upload-label">SERA <span style="font-size:10px;color:var(--muted)">(조회·주문·클릭가치)</span></span>
+      <label class="upload-zone" id="sera-zone">
+        <input type="file" id="sera-file" accept=".xlsx,.xls,.csv">
+        <div class="upload-zone-text" id="sera-text">📂 SERA 업로드</div>
+      </label>
+    </div>
   </div>
 
 </aside>
@@ -511,6 +518,7 @@ const state = {
   adConcepts: [],
   completedAlerts: JSON.parse(localStorage.getItem('completed_alerts') || '[]'),
   strategyData: [],  // 전략파일 데이터
+  _seraData: [],     // SERA 지표 데이터 (조회수/주문수/클릭가치)
   // 노션 예판 데이터
   _notionPresale: [],
   _notionLoaded:  false,
@@ -624,6 +632,21 @@ async function loadFromSupabase() {
       document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 (저장됨)`;
     }
 
+    // SERA 지표 (조회수/주문수/클릭가치)
+    // ⚠️ Supabase에서 읽으면 컬럼 키가 영문(code/views/...) → 영문 키로 매핑해서 통일
+    const seraRows = await sbGet('sera', 'code,name,views,orders,opv,click_value');
+    if (seraRows && seraRows.length) {
+      state._seraData = seraRows.map(r => ({
+        code: String(r.code||'').trim(),
+        name: String(r.name||'').trim(),
+        views: parseInt(r.views||0) || 0,
+        orders: parseInt(r.orders||0) || 0,
+        opv: parseFloat(r.opv||0) || 0,
+        clickValue: parseFloat(r.click_value||0) || 0,
+      }));
+      document.getElementById('sera-text').textContent = `✓ ${state._seraData.length}개 (저장됨)`;
+    }
+
     // 재고 데이터 있으면 재고 탭 렌더
     if (state.inventoryData.length) renderStockPage();
 
@@ -652,6 +675,19 @@ async function saveStrategyToSupabase(data) {
       await sbUpsert('strategy', rows.slice(i, i+1000));
     }
   } catch(e) { console.log('전략파일 Supabase 저장 실패:', e); }
+}
+
+async function saveSeraToSupabase(data) {
+  try {
+    await sbDelete('sera');
+    const rows = data.map(r => ({
+      code: r.code, name: r.name, views: r.views, orders: r.orders,
+      opv: r.opv, click_value: r.clickValue,
+    }));
+    for (let i = 0; i < rows.length; i += 1000) {
+      await sbUpsert('sera', rows.slice(i, i+1000));
+    }
+  } catch(e) { console.log('SERA Supabase 저장 실패:', e); }
 }
 
 // ── UPLOAD ───────────────────────────────────────────────────────
@@ -721,6 +757,44 @@ function initUpload() {
         document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 로드됨`;
         if (state.inventoryData.length) { state._stockProductMap = null; renderStockPage(); }
       } catch(err) { alert('전략파일 오류: ' + err.message); }
+    };
+    reader.readAsBinaryString(file);
+  });
+
+  // ── SERA 지표 업로드 ──
+  document.getElementById('sera-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        // 헤더 키 자동 탐색 (공백/변형 대응)
+        const cols = Object.keys(rows[0] || {});
+        const find = (...needles) => cols.find(c => {
+          const k = String(c).trim();
+          return needles.some(n => k === n || k.replace(/\s/g,'') === n.replace(/\s/g,''));
+        });
+        const codeKey  = find('상품코드');
+        const nameKey  = find('상품명');
+        const viewKey  = find('조회수');
+        const orderKey = find('주문수');
+        const opvKey   = find('OpV', 'opv');
+        const espKey   = find('ESpV', 'espv');
+        state._seraData = rows.map(r => ({
+          code: String(r[codeKey]||'').trim(),
+          name: String(r[nameKey]||'').trim(),
+          views: parseInt(String(r[viewKey]||0).replace(/,/g,'')) || 0,
+          orders: parseInt(String(r[orderKey]||0).replace(/,/g,'')) || 0,
+          opv: parseFloat(r[opvKey]||0) || 0,
+          clickValue: parseFloat(r[espKey]||0) || 0,
+        })).filter(r => r.code || r.name);
+        try { saveSeraToSupabase(state._seraData); } catch(e) {}
+        document.getElementById('sera-text').textContent = `✓ ${state._seraData.length}개 로드됨`;
+        if (state.inventoryData.length) { state._stockProductMap = null; renderStockPage(); }
+      } catch(err) { alert('SERA 파일 오류: ' + err.message); }
     };
     reader.readAsBinaryString(file);
   });
@@ -2577,6 +2651,31 @@ function renderStockPage() {
     });
   }
 
+  // ── SERA 매핑 (P코드 우선 / 상품명 fallback) ──
+  // 이름 정규화: prefix "[...]" 제거 후 소문자 + 공백/하이픈 제거
+  const normSeraName = s => String(s||'')
+    .replace(/^\[[^\]]*\]\s*/, '')   // "[신제품 5% 추가적립]" 같은 prefix 제거
+    .toLowerCase().replace(/[-\s]/g,'');
+  const seraByCode = {};
+  const seraByName = {};
+  (state._seraData || []).forEach(r => {
+    if (r.code) seraByCode[r.code] = r;
+    const nk = normSeraName(r.name);
+    if (nk && !seraByName[nk]) seraByName[nk] = r;
+  });
+  let seraMatchCode = 0, seraMatchName = 0;
+  const findSeraMatch = (name, repCode) => {
+    // 1) P코드 매칭 (원본 XLS 직접 업로드 시에만 repCode 존재)
+    if (repCode && seraByCode[repCode]) { seraMatchCode++; return seraByCode[repCode]; }
+    // 2) 상품명 fallback (정규화 후 정확 일치 → 부분 포함)
+    const nk = normSeraName(name);
+    if (!nk) return null;
+    if (seraByName[nk]) { seraMatchName++; return seraByName[nk]; }
+    const partialKey = Object.keys(seraByName).find(k => k.includes(nk) || nk.includes(k));
+    if (partialKey) { seraMatchName++; return seraByName[partialKey]; }
+    return null;
+  };
+
   // 시즌/복종 필터 옵션 추출
   const seasons   = [...new Set(Object.values(strategyMap).map(r=>r.season).filter(Boolean))].sort();
   seasons.push('계절없음');
@@ -2653,6 +2752,10 @@ function renderStockPage() {
       return nameParsed.includes(adName) || adName.includes(nameParsed);
     });
 
+    // SERA 지표 매칭 (P코드 우선, 상품명 fallback)
+    const repCode = (skus.find(s => s.repCode)?.repCode) || '';
+    const sera = findSeraMatch(name, repCode);
+
     return {
       name, skus, totalAvail, totalStore,
       total: totalAvail + totalStore,
@@ -2660,6 +2763,9 @@ function renderStockPage() {
       stockStatus, colorWarns,
       notionEntry, hasAd,
       highStock: isHighStock(skus),
+      seraViews:      sera ? sera.views : null,
+      seraOrders:     sera ? sera.orders : null,
+      seraClickValue: sera ? sera.clickValue : null,
     };
   }).filter(p => {
     // 재고 0 이하 + 예약판매 아닌 것 숨김
@@ -2669,6 +2775,14 @@ function renderStockPage() {
 
   // 가용재고 많은 순 정렬
   products.sort((a,b) => b.totalAvail - a.totalAvail);
+
+  // ── SERA 매칭 진단 ──
+  const seraMatchTotal = seraMatchCode + seraMatchName;
+  if ((state._seraData || []).length) {
+    console.log(`SERA 매칭: 상품 ${products.length}개 중 ${seraMatchTotal}개 매칭 (P코드 ${seraMatchCode}개 / 상품명 ${seraMatchName}개)`);
+    const unmatched = products.filter(p => p.seraViews === null).slice(0, 5).map(p => p.name);
+    if (unmatched.length) console.log('SERA 미매칭 샘플:', unmatched);
+  }
 
   // ── ROAS 엔진에서 참조할 수 있도록 상품명 → stockStatus 맵 저장 ──
   // 필터링된 것 + 제외된 것(품절) 모두 포함해야 하므로 전체 grouped 기준으로 다시 빌드
@@ -2703,6 +2817,10 @@ function renderStockPage() {
   const strategyNote = state.strategyData.length
     ? `<span style="font-size:11px;color:var(--green);font-weight:600">✓ 전략파일 매칭됨 (${state.strategyData.length}개)</span>`
     : `<span style="font-size:11px;color:var(--muted)">전략파일 미업로드 — 시즌/복종 필터 비활성</span>`;
+
+  const seraNote = (state._seraData || []).length
+    ? `<span style="font-size:11px;color:var(--green);font-weight:600;margin-left:12px">✓ SERA 매칭 ${seraMatchTotal}/${products.length}개 (P코드 ${seraMatchCode} · 상품명 ${seraMatchName})</span>`
+    : `<span style="font-size:11px;color:var(--muted);margin-left:12px">SERA 미업로드 — 조회·주문·클릭가치 미표시</span>`;
 
   let html = `
   <div class="metrics" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
@@ -2750,7 +2868,7 @@ function renderStockPage() {
     </button>
     <span style="font-size:11px;color:var(--muted);margin-left:8px">현재 시즌 + 재고 많음 + 광고 미집행</span>
   </div>
-  <div style="margin-bottom:10px">${strategyNote}</div>
+  <div style="margin-bottom:10px">${strategyNote}${seraNote}</div>
   <div id="stock-table-wrap"></div>
   <div id="stock-check-wrap"></div>`;
 
@@ -2883,6 +3001,7 @@ function renderStockTable() {
   const adFilter = state._stockAdFilter || '';
   const statusFilter = state._stockStatusFilter || '';
   const highStockOnly = state._stockHighStockOnly || false;
+  const sortBy = state._stockSort || '';
 
   const filtered = products.filter(p => {
     if (filter && !p.name.toLowerCase().includes(filter)) return false;
@@ -2923,6 +3042,11 @@ function renderStockTable() {
       <option value="presale_near" ${statusFilter==='presale_near'?'selected':''}>예약판매 (3주 이내)</option>
       <option value="presale_far"  ${statusFilter==='presale_far'?'selected':''}>예약판매 체크 확인</option>
     </select>
+    <select onchange="state._stockSort=this.value;renderStockTable()"
+      style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
+      <option value="" ${sortBy===''?'selected':''}>가용재고 많은 순</option>
+      <option value="clickValue" ${sortBy==='clickValue'?'selected':''}>클릭가치 높은 순</option>
+    </select>
     <span style="font-size:11px;color:var(--muted);margin-left:4px">${filtered.length}개 표시 중</span>
   </div>
   <table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -2934,14 +3058,23 @@ function renderStockTable() {
         <th style="${thStyle}">옵션</th>
         <th style="${thRStyle}">가용재고</th>
         <th style="${thRStyle}">매장총재고</th>
+        <th style="${thRStyle}">조회수</th>
+        <th style="${thRStyle}">주문</th>
+        <th style="${thRStyle}">클릭가치</th>
         <th style="${thCStyle}">광고</th>
         <th style="${thCStyle}">상태</th>
       </tr>
     </thead>
     <tbody>`;
 
-  // 가용재고 많은 순 (이미 정렬된 상태지만 필터 후 재정렬)
-  const sorted = [...filtered].sort((a,b) => b.totalAvail - a.totalAvail);
+  // 정렬: 기본=가용재고 많은 순, 클릭가치=SERA 클릭가치 높은 순 (데이터 없으면 뒤로)
+  const sorted = [...filtered].sort((a,b) => {
+    if (sortBy === 'clickValue') {
+      const av = a.seraClickValue ?? -1, bv = b.seraClickValue ?? -1;
+      if (bv !== av) return bv - av;
+    }
+    return b.totalAvail - a.totalAvail;
+  });
 
   sorted.slice(0, 200).forEach(p => {
     const isAlert   = ['size_warn','presale_far','color_warn'].includes(p.stockStatus);
@@ -2971,6 +3104,12 @@ function renderStockTable() {
     const adTag = p.hasAd
       ? `<span class="tag green">집행 중</span>`
       : `<span class="tag gray">미집행</span>`;
+    // SERA 지표 (상품 단위) — 데이터 없으면 "-"
+    const seraViewsCell = p.seraViews  != null ? p.seraViews.toLocaleString() : '<span style="color:var(--muted)">-</span>';
+    const seraOrdersCell = p.seraOrders != null ? p.seraOrders.toLocaleString() : '<span style="color:var(--muted)">-</span>';
+    const seraCvCell = p.seraClickValue != null
+      ? `₩${Math.round(p.seraClickValue).toLocaleString()}`
+      : '<span style="color:var(--muted)">-</span>';
     p.skus.forEach((sku, i) => {
       const availColor = sku.avail < 0 ? 'color:var(--amber)' : sku.avail === 0 ? 'color:var(--red)' : sku.avail < 5 ? 'color:var(--amber)' : 'color:var(--green)';
       const storeColor = sku.store === 0 ? 'color:var(--muted)' : 'color:var(--text)';
@@ -2986,7 +3125,10 @@ function renderStockTable() {
         <td style="padding:8px 12px;text-align:right;font-weight:600;${availColor}">${sku.avail}</td>
         <td style="padding:8px 12px;text-align:right;font-weight:500;${storeColor}">${sku.store}</td>
         ${i === 0
-          ? `<td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${adTag}</td>
+          ? `<td style="padding:8px 12px;text-align:right;vertical-align:middle;color:var(--text)" rowspan="${skuCount}">${seraViewsCell}</td>
+             <td style="padding:8px 12px;text-align:right;vertical-align:middle;color:var(--text)" rowspan="${skuCount}">${seraOrdersCell}</td>
+             <td style="padding:8px 12px;text-align:right;vertical-align:middle;font-weight:600;color:var(--accent)" rowspan="${skuCount}">${seraCvCell}</td>
+             <td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${adTag}</td>
              <td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${statusTag}</td>`
           : ''}
       </tr>`;
@@ -2994,7 +3136,7 @@ function renderStockTable() {
   });
 
   if (filtered.length > 200) {
-    html += `<tr><td colspan="8" style="padding:12px;text-align:center;color:var(--muted);font-size:12px">
+    html += `<tr><td colspan="11" style="padding:12px;text-align:center;color:var(--muted);font-size:12px">
       상위 200개 표시 중 (전체 ${filtered.length}개) — 검색으로 좁혀보세요
     </td></tr>`;
   }
