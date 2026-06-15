@@ -1012,10 +1012,13 @@ function getActiveRules() {
 // 재고 많음 판단: 옵션당 평균 ≥30 AND 가용재고 ≤3 옵션 없음
 function isHighStock(skus) {
   if (!skus || !skus.length) return false;
-  const hasLow = skus.some(s => s.avail <= 3);
-  if (hasLow) return false;
-  const avg = skus.reduce((s, r) => s + r.avail, 0) / skus.length;
-  return avg >= 30;
+  // 옵션 하나둘이 적더라도 전체 재고가 충분하면 "재고 많음"으로 인정
+  const total = skus.reduce((s, r) => s + r.avail, 0);
+  const lowCount = skus.filter(s => s.avail <= 3).length;
+  const lowRatio = lowCount / skus.length;
+  // 전체 평균이 충분(>=30)하고, 품절 임박 옵션이 절반 미만이면 재고 많음
+  const avg = total / skus.length;
+  return avg >= 30 && lowRatio < 0.5;
 }
 
 // ── 레인 아이템 키워드 ────────────────────────────────────────────
@@ -2565,11 +2568,11 @@ function renderStockPage() {
   const strategyMap = {};
   if (state.strategyData.length) {
     state.strategyData.forEach(row => {
-      const name = String(row['상품명']||'').trim();
+      const name = String(row.name || row['상품명'] || '').trim();
       if (!name) return;
       strategyMap[name] = {
-        season: String(row['시즌']||'').trim(),
-        category: String(row[' 복종']||row['복종']||'').trim(),
+        season: String(row.season || row['시즌'] || '').trim(),
+        category: String(row.category || row[' 복종'] || row['복종'] || '').trim(),
       };
     });
   }
