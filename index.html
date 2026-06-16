@@ -451,7 +451,7 @@ input,select,textarea{font-family:var(--font-body)}
 </main>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────
 const PROXY   = 'https://ozkiz-proxy.vercel.app';
@@ -503,7 +503,7 @@ const MALL_ID = 'ozkiz';
 const META_BASE = 'https://graph.facebook.com/v21.0';
 
 // ── 제외 키워드 ──────────────────────────────────────────────────
-const EXCLUDE_KEYWORDS = ['수선', '우일신', '일상화보', '옷체부', '데일리라이크', '(브레드)', '부자재-한글', '부자재-간지', '부자재-매장쇼핑백', '부자재-인박스', '부자재-부츠인박스', '사은품', '별봉', '동물선물상자', '오입고반송', '마이이니셜(팬던트)', '스티커', '오즈툰', '깔창', '타포린백'];
+const EXCLUDE_KEYWORDS = ['수선', '우일신', '일상화보', '옷체부', '데일리라이크', '(브레드)', '부자재-한글', '부자재-간지', '부자재-매장쇼핑백', '부자재-인박스', '부자재-부츠인박스', '사은품', '별봉', '동물선물상자', '오입고반송', '마이이니셜(팬던트)', '스티커', '오즈툰', '깔창', '타포린백', '(파츠)', '(지비츠)', '(마스크)', 'LED칩'];
 
 // ── STATE ────────────────────────────────────────────────────────
 const state = {
@@ -2816,6 +2816,8 @@ function renderStockPage() {
   state._stockCategory = state._stockCategory || '';
   state._stockAdFilter = state._stockAdFilter || '';
   state._stockStatusFilter = state._stockStatusFilter || '';
+  state._stockCollapsed = state._stockCollapsed || false;
+  state._stockQuickMode = state._stockQuickMode || false;
 
   const seasonOpts = seasons.map(s =>
     `<option value="${s}" ${state._stockSeason===s?'selected':''}>${s}</option>`).join('');
@@ -2868,7 +2870,10 @@ function renderStockPage() {
       style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
       <option value="">전체 복종</option>${catOpts}
     </select>
-    <button class="btn btn-outline btn-sm" onclick="state._stockFilter='';state._stockSeasons=[];state._stockCategory='';state._stockAdFilter='';state._stockStatusFilter='';state._stockHighStockOnly=false;closeSeasonDropdown();renderStockPage()">초기화</button>
+    <button class="btn btn-outline btn-sm" onclick="state._stockFilter='';state._stockSeasons=[];state._stockCategory='';state._stockAdFilter='';state._stockStatusFilter='';state._stockHighStockOnly=false;state._stockQuickMode=false;closeSeasonDropdown();renderStockPage()">초기화</button>
+    <button id="stock-collapse-btn" class="btn btn-outline btn-sm" onclick="toggleStockCollapse(this)">${state._stockCollapsed?'⊕ 옵션 펼치기':'⊖ 옵션 접기'}</button>
+    <button class="btn btn-outline btn-sm" onclick="exportStockExcel()">⬇ 엑셀</button>
+    <button class="btn btn-outline btn-sm" onclick="copyStockTSV(this)">📋 복사</button>
   </div>
   <div style="margin-bottom:10px">
     <button onclick="applyQuickFilter()" style="padding:7px 14px;border-radius:8px;font-size:12px;font-weight:500;border:none;background:var(--accent);color:white;cursor:pointer">
@@ -2966,6 +2971,7 @@ function applyQuickFilter() {
   state._stockHighStockOnly = true;
   state._stockFilter       = '';
   state._stockCategory     = '';
+  state._stockQuickMode    = true; // 광고 집행 요망 모드 → 클릭가치 700 이하 제외
   closeSeasonDropdown();
   renderStockPage();
 }
@@ -3002,7 +3008,8 @@ document.addEventListener('click', e => {
   if (wrap && !wrap.contains(e.target)) closeSeasonDropdown();
 });
 
-function renderStockTable() {
+// 현재 필터 + 정렬 상태를 반영한 상품 목록 (테이블/엑셀 공용)
+function getStockSorted() {
   const products = state._stockProducts || [];
   const filter   = (state._stockFilter||'').toLowerCase();
   const category = state._stockCategory || '';
@@ -3025,8 +3032,40 @@ function renderStockTable() {
     if (adFilter === 'off' &&  p.hasAd) return false;
     if (statusFilter && p.stockStatus !== statusFilter) return false;
     if (highStockOnly && !p.highStock) return false;
+    // 광고 집행 요망 모드: 클릭가치 700 이하 제외 (SERA 미매칭=데이터 없음은 통과)
+    if (state._stockQuickMode && p.seraClickValue != null && p.seraClickValue <= 700) return false;
     return true;
   });
+
+  // 정렬: 기본=가용재고 많은 순, 클릭가치=SERA 클릭가치 높은 순 (데이터 없으면 뒤로)
+  return [...filtered].sort((a,b) => {
+    if (sortBy === 'clickValue') {
+      const av = a.seraClickValue ?? -1, bv = b.seraClickValue ?? -1;
+      if (bv !== av) return bv - av;
+    }
+    return b.totalAvail - a.totalAvail;
+  });
+}
+
+// 상태 텍스트 (엑셀/복사용 — 태그 대신 순수 텍스트)
+function stockStatusText(p) {
+  const arrival = p.notionEntry?.arrivalDate ? ` · 입고 ${p.notionEntry.arrivalDate}` : '';
+  switch (p.stockStatus) {
+    case 'size_warn':    return '품절';
+    case 'presale_far':  return '예약판매 체크 확인' + arrival;
+    case 'presale_near': return '예약판매' + arrival;
+    case 'color_warn':   return '색상 품절 경고' + (p.colorWarns.length ? ` (${p.colorWarns.map(a=>a.label).join(', ')})` : '');
+    default:             return '충분';
+  }
+}
+
+function renderStockTable() {
+  const adFilter = state._stockAdFilter || '';
+  const statusFilter = state._stockStatusFilter || '';
+  const sortBy = state._stockSort || '';
+  const collapsed = state._stockCollapsed || false;
+
+  const filtered = getStockSorted();
 
   // 테이블 헤더
   const thStyle = 'padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.05em;white-space:nowrap';
@@ -3075,14 +3114,7 @@ function renderStockTable() {
     </thead>
     <tbody>`;
 
-  // 정렬: 기본=가용재고 많은 순, 클릭가치=SERA 클릭가치 높은 순 (데이터 없으면 뒤로)
-  const sorted = [...filtered].sort((a,b) => {
-    if (sortBy === 'clickValue') {
-      const av = a.seraClickValue ?? -1, bv = b.seraClickValue ?? -1;
-      if (bv !== av) return bv - av;
-    }
-    return b.totalAvail - a.totalAvail;
-  });
+  const sorted = filtered; // getStockSorted()에서 이미 정렬됨
 
   sorted.slice(0, 200).forEach(p => {
     const isAlert   = ['size_warn','presale_far','color_warn'].includes(p.stockStatus);
@@ -3107,7 +3139,6 @@ function renderStockTable() {
       statusTag = `<span class="tag green">충분</span>`;
     }
 
-    // 첫 번째 SKU는 상품명 표시, 나머지는 빈칸 (rowspan 효과)
     const skuCount = p.skus.length;
     const adTag = p.hasAd
       ? `<span class="tag green">집행 중</span>`
@@ -3118,11 +3149,33 @@ function renderStockTable() {
     const seraCvCell = p.seraClickValue != null
       ? `₩${Math.round(p.seraClickValue).toLocaleString()}`
       : '<span style="color:var(--muted)">-</span>';
+    const seasonTag = p.season ? `<span style="font-size:11px;color:var(--accent);background:var(--accent-l);padding:2px 7px;border-radius:100px;font-weight:500">${p.season}</span>` : '';
+    const catTag = p.category ? `<span style="font-size:11px;color:var(--muted);background:var(--surface2);padding:2px 7px;border-radius:100px">${p.category}</span>` : '';
+
+    if (collapsed) {
+      // ── 접힘: 상품당 한 행, 옵션 합계 ──
+      const availColor = p.totalAvail < 0 ? 'color:var(--amber)' : p.totalAvail === 0 ? 'color:var(--red)' : p.totalAvail < 5 ? 'color:var(--amber)' : 'color:var(--green)';
+      const storeColor = p.totalStore === 0 ? 'color:var(--muted)' : 'color:var(--text)';
+      html += `<tr style="background:${rowBg};border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px;font-weight:600;color:var(--text)">${p.name}</td>
+        <td style="padding:8px 12px">${seasonTag}</td>
+        <td style="padding:8px 12px">${catTag}</td>
+        <td style="padding:8px 12px;color:var(--muted)">${skuCount}개 옵션</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:600;${availColor}">${p.totalAvail}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:500;${storeColor}">${p.totalStore}</td>
+        <td style="padding:8px 12px;text-align:right;color:var(--text)">${seraViewsCell}</td>
+        <td style="padding:8px 12px;text-align:right;color:var(--text)">${seraOrdersCell}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:600;color:var(--accent)">${seraCvCell}</td>
+        <td style="padding:8px 12px;text-align:center">${adTag}</td>
+        <td style="padding:8px 12px;text-align:center">${statusTag}</td>
+      </tr>`;
+      return;
+    }
+
+    // ── 펼침: 옵션마다 한 행 (첫 행에 상품명 등 rowspan) ──
     p.skus.forEach((sku, i) => {
       const availColor = sku.avail < 0 ? 'color:var(--amber)' : sku.avail === 0 ? 'color:var(--red)' : sku.avail < 5 ? 'color:var(--amber)' : 'color:var(--green)';
       const storeColor = sku.store === 0 ? 'color:var(--muted)' : 'color:var(--text)';
-      const seasonTag = p.season ? `<span style="font-size:11px;color:var(--accent);background:var(--accent-l);padding:2px 7px;border-radius:100px;font-weight:500">${p.season}</span>` : '';
-      const catTag = p.category ? `<span style="font-size:11px;color:var(--muted);background:var(--surface2);padding:2px 7px;border-radius:100px">${p.category}</span>` : '';
       html += `<tr style="background:${rowBg};border-bottom:1px solid var(--border)">
         ${i === 0
           ? `<td style="padding:8px 12px;font-weight:600;color:var(--text);vertical-align:top" rowspan="${skuCount}">${p.name}</td>
@@ -3151,6 +3204,69 @@ function renderStockTable() {
 
   html += `</tbody></table>`;
   document.getElementById('stock-table-wrap').innerHTML = html;
+}
+
+function toggleStockCollapse(btn) {
+  state._stockCollapsed = !state._stockCollapsed;
+  if (btn) btn.textContent = state._stockCollapsed ? '⊕ 옵션 펼치기' : '⊖ 옵션 접기';
+  renderStockTable();
+}
+
+// 현재 화면(필터·정렬·펼침상태) 그대로 → 엑셀/복사용 2차원 배열 [헤더, ...행]
+function buildStockAOA() {
+  const header = ['상품명','시즌','복종','옵션','가용재고','매장총재고','조회수','주문','클릭가치','광고','상태'];
+  const rows = [header];
+  const products = getStockSorted();
+  const collapsed = state._stockCollapsed || false;
+  products.forEach(p => {
+    const views  = p.seraViews      != null ? p.seraViews      : '';
+    const orders = p.seraOrders     != null ? p.seraOrders     : '';
+    const cv     = p.seraClickValue != null ? Math.round(p.seraClickValue) : '';
+    const ad     = p.hasAd ? '집행 중' : '미집행';
+    const status = stockStatusText(p);
+    if (collapsed) {
+      rows.push([p.name, p.season||'', p.category||'', `${p.skus.length}개 옵션`,
+        p.totalAvail, p.totalStore, views, orders, cv, ad, status]);
+    } else {
+      p.skus.forEach(sku => {
+        rows.push([p.name, p.season||'', p.category||'', sku.option,
+          sku.avail, sku.store, views, orders, cv, ad, status]);
+      });
+    }
+  });
+  return rows;
+}
+
+function stockFileStamp() {
+  // KST 기준 YYYYMMDD_HHmm
+  const kst = new Date(Date.now() + 9 * 3600 * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return `${kst.getUTCFullYear()}${p(kst.getUTCMonth()+1)}${p(kst.getUTCDate())}_${p(kst.getUTCHours())}${p(kst.getUTCMinutes())}`;
+}
+
+function exportStockExcel() {
+  if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리 로딩 중이에요. 잠시 후 다시 시도해주세요.'); return; }
+  const aoa = buildStockAOA();
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '재고연동현황');
+  XLSX.writeFile(wb, `재고연동현황_${stockFileStamp()}.xlsx`);
+}
+
+async function copyStockTSV(btn) {
+  const aoa = buildStockAOA();
+  const tsv = aoa.map(row => row.map(c => String(c).replace(/\t/g,' ').replace(/\r?\n/g,' ')).join('\t')).join('\n');
+  const done = () => { if (btn) { const t = btn.textContent; btn.textContent = '✓ 복사됨'; setTimeout(()=>{ btn.textContent = t; }, 1500); } };
+  try {
+    await navigator.clipboard.writeText(tsv);
+    done();
+  } catch(e) {
+    // 클립보드 API 미지원 fallback
+    const ta = document.createElement('textarea');
+    ta.value = tsv; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch(_) { alert('복사 실패 — 브라우저에서 직접 복사해주세요.'); }
+    document.body.removeChild(ta);
+  }
 }
 
 // ── SEARCH PRODUCT ───────────────────────────────────────────────
