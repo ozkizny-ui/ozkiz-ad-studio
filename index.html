@@ -648,10 +648,56 @@ async function loadFromSupabase() {
       document.getElementById('sera-text').textContent = `✓ ${state._seraData.length}개 (저장됨)`;
     }
 
+    // 소재 제작 상태 (key=rep_code|상품명, status=before|making)
+    await loadCreativeStatus();
+
     // 재고 데이터 있으면 재고 탭 렌더
     if (state.inventoryData.length) renderStockPage();
 
   } catch(e) { console.log('Supabase 로드 실패:', e); }
+}
+
+// ── 소재 제작 상태 (creative_status) ─────────────────────────────
+async function loadCreativeStatus() {
+  try {
+    const rows = await sbGet('creative_status', 'key,status');
+    state._creativeStatus = {};
+    (rows || []).forEach(r => { if (r.key != null) state._creativeStatus[r.key] = r.status || 'before'; });
+  } catch(e) {
+    console.log('소재 제작 상태 로드 실패:', e);
+    state._creativeStatus = state._creativeStatus || {};
+  }
+}
+// 저장 키: P코드(rep_code) 우선, 없으면 상품명
+function statusKey(p) { return p.repCode || p.name; }
+
+async function toggleCreativeStatus(key, btn) {
+  if (!state._creativeStatus) state._creativeStatus = {};
+  const next = (state._creativeStatus[key] === 'making') ? 'before' : 'making';
+  state._creativeStatus[key] = next;
+  if (btn) applyCreativeBtn(btn, next);
+  try {
+    await sbUpsert('creative_status', [{ key, status: next, updated_at: new Date().toISOString() }]);
+  } catch(e) { console.log('소재 제작 상태 저장 실패:', e); }
+}
+
+const CREATIVE_BTN_BASE = 'padding:4px 11px;border-radius:100px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:.15s';
+function creativeBtnStyle(making) {
+  return CREATIVE_BTN_BASE + (making
+    ? ';background:var(--accent);color:#fff;border:1px solid var(--accent)'
+    : ';background:var(--surface2);color:var(--muted);border:1px solid var(--border2)');
+}
+function applyCreativeBtn(btn, status) {
+  const making = status === 'making';
+  btn.textContent = making ? '소재 제작중' : '소재 제작전';
+  btn.setAttribute('style', creativeBtnStyle(making));
+}
+function creativeBtnHtml(p) {
+  const key = statusKey(p);
+  const making = (state._creativeStatus && state._creativeStatus[key]) === 'making';
+  // 인라인 onclick용 키 이스케이프 (속성은 큰따옴표, JS 문자열은 작은따옴표)
+  const k = String(key).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+  return `<button onclick="toggleCreativeStatus('${k}', this)" style="${creativeBtnStyle(making)}">${making ? '소재 제작중' : '소재 제작전'}</button>`;
 }
 
 // ── Supabase 데이터 저장 ─────────────────────────────────────────
@@ -2805,7 +2851,7 @@ function renderStockPage() {
       total: totalAvail + totalStore,
       season: meta.season, category: meta.category,
       stockStatus, colorWarns,
-      notionEntry, hasAd,
+      notionEntry, hasAd, repCode,
       highStock: isHighStock(skus),
       seraViews:      sera ? sera.views : null,
       seraOrders:     sera ? sera.orders : null,
@@ -3100,6 +3146,13 @@ function renderStockTable() {
   const statusFilter = state._stockStatusFilter || '';
   const sortBy = state._stockSort || '';
   const collapsed = state._stockCollapsed || false;
+  const showCreative = state._stockQuickMode || false; // 소재 제작 상태 컬럼 — 광고 집행 요망 모드에서만
+
+  // 소재 제작 상태 최초 1회 비동기 로드 후 재렌더
+  if (showCreative && !state._creativeStatus) {
+    state._creativeStatus = {};
+    loadCreativeStatus().then(renderStockTable);
+  }
 
   const filtered = getStockSorted();
 
@@ -3146,6 +3199,7 @@ function renderStockTable() {
         <th style="${thRStyle}">클릭가치</th>
         <th style="${thCStyle}">광고</th>
         <th style="${thCStyle}">상태</th>
+        ${showCreative ? `<th style="${thCStyle}">소재 제작 상태</th>` : ''}
       </tr>
     </thead>
     <tbody>`;
@@ -3204,6 +3258,7 @@ function renderStockTable() {
         <td style="padding:8px 12px;text-align:right;font-weight:600;color:var(--accent)">${seraCvCell}</td>
         <td style="padding:8px 12px;text-align:center">${adTag}</td>
         <td style="padding:8px 12px;text-align:center">${statusTag}</td>
+        ${showCreative ? `<td style="padding:8px 12px;text-align:center">${creativeBtnHtml(p)}</td>` : ''}
       </tr>`;
       return;
     }
@@ -3226,14 +3281,15 @@ function renderStockTable() {
              <td style="padding:8px 12px;text-align:right;vertical-align:middle;color:var(--text)" rowspan="${skuCount}">${seraOrdersCell}</td>
              <td style="padding:8px 12px;text-align:right;vertical-align:middle;font-weight:600;color:var(--accent)" rowspan="${skuCount}">${seraCvCell}</td>
              <td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${adTag}</td>
-             <td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${statusTag}</td>`
+             <td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${statusTag}</td>
+             ${showCreative ? `<td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${creativeBtnHtml(p)}</td>` : ''}`
           : ''}
       </tr>`;
     });
   });
 
   if (filtered.length > 200) {
-    html += `<tr><td colspan="11" style="padding:12px;text-align:center;color:var(--muted);font-size:12px">
+    html += `<tr><td colspan="${showCreative ? 12 : 11}" style="padding:12px;text-align:center;color:var(--muted);font-size:12px">
       상위 200개 표시 중 (전체 ${filtered.length}개) — 검색으로 좁혀보세요
     </td></tr>`;
   }
