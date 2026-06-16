@@ -3068,8 +3068,8 @@ function getStockSorted() {
     if (adFilter === 'off' &&  p.hasAd) return false;
     if (statusFilter && p.stockStatus !== statusFilter) return false;
     if (highStockOnly && !p.highStock) return false;
-    // 광고 집행 요망 모드: 클릭가치 700 이하 제외 (SERA 미매칭=데이터 없음은 통과)
-    if (state._stockQuickMode && p.seraClickValue != null && p.seraClickValue <= 700) return false;
+    // 광고 집행 요망 모드: 클릭가치 700 초과만 표시 (null/데이터없음/700이하 전부 제외)
+    if (state._stockQuickMode && !(p.seraClickValue > 700)) return false;
     return true;
   });
 
