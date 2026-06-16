@@ -655,6 +655,32 @@ async function loadFromSupabase() {
 }
 
 // ── Supabase 데이터 저장 ─────────────────────────────────────────
+// 카페24 상품코드(P0000JFT 형식) 컬럼 탐색
+// 헤더명이 파일마다 달라서(공백·명칭 차이) 헤더 매칭만으론 놓침 → 값 패턴(P+영숫자)으로도 추론
+function findRepCodeKey(rows) {
+  if (!rows || !rows.length) return null;
+  const cols = Object.keys(rows[0]);
+  const looksLikeCode = k => {
+    let seen = 0, hit = 0;
+    for (const r of rows) {
+      const v = String(r[k] ?? '').trim();
+      if (!v) continue;
+      seen++;
+      if (/^P[0-9A-Za-z]{3,}$/.test(v)) hit++;
+      if (seen >= 50) break;
+    }
+    return seen > 0 && hit / seen > 0.6;
+  };
+  // 1) 헤더명: 공백 제거 후 '카페24' + '상품코드' 둘 다 포함
+  let key = cols.find(k => { const s = String(k).replace(/\s/g,''); return s.includes('카페24') && s.includes('상품코드'); });
+  if (key) return key;
+  // 2) 헤더명: '상품코드' 포함 + 숫자형 '대표' 제외 → 값이 P코드 형식일 때만 채택
+  key = cols.find(k => { const s = String(k).replace(/\s/g,''); return s.includes('상품코드') && !s.includes('대표'); });
+  if (key && looksLikeCode(key)) return key;
+  // 3) 헤더명이 전혀 다를 때: 값 패턴(P0000...)으로 컬럼 추론
+  return cols.find(looksLikeCode) || null;
+}
+
 async function saveInventoryToSupabase(slim) {
   try {
     await sbDelete('inventory');
@@ -711,12 +737,26 @@ function initUpload() {
           const availKey = cols.find(k=>k.includes('가용재고'));
           const storeKey = cols.find(k=>k.includes('매장총재고'));
           // 카페24 상품코드(P코드) = SERA 매칭 키 (숫자형 '대표상품코드' 아님)
-          const repKey   = cols.find(k=>k.includes('카페24') && k.includes('상품코드'));
-          const slim = state.inventoryData.map(r => ({
-            '상품명': r[nameKey]||'', '옵션': r[optKey]||'',
-            '가용재고': r[availKey]||0, '매장총재고': r[storeKey]||0,
-            '카페24 상품코드': repKey ? (r[repKey]||'') : ''
-          }));
+          const repKey   = findRepCodeKey(state.inventoryData);
+          // 상품명별 대표 P코드 (옵션행에 코드가 비어있는 병합셀 export 대비 forward-fill)
+          const codeByName = {};
+          if (repKey) {
+            for (const r of state.inventoryData) {
+              const nm = String(r[nameKey]||'').trim();
+              const cd = String(r[repKey]||'').trim();
+              if (nm && cd && !codeByName[nm]) codeByName[nm] = cd;
+            }
+          }
+          const slim = state.inventoryData.map(r => {
+            const nm = String(r[nameKey]||'').trim();
+            const cd = repKey ? String(r[repKey]||'').trim() : '';
+            return {
+              '상품명': r[nameKey]||'', '옵션': r[optKey]||'',
+              '가용재고': r[availKey]||0, '매장총재고': r[storeKey]||0,
+              '카페24 상품코드': cd || codeByName[nm] || ''
+            };
+          });
+          console.log(`[재고저장] 상품코드 컬럼: ${repKey||'미발견'} · 코드 보유 상품 ${Object.keys(codeByName).length}개`);
           // Supabase에 저장
           saveInventoryToSupabase(slim);
           // 업로드 날짜 표시
@@ -2689,6 +2729,18 @@ function renderStockPage() {
   seasons.push('계절없음');
   const categories = [...new Set(Object.values(strategyMap).map(r=>r.category).filter(Boolean))].sort();
 
+  // 카페24 상품코드(P코드) 컬럼 — SERA 매칭 키 (루프 밖에서 1회 탐색)
+  const repCodeKey = findRepCodeKey(data);
+  // 상품명별 대표 P코드 (옵션행 빈칸 대비 forward-fill)
+  const repCodeByName = {};
+  if (repCodeKey) {
+    for (const row of data) {
+      const nm = String(row[nameKey]||'').trim();
+      const cd = String(row[repCodeKey]||'').trim();
+      if (nm && cd && !repCodeByName[nm]) repCodeByName[nm] = cd;
+    }
+  }
+
   // 상품명 기준으로 그룹핑
   const grouped = {};
   data.forEach(row => {
@@ -2698,9 +2750,7 @@ function renderStockPage() {
     // 제외 키워드 포함된 상품 숨김
     if (EXCLUDE_KEYWORDS.some(kw => name.includes(kw))) return;
     if (!grouped[name]) grouped[name] = [];
-    // 카페24 상품코드(P코드) 컬럼 찾기 — SERA 매칭 키
-    const repCodeKey = Object.keys(row).find(k => k.includes('카페24') && k.includes('상품코드'));
-    const repCode = repCodeKey ? String(row[repCodeKey]||'').trim() : '';
+    const repCode = (repCodeKey ? String(row[repCodeKey]||'').trim() : '') || repCodeByName[name] || '';
     grouped[name].push({
       option,
       avail: parseInt(row[availKey]||0),
