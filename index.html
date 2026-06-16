@@ -659,7 +659,8 @@ async function loadFromSupabase() {
 // 헤더명이 파일마다 달라서(공백·명칭 차이) 헤더 매칭만으론 놓침 → 값 패턴(P+영숫자)으로도 추론
 function findRepCodeKey(rows) {
   if (!rows || !rows.length) return null;
-  const cols = Object.keys(rows[0]);
+  // 행마다 빈 셀 키가 누락될 수 있으므로 여러 행의 키를 union 해서 컬럼 목록 도출
+  const cols = [...new Set(rows.slice(0, 200).flatMap(r => Object.keys(r)))];
   const looksLikeCode = k => {
     let seen = 0, hit = 0;
     for (const r of rows) {
@@ -728,7 +729,9 @@ function initUpload() {
       try {
         const wb = XLSX.read(ev.target.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        state.inventoryData = XLSX.utils.sheet_to_json(ws);
+        // defval:'' 필수 — 없으면 빈 셀의 키가 행 객체에서 누락됨
+        // (예: 첫 상품이 카페24 미연동이면 '카페24 상품코드' 키가 row0에서 사라져 컬럼 탐지 실패)
+        state.inventoryData = XLSX.utils.sheet_to_json(ws, { defval: '' });
         // localStorage에 필요한 컬럼만 저장 (용량 절약)
         try {
           const cols = Object.keys(state.inventoryData[0] || {});
@@ -738,25 +741,17 @@ function initUpload() {
           const storeKey = cols.find(k=>k.includes('매장총재고'));
           // 카페24 상품코드(P코드) = SERA 매칭 키 (숫자형 '대표상품코드' 아님)
           const repKey   = findRepCodeKey(state.inventoryData);
-          // 상품명별 대표 P코드 (옵션행에 코드가 비어있는 병합셀 export 대비 forward-fill)
-          const codeByName = {};
-          if (repKey) {
-            for (const r of state.inventoryData) {
-              const nm = String(r[nameKey]||'').trim();
-              const cd = String(r[repKey]||'').trim();
-              if (nm && cd && !codeByName[nm]) codeByName[nm] = cd;
-            }
-          }
+          let repFilled = 0;
           const slim = state.inventoryData.map(r => {
-            const nm = String(r[nameKey]||'').trim();
             const cd = repKey ? String(r[repKey]||'').trim() : '';
+            if (cd) repFilled++;
             return {
               '상품명': r[nameKey]||'', '옵션': r[optKey]||'',
               '가용재고': r[availKey]||0, '매장총재고': r[storeKey]||0,
-              '카페24 상품코드': cd || codeByName[nm] || ''
+              '카페24 상품코드': cd // 옵션별 실제값 (미연동 옵션은 빈값 유지)
             };
           });
-          console.log(`[재고저장] 상품코드 컬럼: ${repKey||'미발견'} · 코드 보유 상품 ${Object.keys(codeByName).length}개`);
+          console.log(`[재고저장] 상품코드 컬럼: ${repKey||'미발견'} · rep_code 채워진 행 ${repFilled}/${slim.length}`);
           // Supabase에 저장
           saveInventoryToSupabase(slim);
           // 업로드 날짜 표시
@@ -2731,15 +2726,6 @@ function renderStockPage() {
 
   // 카페24 상품코드(P코드) 컬럼 — SERA 매칭 키 (루프 밖에서 1회 탐색)
   const repCodeKey = findRepCodeKey(data);
-  // 상품명별 대표 P코드 (옵션행 빈칸 대비 forward-fill)
-  const repCodeByName = {};
-  if (repCodeKey) {
-    for (const row of data) {
-      const nm = String(row[nameKey]||'').trim();
-      const cd = String(row[repCodeKey]||'').trim();
-      if (nm && cd && !repCodeByName[nm]) repCodeByName[nm] = cd;
-    }
-  }
 
   // 상품명 기준으로 그룹핑
   const grouped = {};
@@ -2750,7 +2736,7 @@ function renderStockPage() {
     // 제외 키워드 포함된 상품 숨김
     if (EXCLUDE_KEYWORDS.some(kw => name.includes(kw))) return;
     if (!grouped[name]) grouped[name] = [];
-    const repCode = (repCodeKey ? String(row[repCodeKey]||'').trim() : '') || repCodeByName[name] || '';
+    const repCode = repCodeKey ? String(row[repCodeKey]||'').trim() : '';
     grouped[name].push({
       option,
       avail: parseInt(row[availKey]||0),
