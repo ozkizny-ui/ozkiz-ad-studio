@@ -2383,19 +2383,37 @@ function showAdStock(name) {
   if (!p) { box.style.display = 'none'; box.innerHTML = ''; return; }
 
   const availColor = p.totalAvail < 0 ? 'color:var(--amber)' : p.totalAvail === 0 ? 'color:var(--red)' : p.totalAvail < 5 ? 'color:var(--amber)' : 'color:var(--green)';
-  const opts = p.skus.map(s => {
-    const c = s.avail < 0 ? 'var(--amber)' : s.avail === 0 ? 'var(--red)' : s.avail < 5 ? 'var(--amber)' : 'var(--text2)';
-    return `<span style="color:${c}">${s.option || '-'} ${s.avail}</span>`;
-  }).join('<span style="color:var(--border)"> · </span>');
+  const rowsHtml = p.skus.map(s => {
+    const c = s.avail < 0 ? 'var(--amber)' : s.avail === 0 ? 'var(--red)' : s.avail < 5 ? 'var(--amber)' : 'var(--text)';
+    return `<tr style="border-top:1px solid var(--border)">
+      <td style="padding:5px 8px">${s.option || '-'}</td>
+      <td style="padding:5px 8px;text-align:right;color:${c};font-weight:600">${s.avail.toLocaleString()}</td>
+      <td style="padding:5px 8px;text-align:right;color:var(--text2)">${s.store.toLocaleString()}</td>
+    </tr>`;
+  }).join('');
 
   box.innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span>가용재고 <b style="${availColor}">${p.totalAvail.toLocaleString()}</b></span>
-      <span style="color:var(--text2)">매장총재고 <b style="color:var(--text)">${p.totalStore.toLocaleString()}</b></span>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
       ${stockStatusBadge(p)}
       ${p.hasAd ? '<span class="tag green">광고 집행 중</span>' : '<span class="tag gray">광고 미집행</span>'}
     </div>
-    <div style="margin-top:5px;font-size:11px;color:var(--text2);line-height:1.7">${opts}</div>`;
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="color:var(--text2);font-size:11px;background:var(--surface)">
+          <th style="padding:5px 8px;text-align:left;font-weight:600">옵션</th>
+          <th style="padding:5px 8px;text-align:right;font-weight:600">가용재고</th>
+          <th style="padding:5px 8px;text-align:right;font-weight:600">매장총재고</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+      <tfoot>
+        <tr style="border-top:2px solid var(--border2);font-weight:700">
+          <td style="padding:6px 8px">합계</td>
+          <td style="padding:6px 8px;text-align:right;${availColor}">${p.totalAvail.toLocaleString()}</td>
+          <td style="padding:6px 8px;text-align:right;color:var(--text)">${p.totalStore.toLocaleString()}</td>
+        </tr>
+      </tfoot>
+    </table>`;
   box.style.display = 'block';
 }
 
