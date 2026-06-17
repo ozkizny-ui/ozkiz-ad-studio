@@ -2330,7 +2330,7 @@ function onProductInput(val) {
     el.style.cssText = 'padding:8px 14px;font-size:12px;color:var(--text);cursor:pointer';
     el.addEventListener('mouseover', () => el.style.background = 'var(--surface2)');
     el.addEventListener('mouseout',  () => el.style.background = '');
-    el.addEventListener('click',     () => selectProduct(name));
+    el.addEventListener('click',     () => selectAdProduct(name));
     list.appendChild(el);
   });
   list.style.display = 'block';
@@ -2341,7 +2341,7 @@ function hideProductList() {
   if (list) list.style.display = 'none';
 }
 
-async function selectProduct(name) {
+async function selectAdProduct(name) {
   const input = document.getElementById('as-product');
   if (input) input.value = name;
   hideProductList();
