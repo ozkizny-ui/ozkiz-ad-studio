@@ -2208,6 +2208,10 @@ function renderAdSettingForm(adType) {
         </div>
       </div>
       <div class="as-row">
+        <label class="as-label">재고</label>
+        <div class="as-val"><div id="as-stock-info" style="display:none;font-size:12px;color:var(--text);background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px"></div></div>
+      </div>
+      <div class="as-row">
         <label class="as-label">소재 설명</label>
         <div class="as-val"><input type="text" id="as-desc" placeholder="ai모델영상_켄_260518" class="as-input"
           oninput="updateAdName()"></div>
@@ -2362,8 +2366,37 @@ async function selectAdProduct(name) {
   if (input) input.value = name;
   hideProductList();
   updateAdName();
+  showAdStock(name);   // 재고연동현황과 동일한 재고 표시
   // 카페24에서 랜딩 URL 자동 조회
   await fetchLandingUrl(name);
+}
+
+// 광고세팅: 선택 상품 재고를 재고연동현황 표와 동일하게 표시
+function showAdStock(name) {
+  const box = document.getElementById('as-stock-info');
+  if (!box) return;
+  // 재고 계산이 아직이면 1회 계산 (init에서 보통 이미 됨)
+  if (!state._allStockProducts && state.inventoryData.length) {
+    try { renderStockPage(); } catch(_) {}
+  }
+  const p = state._allStockProducts ? state._allStockProducts[name] : null;
+  if (!p) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+  const availColor = p.totalAvail < 0 ? 'color:var(--amber)' : p.totalAvail === 0 ? 'color:var(--red)' : p.totalAvail < 5 ? 'color:var(--amber)' : 'color:var(--green)';
+  const opts = p.skus.map(s => {
+    const c = s.avail < 0 ? 'var(--amber)' : s.avail === 0 ? 'var(--red)' : s.avail < 5 ? 'var(--amber)' : 'var(--text2)';
+    return `<span style="color:${c}">${s.option || '-'} ${s.avail}</span>`;
+  }).join('<span style="color:var(--border)"> · </span>');
+
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>가용재고 <b style="${availColor}">${p.totalAvail.toLocaleString()}</b></span>
+      <span style="color:var(--text2)">매장총재고 <b style="color:var(--text)">${p.totalStore.toLocaleString()}</b></span>
+      ${stockStatusBadge(p)}
+      ${p.hasAd ? '<span class="tag green">광고 집행 중</span>' : '<span class="tag gray">광고 미집행</span>'}
+    </div>
+    <div style="margin-top:5px;font-size:11px;color:var(--text2);line-height:1.7">${opts}</div>`;
+  box.style.display = 'block';
 }
 
 // 랜딩 URL 조회: ① product_url 매핑(이지어드민 상품명) → ② 없으면 cafe24 자동조회 + 자동저장
@@ -2842,7 +2875,7 @@ function renderStockPage() {
   const NOTION_MAP = {};
   (state._notionPresale || []).forEach(n => { NOTION_MAP[n.name] = n; });
 
-  const products = Object.entries(grouped).map(([name, skus]) => {
+  const allProducts = Object.entries(grouped).map(([name, skus]) => {
     const totalAvail = skus.reduce((s,r)=>s+r.avail,0);
     const totalStore = skus.reduce((s,r)=>s+r.store,0);
     const meta = strategyMap[name] || { season: '', category: '' };
@@ -2904,7 +2937,8 @@ function renderStockPage() {
       seraOrders:     sera ? sera.orders : null,
       seraClickValue: sera ? sera.clickValue : null,
     };
-  }).filter(p => {
+  });
+  const products = allProducts.filter(p => {
     // 재고 0 이하 + 예약판매 아닌 것 숨김
     if (p.totalAvail <= 0 && !['presale_near','presale_far'].includes(p.stockStatus)) return false;
     return true;
@@ -2940,6 +2974,9 @@ function renderStockPage() {
   const ok   = products.filter(p => p.stockStatus === 'ok');
 
   state._stockProducts = [...alertItems, ...presaleNear, ...ok];
+  // 광고세팅 재고 표시용: 필터/품절 포함 전체 상품 맵 (이름 기준)
+  state._allStockProducts = {};
+  allProducts.forEach(p => { state._allStockProducts[p.name] = p; });
   state._stockFilter   = state._stockFilter || '';
   state._stockSeasons  = state._stockSeasons || [];
   state._stockCategory = state._stockCategory || '';
@@ -3188,6 +3225,18 @@ function stockStatusText(p) {
   }
 }
 
+// 상태 배지 (표/광고세팅 공용 — 재고연동현황과 동일한 태그)
+function stockStatusBadge(p) {
+  const arrivalLabel = p.notionEntry?.arrivalDate ? ` · 입고 ${p.notionEntry.arrivalDate}` : '';
+  switch (p.stockStatus) {
+    case 'size_warn':    return `<span class="tag red">품절</span>`;
+    case 'presale_far':  return `<span class="tag amber">예약판매 체크 확인${arrivalLabel}</span>`;
+    case 'presale_near': return `<span class="tag green">예약판매${arrivalLabel}</span>`;
+    case 'color_warn':   return `<span class="tag amber" title="${p.colorWarns.map(a=>a.label).join(', ')}">색상 품절 경고</span>`;
+    default:             return `<span class="tag green">충분</span>`;
+  }
+}
+
 function renderStockTable() {
   const adFilter = state._stockAdFilter || '';
   const statusFilter = state._stockStatusFilter || '';
@@ -3262,19 +3311,7 @@ function renderStockTable() {
     const arrivalLabel = p.notionEntry?.arrivalDate
       ? ` · 입고 ${p.notionEntry.arrivalDate}` : '';
 
-    let statusTag;
-    if (p.stockStatus === 'size_warn') {
-      statusTag = `<span class="tag red">품절</span>`;
-    } else if (p.stockStatus === 'presale_far') {
-      statusTag = `<span class="tag amber">예약판매 체크 확인${arrivalLabel}</span>`;
-    } else if (p.stockStatus === 'presale_near') {
-      statusTag = `<span class="tag green">예약판매${arrivalLabel}</span>`;
-    } else if (p.stockStatus === 'color_warn') {
-      const warns = p.colorWarns.map(a => a.label).join(', ');
-      statusTag = `<span class="tag amber" title="${warns}">색상 품절 경고</span>`;
-    } else {
-      statusTag = `<span class="tag green">충분</span>`;
-    }
+    const statusTag = stockStatusBadge(p);
 
     const skuCount = p.skus.length;
     const adTag = p.hasAd
