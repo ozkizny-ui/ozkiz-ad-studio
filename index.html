@@ -527,6 +527,8 @@ const state = {
   _stockProductMap: null,
   // 레인 아이템 증액
   _rainBoostedAds: [],
+  // 상품명 → 랜딩 URL 매핑 (product_url 테이블, key=이지어드민 상품명)
+  urlMap: {},
 };
 
 // ── INIT ─────────────────────────────────────────────────────────
@@ -647,6 +649,17 @@ async function loadFromSupabase() {
       }));
       document.getElementById('sera-text').textContent = `✓ ${state._seraData.length}개 (저장됨)`;
     }
+
+    // 상품명 → 랜딩 URL 매핑 (이지어드민 상품명 기준)
+    try {
+      const urlRows = await sbGet('product_url', 'ez_name,url,product_no');
+      if (Array.isArray(urlRows) && urlRows.length) {
+        const map = {};
+        urlRows.forEach(r => { if (r.ez_name && r.url) map[r.ez_name] = r.url; });
+        state.urlMap = map;
+        console.log(`product_url 로드: ${Object.keys(map).length}개`);
+      }
+    } catch(e) { console.log('product_url 로드 실패(테이블 미생성 가능):', e); }
 
     // 소재 제작 상태 (key=rep_code|상품명, status=before|making)
     await loadCreativeStatus();
@@ -2125,8 +2138,11 @@ function renderAdSettingForm(adType) {
   const landingAndCaption = adType !== 'PA' ? `
     <div class="as-row">
       <label class="as-label">랜딩 URL</label>
-      <div class="as-val"><input type="text" id="landing-url" placeholder="https://ozkiz.com/product/..."
-        class="as-input" oninput="onLandingUrlChange(this.value)"></div>
+      <div class="as-val" style="display:flex;align-items:center;gap:6px">
+        <input type="text" id="landing-url" placeholder="https://ozkiz.com/product/..."
+          class="as-input" style="flex:1" oninput="onLandingUrlChange(this.value)">
+        <span id="landing-url-status" style="font-size:11px;white-space:nowrap;flex-shrink:0;display:none"></span>
+      </div>
     </div>
     <div class="as-row">
       <label class="as-label">캡션</label>
@@ -2350,40 +2366,67 @@ async function selectAdProduct(name) {
   await fetchLandingUrl(name);
 }
 
-// 카페24 API로 랜딩 URL 조회
+// 랜딩 URL 조회: ① product_url 매핑(이지어드민 상품명) → ② 없으면 cafe24 자동조회 + 자동저장
+function setLandingStatus(html) {
+  const el = document.getElementById('landing-url-status');
+  if (el) { el.style.display = 'inline'; el.innerHTML = html; }
+}
 async function fetchLandingUrl(productName) {
   const urlInput = document.getElementById('landing-url');
-  const statusEl = document.getElementById('landing-url-status');
   if (!urlInput) return;
 
-  if (statusEl) { statusEl.style.display = 'inline'; statusEl.innerHTML = '<span style="color:var(--text2)">⏳ URL 조회 중...</span>'; }
+  // ① 저장된 매핑(엑셀 시딩 + 자동학습)에서 즉시 조회
+  const mapped = state.urlMap[productName];
+  if (mapped) {
+    urlInput.value = mapped;
+    setLandingStatus('<span style="color:#3B6D11;background:#EAF3DE;padding:2px 8px;border-radius:4px">✓ 매핑</span>');
+    onLandingUrlChange(mapped);
+    return;
+  }
 
+  // ② 신규상품 → cafe24 API 자동조회
+  setLandingStatus('<span style="color:var(--text2)">⏳ 신규상품 조회 중...</span>');
   try {
-    // 핵심어 추출 (- 뒤 부분)
+    // 핵심어 추출 (- 뒤 부분, 괄호 제거)
     const core = productName.includes('-') ? productName.split('-').slice(1).join('-').trim() : productName;
-    // 괄호 제거
     const searchQuery = core.replace(/\([^)]*\)/g, '').trim();
 
-    const r = await fetch(`${PROXY}/api/cafe24?path=/api/v2/products&params=limit=10%26search_query=${encodeURIComponent(searchQuery)}`);
+    const r = await fetch(`${PROXY}/api/cafe24?path=admin/products&product_name=${encodeURIComponent(searchQuery)}&limit=20&embed=options`);
     const data = await r.json();
     const products = data.products || [];
 
     if (!products.length) {
-      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">✗ 상품 없음</span>';
+      setLandingStatus('<span style="color:var(--red)">✗ 카페24 상품 없음</span>');
       return;
     }
 
-    // 가장 이름이 유사한 상품 찾기
+    // 이지어드민 상품명(internal_product_name) 정확 일치 우선 → 부분일치 → 첫 결과
     const lower = searchQuery.toLowerCase();
-    const best = products.find(p => p.product_name.toLowerCase().includes(lower)) || products[0];
-    const url = `https://ozkiz.com/product/detail.html?product_no=${best.product_no}`;
+    const best =
+      products.find(p => (p.internal_product_name||'').trim() === productName) ||
+      products.find(p => (p.product_name||'').toLowerCase().includes(lower)) ||
+      products[0];
 
+    const url = `https://ozkiz.com/product/detail.html?product_no=${best.product_no}`;
     urlInput.value = url;
-    if (statusEl) statusEl.innerHTML = '<span style="color:#3B6D11;background:#EAF3DE;padding:2px 8px;border-radius:4px">✓ 카페24 자동</span>';
-    // 캡션도 바로 생성 시작
+    setLandingStatus('<span style="color:#185FA5;background:#E7F0FA;padding:2px 8px;border-radius:4px">✓ 카페24 자동</span>');
     onLandingUrlChange(url);
+
+    // ③ 자동 저장(셀프 캐시) — 다음부터는 ①에서 즉시 조회됨
+    state.urlMap[productName] = url;
+    try {
+      await sbUpsert('product_url', [{
+        ez_name: productName,
+        pcode: best.product_code || null,
+        product_no: best.product_no,
+        cafe24_name: best.product_name || null,
+        url,
+        source: 'cafe24',
+        updated_at: new Date().toISOString(),
+      }]);
+    } catch(_) { /* 테이블 미생성 등 저장 실패해도 URL 표시는 유지 */ }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">✗ 조회 실패</span>';
+    setLandingStatus('<span style="color:var(--red)">✗ 조회 실패</span>');
   }
 }
 
