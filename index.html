@@ -2516,14 +2516,12 @@ function renderAdSettingForm(adType) {
   } else if (adType === 'VIDEO') {
     extraFields = `
       <div class="as-row">
-        <label class="as-label">영상</label>
+        <label class="as-label">영상 (Drive)</label>
         <div class="as-val">
-          <div id="video-drop" onclick="document.getElementById('video-file').click()"
-            style="border:0.5px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;background:var(--surface2)">
-            <div style="font-size:20px">🎬</div>
-            <div style="font-size:12px;color:var(--text2);margin-top:4px" id="video-label">영상 업로드 (MP4 · 최대 4GB)</div>
-          </div>
-          <input type="file" id="video-file" accept="video/*" style="display:none" onchange="handleFileSelect('video', this)">
+          <input type="text" id="video-drive-filename" placeholder="Drive 광고소재 폴더의 영상 파일명 (예: 원피스모리본_영상켄_260617.mp4)"
+            oninput="if(document.getElementById('as-adname')) document.getElementById('as-adname').value = bulkParseFilename(this.value).adName"
+            style="width:100%;padding:8px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);box-sizing:border-box">
+          <div style="font-size:11px;color:var(--text2);margin-top:4px">🎬 Drive 폴더에 올린 영상의 <b>파일명</b>을 적어주세요(확장자 있어도/없어도 OK). 광고명은 파일명에서 자동 생성. 대용량도 Meta가 Drive에서 직접 가져갑니다.</div>
         </div>
       </div>`;
   } else if (adType === 'COLLECTION') {
@@ -3109,6 +3107,28 @@ async function submitAdSetting(adType) {
   resultEl.innerHTML = '';
 
   try {
+    // VIDEO: Drive 파일명 방식 — 검증된 bulk 영상 경로(file_url→ready→썸네일) 1행으로 재사용. 광고명=파일명.
+    if (adType === 'VIDEO') {
+      const filename = document.getElementById('video-drive-filename')?.value?.trim();
+      if (!filename) throw new Error('Drive 영상 파일명을 입력해주세요');
+      resultEl.innerHTML = '<div style="color:var(--text2)">⏳ Drive 영상 업로드 + 광고 생성 중… (인코딩 대기로 수십 초 걸릴 수 있어요)</div>';
+      const res = await fetch(`${PROXY}/api/bulk-create-ads`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: [{ type: 'video', campaign: campaignId, filename, landing_url: landingUrl, caption: document.getElementById('caption-text')?.value?.trim() || '' }] }),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      const r0 = (d.results || [])[0] || {};
+      if (r0.status !== 'ok') throw new Error(`[${r0.stage || ''}] ${r0.message || '생성 실패'}`);
+      resultEl.innerHTML = `
+        <div style="background:#EAF3DE;border-radius:8px;padding:14px 16px;font-size:12px;color:#3B6D11">
+          ✅ 영상 광고 생성 완료 (PAUSED) — <b>${r0.ad_name || ''}</b><br>
+          ${r0.ad_permalink ? `<a href="${r0.ad_permalink}" target="_blank" style="color:#185FA5">광고관리자에서 보기 ↗</a>` : `ad_id ${r0.ad_id || ''}`}
+        </div>`;
+      btn.disabled = false; btn.textContent = '광고 생성 (PAUSED)';
+      return;
+    }
+
     const adName = adType === 'PA'
       ? document.getElementById('pa-ad-name')?.value?.trim()
       : document.getElementById('as-adname')?.value?.trim();
@@ -3137,20 +3157,6 @@ async function submitAdSetting(adType) {
         const uploadData = await uploadRes.json();
         if (uploadData.error) throw new Error(uploadData.error);
         body.image_hash = uploadData.hash;
-      }
-    } else if (adType === 'VIDEO') {
-      const file = state._adFile_video;
-      if (file) {
-        resultEl.innerHTML = '<div style="color:var(--text2)">⏳ 영상 업로드 중 (파일 크기에 따라 시간이 걸릴 수 있습니다)...</div>';
-        const b64 = await fileToBase64(file);
-        const uploadRes = await fetch(`${PROXY}/api/meta?action=upload_video`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ video_base64: b64, filename: file.name }),
-        });
-        const uploadData = await uploadRes.json();
-        if (uploadData.error) throw new Error(uploadData.error);
-        body.video_id = uploadData.video_id;
       }
     } else if (adType === 'COLLECTION') {
       body.product_set_id = document.getElementById('product-set-id')?.value;
