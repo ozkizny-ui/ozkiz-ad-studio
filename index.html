@@ -2318,7 +2318,151 @@ function renderBulkPreview(results) {
     </div>`;
 }
 
-function bulkCreate() { alert('③ 청크 생성 단계에서 구현됩니다.'); }
+// dry_run 결과(ok) → 생성 단위 목록 (simple=행, carousel=그룹 행들)
+function bulkValidUnits() {
+  const dry = state._bulkDryResults || [];
+  const rowByIndex = new Map((state._bulkRows || []).map((r) => [r.rowIndex, r]));
+  const itemByGroup = new Map((state._bulkItems || []).filter((i) => i.kind === 'carousel').map((i) => [i.ad_group, i]));
+  const units = [];
+  for (const res of dry) {
+    if (res.status !== 'ok') continue;
+    if (res.ad_group != null) {
+      const it = itemByGroup.get(res.ad_group);
+      if (it) units.push({ kind: 'carousel', ad_group: res.ad_group, adName: res.ad_name, rows: it.rows });
+    } else {
+      const r = rowByIndex.get(res.rowIndex);
+      if (r) units.push({ kind: 'simple', type: (r.type || '').toLowerCase(), adName: res.ad_name, rows: [r] });
+    }
+  }
+  return units;
+}
+
+// 청크 분할: 영상 1건/요청, 캐러셀 1그룹/요청, 이미지 2건/요청 (maxDuration 60s 안전)
+function bulkChunkUnits(units) {
+  const chunks = [];
+  let cur = [];
+  const flush = () => { if (cur.length) { chunks.push(cur); cur = []; } };
+  for (const u of units) {
+    if (u.kind === 'simple' && u.type === 'image') { cur.push(u); if (cur.length >= 2) flush(); }
+    else { flush(); chunks.push([u]); } // 영상·캐러셀은 단독 청크
+  }
+  flush();
+  return chunks;
+}
+
+// 결과 병합 (재시도 시 실패 항목만 갱신)
+function bulkMergeResults(base, add) {
+  const key = (r) => (r.ad_group != null ? 'g:' + r.ad_group : 'r:' + r.rowIndex);
+  const m = new Map((base || []).map((r) => [key(r), r]));
+  for (const r of add) m.set(key(r), r);
+  return [...m.values()];
+}
+
+// ③ 청크 생성 + 진행률  (retryUnits 주면 그 항목만 재생성 후 기존 결과에 병합)
+async function bulkCreate(retryUnits) {
+  const isRetry = !!retryUnits;
+  const units = retryUnits || bulkValidUnits();
+  if (!units.length) return;
+  const chunks = bulkChunkUnits(units);
+  const total = units.length;
+  let done = 0;
+  const results = [];
+
+  const pv = document.getElementById('bulk-preview');
+  pv.innerHTML = `<div id="bulk-progress" style="margin-top:14px"></div><div id="bulk-results"></div>`;
+  const setProg = (label) => {
+    const pct = total ? Math.round(done / total * 100) : 0;
+    document.getElementById('bulk-progress').innerHTML = `
+      <div style="font-size:13px;margin-bottom:6px">${label} <b>${done}/${total}</b></div>
+      <div style="height:10px;background:var(--surface2);border-radius:6px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:#185FA5;transition:width .3s"></div></div>`;
+  };
+  setProg('생성 시작...');
+
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const rows = chunk.flatMap((u) => u.rows);
+    setProg(`처리 중 (청크 ${ci + 1}/${chunks.length})`);
+    try {
+      const r = await fetch(`${PROXY}/api/bulk-create-ads`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      results.push(...(d.results || []));
+    } catch (e) {
+      for (const u of chunk) {
+        results.push(u.kind === 'carousel'
+          ? { ad_group: u.ad_group, ad_name: u.adName, status: 'error', stage: 'request', message: e.message }
+          : { rowIndex: u.rows[0].rowIndex, ad_name: u.adName, status: 'error', stage: 'request', message: e.message });
+      }
+    }
+    done += chunk.length;
+    setProg('처리 중');
+    renderBulkResults(results, false);
+  }
+
+  const finalResults = isRetry ? bulkMergeResults(state._bulkCreateResults || [], results) : results;
+  state._bulkCreateResults = finalResults;
+  setProg('완료');
+  renderBulkResults(finalResults, true);
+}
+
+// ④ 결과패널 (행별 성공/실패·Meta사유·광고링크·실패만 재시도)
+function renderBulkResults(results, finished) {
+  const rowByIndex = new Map((state._bulkRows || []).map((r) => [r.rowIndex, r]));
+  const itemByGroup = new Map((state._bulkItems || []).filter((i) => i.kind === 'carousel').map((i) => [i.ad_group, i]));
+  let okc = 0, errc = 0;
+  const trs = results.map((res, idx) => {
+    const okk = res.status === 'ok';
+    okk ? okc++ : errc++;
+    let type, name;
+    if (res.ad_group != null) {
+      const it = itemByGroup.get(res.ad_group) || { rows: [] };
+      type = `carousel·${it.rows.length}장`;
+      name = res.ad_name || '';
+    } else {
+      const r = rowByIndex.get(res.rowIndex) || {};
+      type = r.type || '';
+      name = res.ad_name || '';
+    }
+    const last = okk
+      ? (res.ad_permalink ? `<a href="${res.ad_permalink}" target="_blank" style="color:#185FA5">광고 보기 ↗</a>` : `ad_id ${res.ad_id || ''}`)
+      : `<span style="color:#c0392b">[${res.stage || ''}] ${res.message || ''}</span>`;
+    return `<tr style="${okk ? '' : 'background:#fdecea'}">
+      <td>${idx + 1}</td><td>${type}</td><td><b>${name}</b></td>
+      <td>${okk ? '<span style="color:#1e7e34;font-weight:600">✅ 생성</span>' : '<span style="color:#c0392b;font-weight:600">❌ 실패</span>'}</td>
+      <td style="font-size:11px">${last}</td></tr>`;
+  }).join('');
+  const failed = results.filter((r) => r.status !== 'ok');
+  document.getElementById('bulk-results').innerHTML = `
+    <div style="margin:12px 0 6px;font-size:13px">결과: <b style="color:#1e7e34">성공 ${okc}</b>${errc ? ` · <b style="color:#c0392b">실패 ${errc}</b>` : ''}${finished ? '' : ' <span style="color:var(--text2)">(진행 중...)</span>'}</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="text-align:left;border-bottom:1px solid var(--border);color:var(--text2)">
+        <th>#</th><th>유형</th><th>광고세트명</th><th>상태</th><th>광고/사유</th></tr></thead>
+      <tbody>${trs}</tbody></table>
+    ${finished && failed.length ? `<div style="margin-top:12px"><button onclick="bulkRetryFailed()" style="padding:9px 16px;font-size:13px;font-weight:600;border-radius:8px;border:0;background:#BA7517;color:#fff;cursor:pointer">실패 ${failed.length}건 재시도</button></div>` : ''}
+    ${finished && !failed.length ? `<div style="margin-top:10px;font-size:12px;color:#1e7e34">모두 PAUSED로 생성됐습니다. 광고관리자에서 검토 후 게시하세요.</div>` : ''}`;
+}
+
+// 실패 항목만 재시도
+function bulkRetryFailed() {
+  const results = state._bulkCreateResults || [];
+  const rowByIndex = new Map((state._bulkRows || []).map((r) => [r.rowIndex, r]));
+  const itemByGroup = new Map((state._bulkItems || []).filter((i) => i.kind === 'carousel').map((i) => [i.ad_group, i]));
+  const units = [];
+  for (const res of results) {
+    if (res.status === 'ok') continue;
+    if (res.ad_group != null) {
+      const it = itemByGroup.get(res.ad_group);
+      if (it) units.push({ kind: 'carousel', ad_group: res.ad_group, adName: res.ad_name, rows: it.rows });
+    } else {
+      const r = rowByIndex.get(res.rowIndex);
+      if (r) units.push({ kind: 'simple', type: (r.type || '').toLowerCase(), adName: res.ad_name, rows: [r] });
+    }
+  }
+  if (units.length) bulkCreate(units);
+}
 
 // 대량 업로드 카드 렌더
 function renderBulkUploadSection() {
