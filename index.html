@@ -2200,8 +2200,125 @@ function renderBulkParsed(items, rowCount) {
         <th>#</th><th>유형</th><th>광고세트명(자동)</th><th>캠페인</th><th>파일/카드</th><th>URL</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>
-    <div style="margin-top:8px;font-size:11px;color:var(--text2)">※ ① 파싱/묶기 확인 단계입니다. 다음 단계에서 Drive 존재·유효성(미리보기)과 일괄 생성이 붙습니다.</div>`;
+    <div style="margin-top:12px">
+      <button onclick="bulkPreview()" style="padding:9px 16px;font-size:13px;font-weight:600;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2);cursor:pointer">✓ 미리보기 (검증)</button>
+      <span style="font-size:11px;color:var(--text2);margin-left:8px">Drive 존재·캠페인·유효성 확인 후 생성 가능</span>
+    </div>`;
+  const pv = document.getElementById('bulk-preview');
+  if (pv) pv.innerHTML = '';
 }
+
+// 공통 세팅 자동고정값 (작업지시서 §4)
+function bulkCommonSettingsBox() {
+  const items = [
+    ['전환 위치', '웹사이트'], ['성과 목표', '전환수 극대화'], ['전환 이벤트', '구매'], ['픽셀', 'OZKIZ'],
+    ['기여 설정', '클릭 1일'], ['일일 예산', '10,000원'], ['언어', '한국어'], ['페이지', '오즈키즈 OZKIZ'],
+    ['행동 유도', 'SHOP_NOW'], ['UTM', 'ozkizmall · {{ad.name}}'], ['상태', 'PAUSED'],
+  ];
+  return `<div style="margin-top:14px;border:0.5px solid var(--border);border-radius:8px;padding:12px;background:var(--surface2)">
+    <div style="font-size:12px;font-weight:600;margin-bottom:8px">공통 세팅 (모든 광고 자동 고정)</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px 18px;font-size:11px">
+      ${items.map(([k, v]) => `<div><span style="color:var(--text2)">${k}</span> <b>${v}</b></div>`).join('')}
+    </div></div>`;
+}
+
+// 에러 메시지 → 강조할 컬럼 (6-A 셀단위)
+function bulkColForMessage(msg) {
+  const m = String(msg || '');
+  if (/캠페인/.test(m)) return 'campaign';
+  if (/URL|랜딩/.test(m)) return 'url';
+  if (/파일|Drive|카드|번호|광고세트명|이미지 아님|2장|type/.test(m)) return 'filename';
+  return '';
+}
+
+// 미리보기 = dry_run 호출 (검증·캠페인·Drive 존재 확인, 생성 안 함)
+async function bulkPreview() {
+  const rows = state._bulkRows || [];
+  if (!rows.length) return;
+  const pv = document.getElementById('bulk-preview');
+  pv.innerHTML = `<div style="margin-top:14px;color:var(--text2)">⏳ 검증 중 (Drive 존재·캠페인 확인)...</div>`;
+  let data;
+  try {
+    const r = await fetch(`${PROXY}/api/bulk-create-ads`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows, dry_run: true }),
+    });
+    data = await r.json();
+    if (data.error) throw new Error(data.error);
+  } catch (e) {
+    pv.innerHTML = `<div style="margin-top:14px;color:#c0392b">검증 실패: ${e.message}</div>`;
+    return;
+  }
+  state._bulkDryResults = data.results || [];
+  renderBulkPreview(data.results || []);
+}
+
+// 미리보기 결과 렌더 (6-A: 빨간 행 + 강조 셀 + 구체 사유, Drive 뱃지, 공통세팅, 유효행만 생성 활성화)
+function renderBulkPreview(results) {
+  const rowByIndex = new Map((state._bulkRows || []).map((r) => [r.rowIndex, r]));
+  const itemByGroup = new Map((state._bulkItems || []).filter((i) => i.kind === 'carousel').map((i) => [i.ad_group, i]));
+  const hl = (on) => on ? 'background:#fff3cd;border:1px solid #e0a800;border-radius:4px;padding:0 4px' : '';
+  let valid = 0, errc = 0;
+
+  const trs = results.map((res, idx) => {
+    const isCarousel = res.ad_group != null;
+    const okk = res.status === 'ok';
+    okk ? valid++ : errc++;
+    const col = okk ? '' : bulkColForMessage(res.message);
+    const badge = okk
+      ? '<span style="color:#1e7e34;font-weight:600">● OK</span>'
+      : (res.stage === 'media' ? '<span style="color:#c0392b;font-weight:600">● 실패</span>' : '<span style="color:var(--text2)">—</span>');
+
+    let type, name, camp, fileCell, urlCell;
+    if (isCarousel) {
+      const it = itemByGroup.get(res.ad_group) || { rows: [] };
+      const cards = it.rows.map((r) => ({ ...bulkParseFilename(r.filename), filename: r.filename, url: r.card_landing_url })).sort((a, b) => (a.cardNumber || 0) - (b.cardNumber || 0));
+      type = `carousel<br><span style="font-size:11px;color:var(--text2)">그룹 ${res.ad_group}·${cards.length}장</span>`;
+      name = res.ad_name || '';
+      camp = (it.rows.find((r) => (r.campaign || '').trim()) || {}).campaign || '';
+      fileCell = cards.map((c) => `(${c.cardNumber == null ? '?' : c.cardNumber}) ${c.filename}`).join('<br>');
+      urlCell = cards.map((c) => c.url || '').join('<br>');
+    } else {
+      const r = rowByIndex.get(res.rowIndex) || {};
+      type = r.type || '';
+      name = res.ad_name || '';
+      camp = r.campaign || '';
+      fileCell = r.filename || '';
+      urlCell = r.landing_url || '';
+    }
+
+    return `<tr style="${okk ? '' : 'background:#fdecea'}">
+      <td>${idx + 1}</td>
+      <td>${type}</td>
+      <td><b>${name}</b></td>
+      <td><span style="${hl(col === 'campaign')}">${camp || '—'}</span></td>
+      <td style="font-size:11px"><span style="${hl(col === 'filename')}">${fileCell}</span></td>
+      <td style="font-size:11px"><span style="${hl(col === 'url')}">${urlCell}</span></td>
+      <td>${badge}</td>
+      <td style="font-size:11px;${okk ? 'color:var(--text2)' : 'color:#c0392b'}">${res.message || (okk ? '생성 가능' : '')}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('bulk-preview').innerHTML = `
+    ${bulkCommonSettingsBox()}
+    <div style="margin:12px 0 6px;font-size:13px">
+      검증 결과: 총 ${results.length}개 · <b style="color:#1e7e34">유효 ${valid}</b>${errc ? ` · <b style="color:#c0392b">오류 ${errc}</b> <span style="color:var(--text2)">(빨간 행/노란 셀을 고쳐 다시 업로드)</span>` : ''}
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="text-align:left;border-bottom:1px solid var(--border);color:var(--text2)">
+        <th>#</th><th>유형</th><th>광고세트명</th><th>캠페인</th><th>파일/카드</th><th>URL</th><th>Drive</th><th>상태/사유</th></tr></thead>
+      <tbody>${trs}</tbody>
+    </table>
+    <div style="margin-top:14px;display:flex;gap:10px;align-items:center">
+      <button id="bulk-create-btn" onclick="bulkCreate()" ${valid ? '' : 'disabled'}
+        style="padding:10px 18px;font-size:14px;font-weight:600;border-radius:8px;border:0;
+          cursor:${valid ? 'pointer' : 'not-allowed'};background:${valid ? '#185FA5' : 'var(--surface2)'};color:${valid ? '#fff' : 'var(--text2)'}">
+        ${valid}개 일괄 생성 (PAUSED)</button>
+      <span style="font-size:11px;color:var(--text2)">${valid ? '유효한 항목만 생성됩니다.' : '유효한 항목이 없습니다 — 오류를 고쳐 다시 업로드하세요.'}</span>
+    </div>`;
+}
+
+function bulkCreate() { alert('③ 청크 생성 단계에서 구현됩니다.'); }
 
 // 대량 업로드 카드 렌더
 function renderBulkUploadSection() {
@@ -2220,6 +2337,7 @@ function renderBulkUploadSection() {
         </label>
       </div>
       <div id="bulk-parsed"></div>
+      <div id="bulk-preview"></div>
     </div>`;
 }
 
