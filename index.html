@@ -1975,24 +1975,21 @@ async function generateCaption(landingUrl, productName) {
       }
     } catch(e) {}
 
-    const prompt = `아래 오즈키즈 유아동 의류/신발 상품에 대한 메타 광고 캡션을 작성해주세요.
+    const prompt = `다음 오즈키즈 유아동 의류/신발 상품의 메타 광고 캡션을 작성하세요.
 상품: ${productInfo}
 랜딩URL: ${landingUrl}
 
-조건:
-- 2~3문장, 이모지 포함
-- 엄마/아빠 감성에 맞게
-- 자연스럽고 구매 욕구를 자극
-- 해시태그 없이
-캡션만 출력(설명·따옴표 없이 캡션 텍스트만):`;
+요구: 2~3문장, 이모지 1~3개 포함, 엄마/아빠 감성, 구매욕구 자극, 해시태그 없음.
+캡션 1개만 한 단락으로 출력. (제목·머리말·옵션번호·마크다운·따옴표·여러 버전·부연설명 금지)`;
 
     const r = await fetch(`${PROXY}/api/claude`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt,
-        system: '당신은 오즈키즈(영유아 의류/신발 브랜드) 전문 마케터입니다. 메타 광고 캡션을 한국어로 자연스럽게 작성합니다. 캡션 텍스트만 출력하고 부연설명은 하지 않습니다.',
-        max_tokens: 512,
+        system: '당신은 오즈키즈(영유아 의류/신발 브랜드) 광고 카피라이터입니다. 요청에 대해 메타 광고 캡션을 "딱 1개"만, 캡션 본문 텍스트만 출력합니다. 제목·머리말·옵션 번호·마크다운(#, *, > 등)·따옴표·여러 버전·부연설명을 절대 쓰지 않습니다. 주어진 상품명/설명에만 근거하고 없는 사실을 지어내지 않습니다. 2~3문장과 이모지로 된 한 단락만 출력합니다.',
+        max_tokens: 300,
+        model: 'sonnet',
       }),
     });
     const d = await r.json();
