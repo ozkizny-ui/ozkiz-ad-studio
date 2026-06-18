@@ -446,6 +446,7 @@ input,select,textarea{font-family:var(--font-body)}
       광고명을 입력하면 세팅 미리보기가 표시됩니다
     </div>
   </div>
+  <div id="bulk-upload-section"></div>
 </div>
 
 </main>
@@ -2013,6 +2014,213 @@ async function renderAdSettingPage() {
   state._adSettingProductSets = productSets;
 
   renderAdSettingForm('IMAGE');
+  renderBulkUploadSection();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  광고 대량 업로드 (작업지시서 v2 §5/§6) — ① 파서 단계
+//  시트(.xlsx) → 행 배열 정규화(헤더 한글→키, defval:'') → 캐러셀 묶기 → 파싱결과 표시.
+//  미리보기(dry_run)·생성·결과패널은 다음 단계에서 추가.
+// ══════════════════════════════════════════════════════════════
+
+// 헤더 한글 → 정규화 키 (공백/대소문자 무시)
+const BULK_HEADER_MAP = {
+  'type': 'type', '광고그룹': 'ad_group', '캠페인': 'campaign',
+  '파일명': 'filename', '캡션': 'caption', '랜딩url': 'landing_url', '카드랜딩url': 'card_landing_url',
+};
+const bulkNormKey = (h) => String(h == null ? '' : h).trim().toLowerCase().replace(/\s+/g, '');
+
+// 파일명 → 광고세트명/카드번호 (proxy lib/filename.js와 동일 규칙)
+function bulkParseFilename(fn) {
+  const original = String(fn == null ? '' : fn).trim();
+  const extM = original.match(/\.(jpe?g|png|gif|webp|bmp|tiff?|heic|heif|mp4|mov|m4v|webm|avi|mkv)$/i);
+  let name = extM ? original.slice(0, original.length - extM[0].length) : original;
+  const cardM = name.match(/\s*\((\d+)\)\s*$/);
+  const cardNumber = cardM ? parseInt(cardM[1], 10) : null;
+  if (cardM) name = name.slice(0, name.length - cardM[0].length);
+  return { adName: name.trim(), cardNumber };
+}
+
+// AOA(시트 행배열) → 정규화 행 객체들. 헤더행은 'type' 셀이 있는 행으로 자동 탐지.
+function bulkParseAoa(aoa) {
+  let hi = -1, cols = null;
+  for (let i = 0; i < aoa.length; i++) {
+    const row = aoa[i] || [];
+    const idx = row.findIndex((c) => bulkNormKey(c) === 'type');
+    if (idx >= 0) { hi = i; cols = row.map(bulkNormKey); break; }
+  }
+  if (hi < 0) return { error: "헤더(type 컬럼)를 찾지 못했습니다 — 템플릿을 사용했는지 확인하세요" };
+  const rows = [];
+  for (let i = hi + 1; i < aoa.length; i++) {
+    const row = aoa[i] || [];
+    const obj = { rowIndex: i + 1 }; // 1-based 시트 행번호
+    let any = false;
+    cols.forEach((c, ci) => {
+      const key = BULK_HEADER_MAP[c];
+      if (!key) return;
+      const v = row[ci] == null ? '' : String(row[ci]).trim(); // defval:'' 효과
+      obj[key] = v;
+      if (v) any = true;
+    });
+    if (any) rows.push(obj); // 완전 빈 행 스킵
+  }
+  return { headerRow: hi + 1, rows };
+}
+
+// 정규화 행들 → 작업단위(image/video=행, carousel=광고그룹 묶음). proxy bulk-create-ads와 동일 규칙.
+function bulkBuildItems(rows) {
+  const items = [];
+  const gIdx = new Map();
+  for (const row of rows) {
+    const type = (row.type || '').trim().toLowerCase();
+    if (type === 'carousel') {
+      const g = (row.ad_group || '').trim();
+      if (!g) { items.push({ kind: 'bad', rows: [row], message: 'carousel 행에 광고그룹 값 없음' }); continue; }
+      if (!gIdx.has(g)) { gIdx.set(g, items.length); items.push({ kind: 'carousel', ad_group: g, rows: [] }); }
+      items[gIdx.get(g)].rows.push(row);
+    } else if (type === 'image' || type === 'video') {
+      items.push({ kind: 'simple', type, rows: [row] });
+    } else {
+      items.push({ kind: 'bad', rows: [row], message: `type 오류('${row.type || ''}') — image/video/carousel만 지원` });
+    }
+  }
+  return items;
+}
+
+// 정본 템플릿 생성(SheetJS) — '광고업로드'(헤더만) + '사용가이드'(예시표)
+function downloadBulkTemplate() {
+  const wb = XLSX.utils.book_new();
+  const upload = [
+    ['공통 (모든 유형)', null, null, null, null, null, '캐러셀 카드별'],
+    ['type', '광고그룹', '캠페인', '파일명', '캡션', '랜딩URL', '카드랜딩URL'],
+  ];
+  const ws1 = XLSX.utils.aoa_to_sheet(upload);
+  ws1['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 18 }, { wch: 40 }, { wch: 24 }, { wch: 40 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, ws1, '광고업로드');
+
+  const guide = [
+    ['광고 대량 업로드 — 사용가이드'],
+    [],
+    ['1) 소재를 Drive 광고소재 폴더에 올리고, 시트에는 파일명만 적습니다(긴 링크 X).'],
+    ['2) 파일명에서 확장자와 끝 (1)(2)(3) 카드번호를 떼면 광고세트명=광고명이 됩니다.'],
+    ['3) image/video는 한 행 = 광고 1개. carousel은 같은 광고그룹 행들 = 한 캐러셀의 카드(2장 이상).'],
+    ['4) carousel은 카드마다 행을 나누고 파일명 끝에 (1)(2)(3), 카드랜딩URL을 행마다 적습니다.'],
+    ['5) 캠페인은 기존 캠페인명(또는 ID). 캐러셀은 그룹 첫 행에만 캠페인/캡션.'],
+    [],
+    ['예시 ↓'],
+    ['type', '광고그룹', '캠페인', '파일명', '캡션', '랜딩URL', '카드랜딩URL'],
+    ['image', '', '여름신상_전환', '원피스모리본_메인컷화이트_260617.jpg', '여름 필수템 원피스', 'https://ozkiz.com/product/detail.html?product_no=1234', ''],
+    ['video', '', '여름신상_전환', '원피스모리본_영상켄_260617.mp4', '', 'https://ozkiz.com/product/detail.html?product_no=1234', ''],
+    ['carousel', 'A', '여름신상_전환', '신상카테고리(142);슬라이드_260617 (1).jpg', '신상 모음전', '', 'https://ozkiz.com/product/detail.html?product_no=1'],
+    ['carousel', 'A', '', '신상카테고리(142);슬라이드_260617 (2).jpg', '', '', 'https://ozkiz.com/product/detail.html?product_no=2'],
+    ['carousel', 'A', '', '신상카테고리(142);슬라이드_260617 (3).jpg', '', '', 'https://ozkiz.com/product/detail.html?product_no=3'],
+  ];
+  const ws2 = XLSX.utils.aoa_to_sheet(guide);
+  ws2['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 18 }, { wch: 42 }, { wch: 22 }, { wch: 42 }, { wch: 42 }];
+  XLSX.utils.book_append_sheet(wb, ws2, '사용가이드');
+
+  XLSX.writeFile(wb, 'Ozkiz_광고대량업로드_템플릿.xlsx');
+}
+
+// 시트 업로드 → 파싱 → 작업단위 묶기 → 파싱결과 표시(상태 저장)
+function handleBulkSheet(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    let parsed;
+    try {
+      const wb = XLSX.read(ev.target.result, { type: 'binary' });
+      const wsName = wb.SheetNames.includes('광고업로드') ? '광고업로드' : wb.SheetNames[0];
+      const ws = wb.Sheets[wsName];
+      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      parsed = bulkParseAoa(aoa);
+    } catch (e) {
+      document.getElementById('bulk-parsed').innerHTML = `<div style="color:#c0392b">파싱 실패: ${e.message}</div>`;
+      return;
+    }
+    if (parsed.error) {
+      document.getElementById('bulk-parsed').innerHTML = `<div style="color:#c0392b">${parsed.error}</div>`;
+      return;
+    }
+    const items = bulkBuildItems(parsed.rows);
+    state._bulkRows = parsed.rows;
+    state._bulkItems = items;
+    renderBulkParsed(items, parsed.rows.length);
+  };
+  reader.readAsBinaryString(file);
+}
+
+// 파싱 결과 표(① 단계: 구조 확인용. 유효성/Drive검사는 다음 미리보기 단계).
+function renderBulkParsed(items, rowCount) {
+  const nSimple = items.filter((i) => i.kind === 'simple').length;
+  const nCaro = items.filter((i) => i.kind === 'carousel').length;
+  const nBad = items.filter((i) => i.kind === 'bad').length;
+
+  const rowsHtml = items.map((it, idx) => {
+    if (it.kind === 'bad') {
+      const r = it.rows[0];
+      return `<tr style="background:#fdecea">
+        <td>${idx + 1}</td><td>—</td><td style="color:#c0392b">오류</td>
+        <td colspan="3" style="color:#c0392b">${it.message} (행 ${r.rowIndex})</td></tr>`;
+    }
+    if (it.kind === 'simple') {
+      const r = it.rows[0];
+      const { adName } = bulkParseFilename(r.filename);
+      return `<tr>
+        <td>${idx + 1}</td>
+        <td>${it.type}</td>
+        <td><b>${adName || '<span style=color:#c0392b>파일명 없음</span>'}</b></td>
+        <td>${r.campaign || '<span style=color:#c0392b>—</span>'}</td>
+        <td>${r.filename || ''}</td>
+        <td>${r.landing_url || ''}</td></tr>`;
+    }
+    // carousel
+    const cards = it.rows.map((r) => ({ ...bulkParseFilename(r.filename), filename: r.filename, url: r.card_landing_url }))
+      .sort((a, b) => (a.cardNumber || 0) - (b.cardNumber || 0));
+    const names = [...new Set(cards.map((c) => c.adName))];
+    const adName = names.length === 1 ? names[0] : `<span style="color:#c0392b">불일치: ${names.join(' / ')}</span>`;
+    const camp = (it.rows.find((r) => (r.campaign || '').trim()) || {}).campaign || '<span style=color:#c0392b>—</span>';
+    const cardList = cards.map((c) => `(${c.cardNumber == null ? '?' : c.cardNumber}) ${c.filename} → ${c.url || '<span style=color:#c0392b>URL없음</span>'}`).join('<br>');
+    return `<tr style="background:#f4f7fb">
+      <td>${idx + 1}</td>
+      <td>carousel<br><span style="font-size:11px;color:var(--text2)">그룹 ${it.ad_group} · ${cards.length}장</span></td>
+      <td><b>${adName}</b></td>
+      <td>${camp}</td>
+      <td colspan="2" style="font-size:11px">${cardList}</td></tr>`;
+  }).join('');
+
+  document.getElementById('bulk-parsed').innerHTML = `
+    <div style="margin:10px 0;font-size:13px">
+      시트 ${rowCount}행 → <b>${nSimple + nCaro}개 광고</b>
+      <span style="color:var(--text2)">(단순 ${nSimple} · 캐러셀 ${nCaro}그룹${nBad ? ` · <span style="color:#c0392b">오류 ${nBad}</span>` : ''})</span>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="text-align:left;border-bottom:1px solid var(--border);color:var(--text2)">
+        <th>#</th><th>유형</th><th>광고세트명(자동)</th><th>캠페인</th><th>파일/카드</th><th>URL</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    <div style="margin-top:8px;font-size:11px;color:var(--text2)">※ ① 파싱/묶기 확인 단계입니다. 다음 단계에서 Drive 존재·유효성(미리보기)과 일괄 생성이 붙습니다.</div>`;
+}
+
+// 대량 업로드 카드 렌더
+function renderBulkUploadSection() {
+  const el = document.getElementById('bulk-upload-section');
+  if (!el) return;
+  el.innerHTML = `
+    <div style="margin-top:20px;border:0.5px solid var(--border);border-radius:12px;padding:18px;background:var(--surface)">
+      <div style="font-size:15px;font-weight:600;margin-bottom:4px">📦 광고 대량 업로드</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">엑셀 시트 + Drive 폴더 소재로 여러 광고를 한 번에 생성(PAUSED). image / video / carousel.</div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button onclick="downloadBulkTemplate()"
+          style="padding:8px 14px;font-size:13px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2);cursor:pointer">⬇ 템플릿 다운로드</button>
+        <label style="padding:8px 14px;font-size:13px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2);cursor:pointer">
+          📄 시트 업로드
+          <input type="file" accept=".xlsx,.xls" style="display:none" onchange="handleBulkSheet(this)">
+        </label>
+      </div>
+      <div id="bulk-parsed"></div>
+    </div>`;
 }
 
 function renderAdSettingForm(adType) {
