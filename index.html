@@ -1961,12 +1961,10 @@ async function loadPaData() {
   } catch(e) { return []; }
 }
 
-// Gemini로 캡션 생성
+// Claude로 캡션 생성 (proxy /api/claude — 키는 서버측 ANTHROPIC_API_KEY, 브라우저 미노출)
 async function generateCaption(landingUrl, productName) {
-  const geminiKey = state.geminiKey;
-  if (!geminiKey) return '⚠️ Gemini API 키를 설정해주세요';
   try {
-    // 카페24 상품페이지 텍스트 가져오기
+    // 카페24 상품페이지 텍스트 가져오기 (기존 동작 유지)
     const proxyUrl = `${PROXY}/api/cafe24?path=/api/v2/products&params=search_query=${encodeURIComponent(productName.split('-')[1]||productName)}&limit=1`;
     let productInfo = productName;
     try {
@@ -1986,15 +1984,20 @@ async function generateCaption(landingUrl, productName) {
 - 엄마/아빠 감성에 맞게
 - 자연스럽고 구매 욕구를 자극
 - 해시태그 없이
-캡션만 출력:`;
+캡션만 출력(설명·따옴표 없이 캡션 텍스트만):`;
 
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+    const r = await fetch(`${PROXY}/api/claude`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      body: JSON.stringify({
+        prompt,
+        system: '당신은 오즈키즈(영유아 의류/신발 브랜드) 전문 마케터입니다. 메타 광고 캡션을 한국어로 자연스럽게 작성합니다. 캡션 텍스트만 출력하고 부연설명은 하지 않습니다.',
+        max_tokens: 512,
+      }),
     });
     const d = await r.json();
-    return d.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '캡션 생성 실패';
+    if (d.error) return '캡션 생성 실패: ' + d.error;
+    return (d.text || '').trim() || '캡션 생성 실패';
   } catch(e) {
     return '캡션 생성 실패: ' + e.message;
   }
