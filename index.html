@@ -2026,7 +2026,8 @@ async function renderAdSettingPage() {
 // 헤더 한글 → 정규화 키 (공백/대소문자 무시)
 const BULK_HEADER_MAP = {
   'type': 'type', '광고그룹': 'ad_group', '캠페인': 'campaign',
-  '파일명': 'filename', '캡션': 'caption', '랜딩url': 'landing_url', '카드랜딩url': 'card_landing_url',
+  '파일명': 'filename', '캡션': 'caption', '랜딩url': 'landing_url',
+  '카드랜딩url': 'card_landing_url', '카드헤드라인': 'card_headline',
 };
 const bulkNormKey = (h) => String(h == null ? '' : h).trim().toLowerCase().replace(/\s+/g, '');
 
@@ -2091,11 +2092,11 @@ function bulkBuildItems(rows) {
 function downloadBulkTemplate() {
   const wb = XLSX.utils.book_new();
   const upload = [
-    ['공통 (모든 유형)', null, null, null, null, null, '캐러셀 카드별'],
-    ['type', '광고그룹', '캠페인', '파일명', '캡션', '랜딩URL', '카드랜딩URL'],
+    ['공통 (모든 유형)', null, null, null, null, null, '캐러셀 카드별', null],
+    ['type', '광고그룹', '캠페인', '파일명', '캡션', '랜딩URL', '카드랜딩URL', '카드헤드라인'],
   ];
   const ws1 = XLSX.utils.aoa_to_sheet(upload);
-  ws1['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 18 }, { wch: 40 }, { wch: 24 }, { wch: 40 }, { wch: 40 }];
+  ws1['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 18 }, { wch: 40 }, { wch: 24 }, { wch: 40 }, { wch: 40 }, { wch: 24 }];
   XLSX.utils.book_append_sheet(wb, ws1, '광고업로드');
 
   const guide = [
@@ -2104,19 +2105,20 @@ function downloadBulkTemplate() {
     ['1) 소재를 Drive 광고소재 폴더에 올리고, 시트에는 파일명만 적습니다(긴 링크 X).'],
     ['2) 파일명에서 확장자와 끝 (1)(2)(3) 카드번호를 떼면 광고세트명=광고명이 됩니다.'],
     ['3) image/video는 한 행 = 광고 1개. carousel은 같은 광고그룹 행들 = 한 캐러셀의 카드(2장 이상).'],
-    ['4) carousel은 카드마다 행을 나누고 파일명 끝에 (1)(2)(3), 카드랜딩URL을 행마다 적습니다.'],
+    ['4) carousel은 카드마다 행을 나누고 파일명 끝에 (1)(2)(3), 카드랜딩URL·카드헤드라인을 행마다 적습니다.'],
     ['5) 캠페인은 기존 캠페인명(또는 ID). 캐러셀은 그룹 첫 행에만 캠페인/캡션.'],
+    ['6) 카드헤드라인 = 캐러셀 카드 아래 노출되는 제목(소비자 노출). 비우면 제목 없이 나갑니다. image/video는 빈칸.'],
     [],
     ['예시 ↓'],
-    ['type', '광고그룹', '캠페인', '파일명', '캡션', '랜딩URL', '카드랜딩URL'],
-    ['image', '', '여름신상_전환', '원피스모리본_메인컷화이트_260617.jpg', '여름 필수템 원피스', 'https://ozkiz.com/product/detail.html?product_no=1234', ''],
-    ['video', '', '여름신상_전환', '원피스모리본_영상켄_260617.mp4', '', 'https://ozkiz.com/product/detail.html?product_no=1234', ''],
-    ['carousel', 'A', '여름신상_전환', '신상카테고리(142);슬라이드_260617 (1).jpg', '신상 모음전', '', 'https://ozkiz.com/product/detail.html?product_no=1'],
-    ['carousel', 'A', '', '신상카테고리(142);슬라이드_260617 (2).jpg', '', '', 'https://ozkiz.com/product/detail.html?product_no=2'],
-    ['carousel', 'A', '', '신상카테고리(142);슬라이드_260617 (3).jpg', '', '', 'https://ozkiz.com/product/detail.html?product_no=3'],
+    ['type', '광고그룹', '캠페인', '파일명', '캡션', '랜딩URL', '카드랜딩URL', '카드헤드라인'],
+    ['image', '', '여름신상_전환', '원피스모리본_메인컷화이트_260617.jpg', '여름 필수템 원피스', 'https://ozkiz.com/product/detail.html?product_no=1234', '', ''],
+    ['video', '', '여름신상_전환', '원피스모리본_영상켄_260617.mp4', '', 'https://ozkiz.com/product/detail.html?product_no=1234', '', ''],
+    ['carousel', 'A', '여름신상_전환', '신상카테고리(142);슬라이드_260617 (1).jpg', '신상 모음전', '', 'https://ozkiz.com/product/detail.html?product_no=1', '데일리 원피스'],
+    ['carousel', 'A', '', '신상카테고리(142);슬라이드_260617 (2).jpg', '', '', 'https://ozkiz.com/product/detail.html?product_no=2', '여름 세트'],
+    ['carousel', 'A', '', '신상카테고리(142);슬라이드_260617 (3).jpg', '', '', 'https://ozkiz.com/product/detail.html?product_no=3', '베스트 아이템'],
   ];
   const ws2 = XLSX.utils.aoa_to_sheet(guide);
-  ws2['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 18 }, { wch: 42 }, { wch: 22 }, { wch: 42 }, { wch: 42 }];
+  ws2['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 18 }, { wch: 42 }, { wch: 22 }, { wch: 42 }, { wch: 42 }, { wch: 24 }];
   XLSX.utils.book_append_sheet(wb, ws2, '사용가이드');
 
   XLSX.writeFile(wb, 'Ozkiz_광고대량업로드_템플릿.xlsx');
@@ -2176,12 +2178,12 @@ function renderBulkParsed(items, rowCount) {
         <td>${r.landing_url || ''}</td></tr>`;
     }
     // carousel
-    const cards = it.rows.map((r) => ({ ...bulkParseFilename(r.filename), filename: r.filename, url: r.card_landing_url }))
+    const cards = it.rows.map((r) => ({ ...bulkParseFilename(r.filename), filename: r.filename, url: r.card_landing_url, headline: r.card_headline }))
       .sort((a, b) => (a.cardNumber || 0) - (b.cardNumber || 0));
     const names = [...new Set(cards.map((c) => c.adName))];
     const adName = names.length === 1 ? names[0] : `<span style="color:#c0392b">불일치: ${names.join(' / ')}</span>`;
     const camp = (it.rows.find((r) => (r.campaign || '').trim()) || {}).campaign || '<span style=color:#c0392b>—</span>';
-    const cardList = cards.map((c) => `(${c.cardNumber == null ? '?' : c.cardNumber}) ${c.filename} → ${c.url || '<span style=color:#c0392b>URL없음</span>'}`).join('<br>');
+    const cardList = cards.map((c) => `(${c.cardNumber == null ? '?' : c.cardNumber}) ${c.filename} · 제목: ${c.headline ? c.headline : '<span style="color:var(--text2)">(없음)</span>'} → ${c.url || '<span style=color:#c0392b>URL없음</span>'}`).join('<br>');
     return `<tr style="background:#f4f7fb">
       <td>${idx + 1}</td>
       <td>carousel<br><span style="font-size:11px;color:var(--text2)">그룹 ${it.ad_group} · ${cards.length}장</span></td>
@@ -2272,11 +2274,11 @@ function renderBulkPreview(results) {
     let type, name, camp, fileCell, urlCell;
     if (isCarousel) {
       const it = itemByGroup.get(res.ad_group) || { rows: [] };
-      const cards = it.rows.map((r) => ({ ...bulkParseFilename(r.filename), filename: r.filename, url: r.card_landing_url })).sort((a, b) => (a.cardNumber || 0) - (b.cardNumber || 0));
+      const cards = it.rows.map((r) => ({ ...bulkParseFilename(r.filename), filename: r.filename, url: r.card_landing_url, headline: r.card_headline })).sort((a, b) => (a.cardNumber || 0) - (b.cardNumber || 0));
       type = `carousel<br><span style="font-size:11px;color:var(--text2)">그룹 ${res.ad_group}·${cards.length}장</span>`;
       name = res.ad_name || '';
       camp = (it.rows.find((r) => (r.campaign || '').trim()) || {}).campaign || '';
-      fileCell = cards.map((c) => `(${c.cardNumber == null ? '?' : c.cardNumber}) ${c.filename}`).join('<br>');
+      fileCell = cards.map((c) => `(${c.cardNumber == null ? '?' : c.cardNumber}) ${c.filename}<br><span style="color:var(--text2)">　제목: ${c.headline ? c.headline : '(없음)'}</span>`).join('<br>');
       urlCell = cards.map((c) => c.url || '').join('<br>');
     } else {
       const r = rowByIndex.get(res.rowIndex) || {};
