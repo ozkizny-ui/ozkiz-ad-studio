@@ -609,10 +609,11 @@ function initNav() {
 async function loadFromSupabase() {
   try {
     // 이지어드민 재고
-    const invRows = await sbGet('inventory', 'name,option,avail,store,rep_code,updated_at');
+    const invRows = await sbGet('inventory', 'name,option,avail,store,cost,rep_code,updated_at');
     if (invRows && invRows.length) {
       state.inventoryData = invRows.map(r => ({
         '상품명': r.name, '옵션': r.option || '', '가용재고': r.avail, '매장총재고': r.store,
+        '원가': r.cost || 0,
         '카페24 상품코드': r.rep_code || '',
       }));
       document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 (저장됨)`;
@@ -746,6 +747,7 @@ async function saveInventoryToSupabase(slim) {
     for (let i = 0; i < slim.length; i += 1000) {
       const chunk = slim.slice(i, i+1000).map(r => ({
         name: r['상품명'], option: r['옵션'], avail: r['가용재고'], store: r['매장총재고'],
+        cost: r['원가'] || 0,
         rep_code: r['카페24 상품코드'] || '',
       }));
       await sbUpsert('inventory', chunk);
@@ -796,6 +798,9 @@ function initUpload() {
           const optKey   = cols.find(k=>k.includes('옵션'));
           const availKey = cols.find(k=>k.includes('가용재고'));
           const storeKey = cols.find(k=>k.includes('매장총재고'));
+          // 원가 (재고자산 = 가용재고×원가 계산용). 이지어드민 컬럼명 변형 대응
+          const costKey  = cols.find(k=>k.includes('원가')) || cols.find(k=>k.includes('매입')) || cols.find(k=>k.includes('공급가'));
+          const numv = v => parseFloat(String(v==null?'':v).replace(/,/g,'')) || 0;
           // 카페24 상품코드(P코드) = SERA 매칭 키 (숫자형 '대표상품코드' 아님)
           const repKey   = findRepCodeKey(state.inventoryData);
           let repFilled = 0;
@@ -805,9 +810,11 @@ function initUpload() {
             return {
               '상품명': r[nameKey]||'', '옵션': r[optKey]||'',
               '가용재고': r[availKey]||0, '매장총재고': r[storeKey]||0,
+              '원가': costKey ? numv(r[costKey]) : 0,
               '카페24 상품코드': cd // 옵션별 실제값 (미연동 옵션은 빈값 유지)
             };
           });
+          console.log(`[재고저장] 원가 컬럼: ${costKey||'미발견'}`);
           console.log(`[재고저장] 상품코드 컬럼: ${repKey||'미발견'} · rep_code 채워진 행 ${repFilled}/${slim.length}`);
           // Supabase에 저장
           saveInventoryToSupabase(slim);
