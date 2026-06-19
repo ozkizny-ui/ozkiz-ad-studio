@@ -799,7 +799,7 @@ function initUpload() {
           const availKey = cols.find(k=>k.includes('가용재고'));
           const storeKey = cols.find(k=>k.includes('매장총재고'));
           // 원가 (재고자산 = 가용재고×원가 계산용). 이지어드민 컬럼명 변형 대응
-          const costKey  = cols.find(k=>k.includes('원가')) || cols.find(k=>k.includes('매입')) || cols.find(k=>k.includes('공급가'));
+          const costKey  = cols.find(k=>String(k).trim()==='원가') || cols.find(k=>k.includes('원가')) || cols.find(k=>k.includes('매입')) || cols.find(k=>k.includes('공급가'));
           const numv = v => parseFloat(String(v==null?'':v).replace(/,/g,'')) || 0;
           // 카페24 상품코드(P코드) = SERA 매칭 키 (숫자형 '대표상품코드' 아님)
           const repKey   = findRepCodeKey(state.inventoryData);
