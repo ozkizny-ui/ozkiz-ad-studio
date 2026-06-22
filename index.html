@@ -2604,11 +2604,11 @@ function renderAdSettingForm(adType) {
     <div class="as-row">
       <label class="as-label">캡션</label>
       <div class="as-val">
-        <textarea id="caption-text" placeholder="랜딩 URL 입력 후 자동 생성됩니다 (3개 버전 — 쓸 것만 남기고 지우세요)..."
+        <textarea id="caption-text" placeholder="비어있음 — 직접 입력하거나, 아래 버튼으로 Claude 캡션 3개를 생성하세요..."
           style="width:100%;height:140px;padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical;box-sizing:border-box"></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
-          <span id="caption-status" style="font-size:11px;color:var(--text2)">✨ 랜딩 URL 입력 시 Claude가 3개 버전 자동 작성</span>
-          <button onclick="regenCaption()" style="font-size:11px;color:var(--text2);background:none;border:none;cursor:pointer;padding:0">다시 생성</button>
+          <span id="caption-status" style="font-size:11px;color:var(--text2)"></span>
+          <button onclick="regenCaption()" style="font-size:11px;color:#fff;background:var(--accent);border:none;border-radius:5px;cursor:pointer;padding:5px 10px;font-weight:600">✨ Claude로 캡션 생성</button>
         </div>
       </div>
     </div>` : '';
@@ -2948,32 +2948,27 @@ function updateAdName() {
   else if (product) adname.value = product;
 }
 
-// 랜딩 URL 입력 시 캡션 자동 생성
-let _captionTimer = null;
-function onLandingUrlChange(url) {
-  if (!url || !url.startsWith('http')) return;
-  clearTimeout(_captionTimer);
-  const statusEl = document.getElementById('caption-status');
-  if (statusEl) statusEl.textContent = '⏳ 캡션 생성 중...';
-  _captionTimer = setTimeout(async () => {
-    const product = document.getElementById('as-product')?.value || '';
-    const caption = await generateCaption(url, product);
-    const ta = document.getElementById('caption-text');
-    if (ta) ta.value = caption;
-    if (statusEl) statusEl.textContent = '✨ Claude 3개 버전 작성 완료 (쓸 것만 남기고 지우세요)';
-  }, 1000);
-}
+// 랜딩 URL이 채워져도 캡션은 자동 생성하지 않음 (비용 절감 — 버튼 클릭 시에만 Claude 호출)
+function onLandingUrlChange(url) { /* no-op: 캡션은 regenCaption() 버튼으로만 생성 */ }
 
+// ✨ Claude로 캡션 생성 (버튼 클릭 시에만 호출 — Claude API 비용 발생)
+let _captionBusy = false;
 async function regenCaption() {
+  if (_captionBusy) return;
   const url = document.getElementById('landing-url')?.value || '';
   const product = document.getElementById('as-product')?.value || '';
   if (!url) { alert('랜딩 URL을 먼저 입력해주세요'); return; }
   const statusEl = document.getElementById('caption-status');
-  if (statusEl) statusEl.textContent = '⏳ 재생성 중...';
-  const caption = await generateCaption(url, product);
-  const ta = document.getElementById('caption-text');
-  if (ta) ta.value = caption;
-  if (statusEl) statusEl.textContent = '✨ Claude 3개 버전 작성 완료 (쓸 것만 남기고 지우세요)';
+  _captionBusy = true;
+  if (statusEl) statusEl.textContent = '⏳ Claude 캡션 생성 중...';
+  try {
+    const caption = await generateCaption(url, product);
+    const ta = document.getElementById('caption-text');
+    if (ta) ta.value = caption;
+    if (statusEl) statusEl.textContent = '✨ Claude 3개 버전 작성 완료 (쓸 것만 남기고 지우세요)';
+  } finally {
+    _captionBusy = false;
+  }
 }
 
 // 파일 선택 핸들러
