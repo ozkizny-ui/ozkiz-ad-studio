@@ -462,7 +462,21 @@ const SB_URL  = 'https://baucagnqmtmaqlybjyzc.supabase.co';
 const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJhdWNhZ25xbXRtYXFseWJqeXpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4MTU5MjksImV4cCI6MjA5NTM5MTkyOX0.dSqKeeb52GqM2pkegadLhBiBzzqmcZ1vAVm5aBvr0pA';
 const sbHeaders = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
 
+// 2단계-A: 읽기를 프록시 게이트웨이 경유로. false로 내리면 즉시 anon 직접읽기로 롤백.
+const READ_VIA_GATEWAY = true;
+
 async function sbGet(table, select='*') {
+  if (READ_VIA_GATEWAY) {
+    const r = await fetch(`${PROXY}/api/sb`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'read', table }),
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(`gateway read ${table}: ${j.error}`);
+    return j.data || [];
+  }
+  // ── anon 직접 읽기 (롤백용 보존 — READ_VIA_GATEWAY=false면 이 경로) ──
   const PAGE = 1000;
   let all = [];
   for (let from = 0; ; from += PAGE) {
