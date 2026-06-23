@@ -464,6 +464,8 @@ const sbHeaders = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Cont
 
 // 2단계-A: 읽기를 프록시 게이트웨이 경유로. false로 내리면 즉시 anon 직접읽기로 롤백.
 const READ_VIA_GATEWAY = true;
+// 2단계-B: 쓰기를 프록시 게이트웨이 경유로. false면 anon 직접쓰기로 즉시 롤백.
+const WRITE_VIA_GATEWAY = true;
 
 async function sbGet(table, select='*') {
   if (READ_VIA_GATEWAY) {
@@ -492,6 +494,17 @@ async function sbGet(table, select='*') {
   return all;
 }
 async function sbUpsert(table, rows) {
+  if (WRITE_VIA_GATEWAY) {
+    const r = await fetch(`${PROXY}/api/sb`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'upsert', table, rows: Array.isArray(rows) ? rows : [rows] }),
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(`gateway upsert ${table}: ${j.error}`);
+    return;
+  }
+  // ── anon 직접 upsert (롤백용 보존) ──
   await fetch(`${SB_URL}/rest/v1/${table}`, {
     method: 'POST',
     headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
@@ -500,6 +513,22 @@ async function sbUpsert(table, rows) {
 }
 async function sbDelete(table) {
   await fetch(`${SB_URL}/rest/v1/${table}?id=gte.0`, { method: 'DELETE', headers: sbHeaders });
+}
+// 전체 교체(replace): inventory/strategy/sera 저장에 사용.
+async function sbReplace(table, rows) {
+  if (WRITE_VIA_GATEWAY) {
+    const r = await fetch(`${PROXY}/api/sb`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'replace', table, rows }),
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(`gateway replace ${table}: ${j.error}`);
+    return;
+  }
+  // ── anon 직접 (롤백용 보존): 전체삭제 후 1000행씩 upsert ──
+  await sbDelete(table);
+  for (let i = 0; i < rows.length; i += 1000) await sbUpsert(table, rows.slice(i, i+1000));
 }
 async function sbSettingGet(key) {
   const r = await fetch(`${SB_URL}/rest/v1/app_settings?key=eq.${key}&select=value`, { headers: sbHeaders });
@@ -756,39 +785,29 @@ function findRepCodeKey(rows) {
 
 async function saveInventoryToSupabase(slim) {
   try {
-    await sbDelete('inventory');
-    // 1000개씩 청크로 나눠서 업로드
-    for (let i = 0; i < slim.length; i += 1000) {
-      const chunk = slim.slice(i, i+1000).map(r => ({
-        name: r['상품명'], option: r['옵션'], avail: r['가용재고'], store: r['매장총재고'],
-        cost: r['원가'] || 0,
-        rep_code: r['카페24 상품코드'] || '',
-      }));
-      await sbUpsert('inventory', chunk);
-    }
+    const rows = slim.map(r => ({
+      name: r['상품명'], option: r['옵션'], avail: r['가용재고'], store: r['매장총재고'],
+      cost: r['원가'] || 0,
+      rep_code: r['카페24 상품코드'] || '',
+    }));
+    await sbReplace('inventory', rows);
   } catch(e) { console.log('재고 Supabase 저장 실패:', e); }
 }
 
 async function saveStrategyToSupabase(data) {
   try {
-    await fetch(`${SB_URL}/rest/v1/strategy?id=gte.0`, { method: 'DELETE', headers: sbHeaders });
     const rows = data.map(r => ({ name: r.name, season: r.season, category: r.category }));
-    for (let i = 0; i < rows.length; i += 1000) {
-      await sbUpsert('strategy', rows.slice(i, i+1000));
-    }
+    await sbReplace('strategy', rows);
   } catch(e) { console.log('전략파일 Supabase 저장 실패:', e); }
 }
 
 async function saveSeraToSupabase(data) {
   try {
-    await sbDelete('sera');
     const rows = data.map(r => ({
       code: r.code, name: r.name, views: r.views, orders: r.orders,
       opv: r.opv, click_value: r.clickValue,
     }));
-    for (let i = 0; i < rows.length; i += 1000) {
-      await sbUpsert('sera', rows.slice(i, i+1000));
-    }
+    await sbReplace('sera', rows);
   } catch(e) { console.log('SERA Supabase 저장 실패:', e); }
 }
 
