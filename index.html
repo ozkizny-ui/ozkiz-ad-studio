@@ -304,6 +304,10 @@ input,select,textarea{font-family:var(--font-body)}
       <div class="sb-status-dot" style="background:var(--red)"></div>
       <span style="color:var(--red)">메타 API 미연결</span>
     </div>
+    <div class="sb-status-item" id="status-write" style="cursor:pointer" onclick="promptUnlock()" title="쓰기 인증 (예산/광고/저장)">
+      <div class="sb-status-dot" style="background:var(--red)"></div>
+      <span style="color:var(--red)">🔒 쓰기 잠김</span>
+    </div>
   </div>
   <div class="sb-divider"></div>
 
@@ -420,14 +424,6 @@ input,select,textarea{font-family:var(--font-body)}
     <button class="btn btn-outline btn-sm" onclick="cafe24Login()" id="cafe24-login-btn">🔐 로그인</button>
   </div>
 
-  <div class="card" id="write-auth-box" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
-    <div>
-      <div style="font-size:13px;font-weight:600">쓰기 인증</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:2px" id="write-auth-status">🔒 쓰기 잠김</div>
-    </div>
-    <button class="btn btn-outline btn-sm" onclick="promptUnlock()" id="write-auth-btn">잠금 해제</button>
-  </div>
-
   <div class="search-row">
     <input type="text" id="product-search" placeholder="제품명 검색 (예: 벙어리장갑, 내복)" onkeydown="if(event.key==='Enter')searchProduct()">
     <button class="btn btn-outline" onclick="searchProduct()">검색</button>
@@ -527,18 +523,15 @@ async function gwWrite(body, _retried) {
   return j;
 }
 function updateWriteAuthUI() {
-  const el = document.getElementById('write-auth-status');
-  const btn = document.getElementById('write-auth-btn');
+  const el = document.getElementById('status-write');
   if (!el) return;
   if (getWriteToken()) {
     const exp = parseInt(localStorage.getItem('sb_write_exp') || '0', 10);
     const kst = new Date(exp * 1000 + 9 * 3600 * 1000);
     const hh = String(kst.getUTCHours()).padStart(2, '0'), mm = String(kst.getUTCMinutes()).padStart(2, '0');
-    el.textContent = `🔓 쓰기 인증됨 (${hh}:${mm}까지)`;
-    if (btn) btn.textContent = '재인증';
+    el.innerHTML = `<div class="sb-status-dot" style="background:var(--green)"></div><span style="color:var(--green)">🔓 쓰기 인증됨 (${hh}:${mm}까지)</span>`;
   } else {
-    el.textContent = '🔒 쓰기 잠김';
-    if (btn) btn.textContent = '잠금 해제';
+    el.innerHTML = `<div class="sb-status-dot" style="background:var(--red)"></div><span style="color:var(--red)">🔒 쓰기 잠김</span>`;
   }
 }
 
