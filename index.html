@@ -2758,6 +2758,7 @@ function renderPaBulkPreview(rows, post) {
 
 function renderAdSettingForm(adType) {
   const container = document.getElementById('adsetting-result');
+  if (container) { container.oninput = refreshAdSetReady; container.onchange = refreshAdSetReady; setTimeout(refreshAdSetReady, 0); }
   const campaigns = state._adSettingCampaigns || [];
   const productSets = state._adSettingProductSets || [];
 
@@ -2909,6 +2910,8 @@ function renderAdSettingForm(adType) {
       .as-val{flex:1;min-width:0}
       .as-input{width:100%;padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);box-sizing:border-box}
       .as-input:focus{outline:none;border-color:var(--accent)}
+      .fld-ok{border-color:#3B9E5E !important;background:#F5FBF6 !important}
+      .fld-miss{border-color:#E6A23C !important}
     </style>
 
     <!-- 소재 유형 탭 -->
@@ -2921,6 +2924,8 @@ function renderAdSettingForm(adType) {
 
     <!-- 입력 폼 -->
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:12px">
+
+      <div id="as-ready-summary" style="font-size:11px;color:var(--text2);margin-bottom:12px;line-height:1.7"></div>
 
       <div class="as-row">
         <label class="as-label">캠페인</label>
@@ -2959,7 +2964,7 @@ function renderAdSettingForm(adType) {
       </div>
       <div class="as-row">
         <label class="as-label">소재 설명</label>
-        <div class="as-val"><input type="text" id="as-desc" placeholder="ai모델영상_켄_260518" class="as-input"
+        <div class="as-val"><input type="text" id="as-desc" placeholder="[소재설명_제작자_날짜]" class="as-input"
           oninput="updateAdName()"></div>
       </div>
       <div class="as-row">
@@ -3036,6 +3041,7 @@ function selectCampaign(id, name, status) {
   const dot = status === 'ACTIVE' ? '🟢 ' : '⚫ ';
   document.getElementById('as-campaign-search').value = dot + name;
   hideCampaignList();
+  refreshAdSetReady();
 }
 
 function filterCampaignList(val) {
@@ -3111,8 +3117,10 @@ async function selectAdProduct(name) {
   hideProductList();
   updateAdName();
   showAdStock(name);   // 재고연동현황과 동일한 재고 표시
+  refreshAdSetReady();
   // 카페24에서 랜딩 URL 자동 조회
   await fetchLandingUrl(name);
+  refreshAdSetReady();
 }
 
 // 광고세팅: 선택 상품 재고를 재고연동현황 표와 동일하게 표시
@@ -3230,9 +3238,37 @@ function updateAdName() {
   const product = document.getElementById('as-product')?.value?.trim() || '';
   const desc    = document.getElementById('as-desc')?.value?.trim() || '';
   const adname  = document.getElementById('as-adname');
-  if (!adname) return;
-  if (product && desc) adname.value = `${product};${desc}`;
-  else if (product) adname.value = product;
+  if (adname) {
+    if (product && desc) adname.value = `${product};${desc}`;
+    else if (product) adname.value = product;
+  }
+  refreshAdSetReady();
+}
+
+// 단건 광고세팅: 필수 입력 현황 표시 (필드별 색깔 + 상단 체크 요약). 현재 탭에 존재하는 필드만.
+function refreshAdSetReady() {
+  const val = id => { const e = document.getElementById(id); return e ? (e.value || '').trim() : null; };
+  const color = (el, ok) => { if (el) { el.classList.toggle('fld-ok', ok); el.classList.toggle('fld-miss', !ok); } };
+  const imgFile = document.getElementById('img-file');
+  const fields = [
+    ['캠페인',  'as-campaign-search', !!val('as-campaign')],   // 선택값은 hidden #as-campaign 기준
+    ['상품명',  'as-product',         !!val('as-product')],
+    ['소재설명', 'as-desc',            !!val('as-desc')],
+    ['광고명',  'as-adname',          !!val('as-adname')],
+    ['이미지',  'img-drop',           !!(imgFile && imgFile.files && imgFile.files.length)],
+    ['랜딩',    'landing-url',         !!val('landing-url')],
+    ['캡션',    'caption-text',        !!val('caption-text')],
+  ];
+  let present = 0, done = 0, chips = '';
+  for (const [label, elId, ok] of fields) {
+    const el = document.getElementById(elId);
+    if (!el) continue; // 현재 탭에 없는 필드 스킵
+    present++; if (ok) done++;
+    color(el, ok);
+    chips += `<span style="margin-right:10px;white-space:nowrap;color:${ok ? '#3B9E5E' : 'var(--text2)'}">${ok ? '✅' : '⬜'} ${label}</span>`;
+  }
+  const sum = document.getElementById('as-ready-summary');
+  if (sum) sum.innerHTML = present ? `<b>입력 현황 ${done}/${present}</b> &nbsp; ${chips}` : '';
 }
 
 // 랜딩 URL이 채워져도 캡션은 자동 생성하지 않음 (비용 절감 — 버튼 클릭 시에만 Claude 호출)
@@ -3252,6 +3288,7 @@ async function regenCaption() {
     const caption = await generateCaption(url, product);
     const ta = document.getElementById('caption-text');
     if (ta) ta.value = caption;
+    refreshAdSetReady();
     if (statusEl) statusEl.textContent = '✨ Claude 2개 버전 작성 완료 (쓸 것만 남기고 지우세요)';
   } finally {
     _captionBusy = false;
@@ -3267,6 +3304,7 @@ function handleFileSelect(type, input) {
   if (el) el.textContent = `✓ ${file.name} (${(file.size/1024/1024).toFixed(1)}MB)`;
   // state에 저장
   state[`_adFile_${type}`] = file;
+  refreshAdSetReady();
 }
 
 // PA 검색
