@@ -420,6 +420,14 @@ input,select,textarea{font-family:var(--font-body)}
     <button class="btn btn-outline btn-sm" onclick="cafe24Login()" id="cafe24-login-btn">🔐 로그인</button>
   </div>
 
+  <div class="card" id="write-auth-box" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
+    <div>
+      <div style="font-size:13px;font-weight:600">쓰기 인증</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px" id="write-auth-status">🔒 쓰기 잠김</div>
+    </div>
+    <button class="btn btn-outline btn-sm" onclick="promptUnlock()" id="write-auth-btn">잠금 해제</button>
+  </div>
+
   <div class="search-row">
     <input type="text" id="product-search" placeholder="제품명 검색 (예: 벙어리장갑, 내복)" onkeydown="if(event.key==='Enter')searchProduct()">
     <button class="btn btn-outline" onclick="searchProduct()">검색</button>
@@ -467,6 +475,73 @@ const READ_VIA_GATEWAY = true;
 // 2단계-B: 쓰기를 프록시 게이트웨이 경유로. false면 anon 직접쓰기로 즉시 롤백.
 const WRITE_VIA_GATEWAY = true;
 
+// ── 4단계: 쓰기 인증 (앱 비번 → 12h JWT). 게이트웨이 write에만 토큰 첨부, read엔 안 붙임. ──
+function getWriteToken() {
+  try {
+    const t = localStorage.getItem('sb_write_token');
+    const exp = parseInt(localStorage.getItem('sb_write_exp') || '0', 10);
+    if (t && exp > Math.floor(Date.now() / 1000)) return t;
+  } catch (e) {}
+  return null;
+}
+function clearWriteToken() {
+  try { localStorage.removeItem('sb_write_token'); localStorage.removeItem('sb_write_exp'); } catch (e) {}
+}
+async function unlockWrite(pw) {
+  try {
+    const r = await fetch(`${PROXY}/api/sb`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'auth', password: pw }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 200 && j.token) {
+      localStorage.setItem('sb_write_token', j.token);
+      localStorage.setItem('sb_write_exp', String(j.exp || 0));
+      updateWriteAuthUI();
+      return true;
+    }
+    if (r.status === 401) alert('쓰기 비밀번호가 틀렸습니다.');
+    else if (r.status === 503) alert('서버 쓰기 인증이 아직 설정되지 않았습니다.');
+    else alert('쓰기 인증 실패: ' + (j.error || r.status));
+  } catch (e) { alert('쓰기 인증 요청 실패: ' + e.message); }
+  return false;
+}
+async function promptUnlock() {
+  const pw = prompt('쓰기 비밀번호를 입력하세요');
+  if (pw == null || pw === '') return false;
+  return await unlockWrite(pw);
+}
+// 게이트웨이 write 공통 래퍼: 토큰 있으면 Authorization 첨부. 401이면 재인증 후 1회 재시도.
+async function gwWrite(body, _retried) {
+  const token = getWriteToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const r = await fetch(`${PROXY}/api/sb`, { method: 'POST', headers, body: JSON.stringify(body) });
+  if (r.status === 401 && !_retried) {
+    clearWriteToken(); updateWriteAuthUI();
+    if (await promptUnlock()) return gwWrite(body, true); // 재인증 성공 시 1회 재시도
+    throw new Error('쓰기 인증 필요(401)');
+  }
+  const j = await r.json().catch(() => ({}));
+  if (j.error) throw new Error(`gateway ${body.op} ${body.table}: ${j.error}`);
+  return j;
+}
+function updateWriteAuthUI() {
+  const el = document.getElementById('write-auth-status');
+  const btn = document.getElementById('write-auth-btn');
+  if (!el) return;
+  if (getWriteToken()) {
+    const exp = parseInt(localStorage.getItem('sb_write_exp') || '0', 10);
+    const kst = new Date(exp * 1000 + 9 * 3600 * 1000);
+    const hh = String(kst.getUTCHours()).padStart(2, '0'), mm = String(kst.getUTCMinutes()).padStart(2, '0');
+    el.textContent = `🔓 쓰기 인증됨 (${hh}:${mm}까지)`;
+    if (btn) btn.textContent = '재인증';
+  } else {
+    el.textContent = '🔒 쓰기 잠김';
+    if (btn) btn.textContent = '잠금 해제';
+  }
+}
+
 async function sbGet(table, select='*') {
   if (READ_VIA_GATEWAY) {
     const r = await fetch(`${PROXY}/api/sb`, {
@@ -495,13 +570,7 @@ async function sbGet(table, select='*') {
 }
 async function sbUpsert(table, rows) {
   if (WRITE_VIA_GATEWAY) {
-    const r = await fetch(`${PROXY}/api/sb`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ op: 'upsert', table, rows: Array.isArray(rows) ? rows : [rows] }),
-    });
-    const j = await r.json();
-    if (j.error) throw new Error(`gateway upsert ${table}: ${j.error}`);
+    await gwWrite({ op: 'upsert', table, rows: Array.isArray(rows) ? rows : [rows] });
     return;
   }
   // ── anon 직접 upsert (롤백용 보존) ──
@@ -517,13 +586,7 @@ async function sbDelete(table) {
 // 전체 교체(replace): inventory/strategy/sera 저장에 사용.
 async function sbReplace(table, rows) {
   if (WRITE_VIA_GATEWAY) {
-    const r = await fetch(`${PROXY}/api/sb`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ op: 'replace', table, rows }),
-    });
-    const j = await r.json();
-    if (j.error) throw new Error(`gateway replace ${table}: ${j.error}`);
+    await gwWrite({ op: 'replace', table, rows });
     return;
   }
   // ── anon 직접 (롤백용 보존): 전체삭제 후 1000행씩 upsert ──
@@ -576,6 +639,7 @@ const state = {
 // ── INIT ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   updateStatusUI();
+  updateWriteAuthUI();
   loadCustomRules();
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('auth') === 'success') {
