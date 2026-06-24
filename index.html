@@ -522,6 +522,19 @@ async function gwWrite(body, _retried) {
   if (j.error) throw new Error(`gateway ${body.op} ${body.table}: ${j.error}`);
   return j;
 }
+// meta/bulk 등 게이트웨이 외 write 호출용: 토큰 있으면 Authorization 첨부, 401이면 토큰폐기+재인증+1회 재시도.
+// Response를 그대로 반환(호출부의 .ok/.json()/.status 유지). read엔 안 씀(plain fetch).
+async function authedFetch(url, opts = {}, _retried) {
+  const token = getWriteToken();
+  const headers = { ...(opts.headers || {}) };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const r = await fetch(url, { ...opts, headers });
+  if (r.status === 401 && !_retried) {
+    clearWriteToken(); updateWriteAuthUI();
+    if (await promptUnlock()) return authedFetch(url, opts, true);
+  }
+  return r;
+}
 function updateWriteAuthUI() {
   const el = document.getElementById('status-write');
   if (!el) return;
@@ -1379,7 +1392,7 @@ async function applyRainBoost() {
   let ok = 0, fail = 0;
   for (const ad of state._rainBoostedAds) {
     try {
-      await fetch(`${PROXY}/api/meta?action=update_budget`, {
+      await authedFetch(`${PROXY}/api/meta?action=update_budget`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ad_id: ad.adsetId || ad.id, daily_budget: ad.rainBudget }),
@@ -1697,11 +1710,8 @@ function saveRulesFromEditor() {
     trigger_min: r.triggerMin,
     disabled: r.disabled || false,
   }));
-  fetch(`${SB_URL}/rest/v1/budget_rules`, {
-    method: 'POST',
-    headers: { ...sbHeaders, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-    body: JSON.stringify(rows),
-  }).catch(e => console.log('규칙 Supabase 저장 실패:', e));
+  // 게이트웨이 경유(토큰+service_role). WRITE_VIA_GATEWAY=false면 sbUpsert가 anon 직접으로 폴백.
+  sbUpsert('budget_rules', rows).catch(e => console.log('규칙 Supabase 저장 실패:', e));
 
   renderRulesEditor();
   // 저장 완료 토스트
@@ -1967,14 +1977,14 @@ async function runAll() {
   for (const r of toRun) {
     try {
       if (r.action === 'off') {
-        await fetch(`${PROXY}/api/meta?action=toggle_ad`,
+        await authedFetch(`${PROXY}/api/meta?action=toggle_ad`,
           { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:r.id, status:'PAUSED'}) });
         ok++;
       } else if (['up','dn'].includes(r.action)) {
         const targetId = r.adsetId || r.id;
         if (updatedAdsets.has(targetId)) { console.log(`⏭ 중복 스킵: ${r.name} adsetId=${targetId}`); continue; }
         updatedAdsets.add(targetId);
-        const resp = await fetch(`${PROXY}/api/meta?action=update_budget`,
+        const resp = await authedFetch(`${PROXY}/api/meta?action=update_budget`,
           { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:targetId, daily_budget:r.nb}) });
         const respData = await resp.json();
         console.log(`예산 변경 [${r.name}] adsetId=${targetId} budget=${r.nb}`, respData);
@@ -2315,7 +2325,7 @@ async function bulkPreview() {
   pv.innerHTML = `<div style="margin-top:14px;color:var(--text2)">⏳ 검증 중 (Drive 존재·캠페인 확인)...</div>`;
   let data;
   try {
-    const r = await fetch(`${PROXY}/api/bulk-create-ads`, {
+    const r = await authedFetch(`${PROXY}/api/bulk-create-ads`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rows, dry_run: true }),
     });
@@ -2460,7 +2470,7 @@ async function bulkCreate(retryUnits) {
     const rows = chunk.flatMap((u) => u.rows);
     setProg(`처리 중 (청크 ${ci + 1}/${chunks.length})`);
     try {
-      const r = await fetch(`${PROXY}/api/bulk-create-ads`, {
+      const r = await authedFetch(`${PROXY}/api/bulk-create-ads`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows }),
       });
       const d = await r.json();
@@ -3201,7 +3211,7 @@ async function submitAdSetting(adType) {
       const filename = document.getElementById('video-drive-filename')?.value?.trim();
       if (!filename) throw new Error('Drive 영상 파일명을 입력해주세요');
       resultEl.innerHTML = '<div style="color:var(--text2)">⏳ Drive 영상 업로드 + 광고 생성 중… (인코딩 대기로 수십 초 걸릴 수 있어요)</div>';
-      const res = await fetch(`${PROXY}/api/bulk-create-ads`, {
+      const res = await authedFetch(`${PROXY}/api/bulk-create-ads`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rows: [{ type: 'video', campaign: campaignId, filename, landing_url: landingUrl, caption: document.getElementById('caption-text')?.value?.trim() || '' }] }),
       });
@@ -3238,7 +3248,7 @@ async function submitAdSetting(adType) {
       if (file) {
         resultEl.innerHTML = '<div style="color:var(--text2)">⏳ 이미지 업로드 중...</div>';
         const b64 = await fileToBase64(file);
-        const uploadRes = await fetch(`${PROXY}/api/meta?action=upload_image`, {
+        const uploadRes = await authedFetch(`${PROXY}/api/meta?action=upload_image`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ image_base64: b64, filename: file.name }),
@@ -3255,7 +3265,7 @@ async function submitAdSetting(adType) {
         const isVideo = file.type.startsWith('video');
         const b64 = await fileToBase64(file);
         if (isVideo) {
-          const uploadRes = await fetch(`${PROXY}/api/meta?action=upload_video`, {
+          const uploadRes = await authedFetch(`${PROXY}/api/meta?action=upload_video`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ video_base64: b64, filename: file.name }),
           });
@@ -3263,7 +3273,7 @@ async function submitAdSetting(adType) {
           if (d.error) throw new Error(d.error);
           body.video_id = d.video_id;
         } else {
-          const uploadRes = await fetch(`${PROXY}/api/meta?action=upload_image`, {
+          const uploadRes = await authedFetch(`${PROXY}/api/meta?action=upload_image`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ image_base64: b64, filename: file.name }),
           });
@@ -3281,7 +3291,7 @@ async function submitAdSetting(adType) {
 
     resultEl.innerHTML = '<div style="color:var(--text2)">⏳ 메타 광고 생성 중...</div>';
 
-    const r = await fetch(`${PROXY}/api/meta?action=create_ad`, {
+    const r = await authedFetch(`${PROXY}/api/meta?action=create_ad`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
