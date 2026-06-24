@@ -3259,12 +3259,15 @@ async function submitAdSetting(adType) {
     if (adType === 'IMAGE') {
       const file = state._adFile_image;
       if (file) {
-        resultEl.innerHTML = '<div style="color:var(--text2)">⏳ 이미지 업로드 중...</div>';
-        const b64 = await fileToBase64(file);
+        const up = await prepareImageForUpload(file);
+        resultEl.innerHTML = up.resized
+          ? `<div style="color:var(--text2)">⏳ 큰 이미지라 업로드용으로 자동 축소 후 업로드 중... (${up.note})</div>`
+          : '<div style="color:var(--text2)">⏳ 이미지 업로드 중...</div>';
+        const b64 = await fileToBase64(up.file);
         const uploadRes = await authedFetch(`${PROXY}/api/meta?action=upload_image`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image_base64: b64, filename: file.name }),
+          body: JSON.stringify({ image_base64: b64, filename: up.file.name }),
         });
         const uploadData = await uploadJson(uploadRes);
         if (uploadData.error) throw new Error(uploadData.error);
@@ -3276,8 +3279,8 @@ async function submitAdSetting(adType) {
       const file = state._adFile_collection;
       if (file) {
         const isVideo = file.type.startsWith('video');
-        const b64 = await fileToBase64(file);
         if (isVideo) {
+          const b64 = await fileToBase64(file);
           const uploadRes = await authedFetch(`${PROXY}/api/meta?action=upload_video`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ video_base64: b64, filename: file.name }),
@@ -3286,9 +3289,12 @@ async function submitAdSetting(adType) {
           if (d.error) throw new Error(d.error);
           body.video_id = d.video_id;
         } else {
+          const up = await prepareImageForUpload(file);
+          if (up.resized) resultEl.innerHTML = `<div style="color:var(--text2)">⏳ 큰 이미지라 업로드용으로 자동 축소 후 업로드 중... (${up.note})</div>`;
+          const b64 = await fileToBase64(up.file);
           const uploadRes = await authedFetch(`${PROXY}/api/meta?action=upload_image`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image_base64: b64, filename: file.name }),
+            body: JSON.stringify({ image_base64: b64, filename: up.file.name }),
           });
           const d = await uploadJson(uploadRes);
           if (d.error) throw new Error(d.error);
@@ -3357,6 +3363,41 @@ function fileToBase64(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// 업로드 전 큰 이미지를 한도 이하로 자동 축소 (긴 변 캡 + JPEG 재압축).
+// 3MB 이하 이미지는 원본 그대로 반환(손 안 댐). 실패 시 원본 반환(uploadJson이 413을 명확히 처리).
+// 반환: { file, resized, note }
+async function prepareImageForUpload(file, maxBytes = 2.8 * 1024 * 1024, maxEdge = 2048) {
+  if (!file || !file.type.startsWith('image/') || file.size <= maxBytes) {
+    return { file, resized: false, note: '' };
+  }
+  try {
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file);
+    });
+    const img = await new Promise((res, rej) => {
+      const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl;
+    });
+    const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); // 투명 배경 → 흰색 (JPEG는 투명 미지원)
+    ctx.drawImage(img, 0, 0, w, h);
+    let blob = null;
+    for (const q of [0.92, 0.86, 0.8, 0.72, 0.62]) {
+      blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', q));
+      if (blob && blob.size <= maxBytes) break;
+    }
+    if (!blob) return { file, resized: false, note: '' };
+    const newFile = new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+    const note = `${(file.size / 1048576).toFixed(1)}MB → ${(newFile.size / 1048576).toFixed(1)}MB · ${w}×${h}`;
+    return { file: newFile, resized: true, note };
+  } catch (e) {
+    return { file, resized: false, note: '' };
+  }
 }
 
 // 업로드 응답 파싱 — 본문 크기 초과(413 "Request Entity Too Large") 등 비-JSON 응답을
