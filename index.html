@@ -2046,11 +2046,32 @@ async function generateCaption(landingUrl, productName) {
       }
     } catch(e) {}
 
+    // 리뷰 1페이지(최대 10개) 가져오기 — 랜딩URL의 product_no 기준.
+    // 실패/빈 결과면 폴백: 리뷰 없이 상품 설명만으로 생성 (기존 동작).
+    let reviewTexts = [];
+    const noM = String(landingUrl).match(/product_no=(\d+)/);
+    if (noM) {
+      try {
+        const rv = await fetch(`${PROXY}/api/cafe24?path=admin/boards/4/articles&product_no=${noM[1]}&limit=10`);
+        const rvd = await rv.json();
+        reviewTexts = (rvd.articles || [])
+          .map(a => (a.content || a.review_content || a.body || '').replace(/\s+/g, ' ').trim())
+          .filter(Boolean)
+          .slice(0, 10)
+          .map(t => t.length > 120 ? t.slice(0, 120) + '…' : t); // 비용 제어: 리뷰당 길이 캡
+      } catch(e) {}
+    }
+    const reviewBlock = reviewTexts.length
+      ? `\n[실제 고객 리뷰 ${reviewTexts.length}개]\n${reviewTexts.map(r => `- ${r}`).join('\n')}\n`
+      : '';
+
     const prompt = `다음 오즈키즈 유아동 의류/신발 상품의 메타 광고 캡션을 서로 다른 톤으로 2개 작성하세요.
 상품: ${productInfo}
-랜딩URL: ${landingUrl}
-
-각 캡션 요구: 2~3문장, 이모지 1~3개, 엄마/아빠 감성, 구매욕구 자극, 해시태그 없음.
+${reviewBlock}
+각 캡션 요구:
+- 2~3문장, 이모지 1~3개, 해시태그 없음.
+- 실제 고객 후기처럼 솔직하고 생생한 구어체 말투(직접 써본 듯한 톤).${reviewTexts.length ? ' 위 리뷰에서 드러난 장점·사용 경험을 자연스럽게 녹이되, 없는 사실은 지어내지 마세요.' : ''}
+- 링크/URL/"이 링크 클릭" 같은 표현 금지 (메타 광고 캡션은 링크가 눌리지 않습니다).
 아래 형식 그대로만 출력(다른 말·제목·마크다운·따옴표 금지):
 1.
 (첫 번째 캡션)
@@ -2063,7 +2084,7 @@ async function generateCaption(landingUrl, productName) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt,
-        system: '당신은 오즈키즈(영유아 의류/신발 브랜드) 광고 카피라이터입니다. 요청한 형식대로 서로 다른 톤의 메타 광고 캡션 2개만 출력합니다. 마크다운(#, *, > 등)·해시태그·제목·따옴표·부연설명을 쓰지 않고, 주어진 상품명/설명에만 근거하며 없는 사실을 지어내지 않습니다.',
+        system: '당신은 오즈키즈(영유아 의류/신발 브랜드) 광고 카피라이터입니다. 실제 고객 후기처럼 솔직하고 생생한 구어체 말투로, 요청한 형식대로 서로 다른 톤의 메타 광고 캡션 2개만 출력합니다. 마크다운(#, *, > 등)·해시태그·제목·따옴표·부연설명·URL/링크 표현을 쓰지 않고, 주어진 상품 정보와 리뷰에만 근거하며 없는 사실을 지어내지 않습니다.',
         max_tokens: 700,
         model: 'sonnet',
       }),
