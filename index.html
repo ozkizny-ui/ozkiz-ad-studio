@@ -2567,6 +2567,8 @@ function bulkRetryFailed() {
 function renderBulkUploadSection() {
   const el = document.getElementById('bulk-upload-section');
   if (!el) return;
+  const campOptions = (state._adSettingCampaigns || [])
+    .map(c => `<option value="${c.id}">${c.status === 'ACTIVE' ? '● ' : '○ '}${String(c.name || c.id).replace(/</g, '&lt;')}</option>`).join('');
   el.innerHTML = `
     <div style="margin-top:20px;border:0.5px solid var(--border);border-radius:12px;padding:18px;background:var(--surface)">
       <div style="font-size:15px;font-weight:600;margin-bottom:4px">📦 광고 대량 업로드</div>
@@ -2581,7 +2583,177 @@ function renderBulkUploadSection() {
       </div>
       <div id="bulk-parsed"></div>
       <div id="bulk-preview"></div>
+    </div>
+
+    <div style="margin-top:16px;border:0.5px solid var(--border);border-radius:12px;padding:18px;background:var(--surface)">
+      <div style="font-size:15px;font-weight:600;margin-bottom:4px">🤝 파트너십애드(PA) 대량</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">
+        소재 URL과 광고명만 붙여넣으면 랜딩 URL을 자동으로 채워 PA를 한 번에 생성(PAUSED).
+        랜딩 URL을 비우면 <b>광고명 ';' 왼쪽 = 이지어드민 상품명</b>으로 카페24 랜딩을 자동 도출,
+        직접 채우면 그 URL 그대로(카테고리 광고).
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <label style="font-size:12px;color:var(--text2)">캠페인(묶음 공통)</label>
+        <select id="pa-bulk-campaign" onchange="paBulkRecheckBtn()"
+          style="padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);max-width:360px">
+          <option value="">— 캠페인 선택 —</option>
+          ${campOptions}
+        </select>
+      </div>
+      <textarea id="pa-bulk-input" rows="6"
+        placeholder="한 줄에 광고 1개. 엑셀에서 [소재URL · 광고명 · 랜딩URL(선택)] 3개 열을 복사해 붙여넣으세요 (탭 구분). 랜딩URL은 비워도 됩니다."
+        style="width:100%;box-sizing:border-box;padding:10px;font-size:12px;font-family:monospace;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text)"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button onclick="paBulkPreview()"
+          style="padding:9px 16px;font-size:13px;font-weight:600;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2);cursor:pointer">✓ 미리보기 (랜딩 해석·검증)</button>
+        <button id="pa-bulk-create-btn" onclick="paBulkCreate()" disabled
+          style="padding:9px 16px;font-size:13px;font-weight:600;border-radius:8px;border:0;background:#993556;color:#fff;cursor:pointer;opacity:.5">⏸ PA 생성 (PAUSED)</button>
+      </div>
+      <div id="pa-bulk-result"></div>
     </div>`;
+}
+
+// ── PA 대량 ──────────────────────────────────────────────────────
+// 입력 파싱: 줄마다 [소재URL, 광고명, 랜딩URL?] (엑셀 붙여넣기=탭 우선, 없으면 쉼표). 헤더 줄 스킵.
+function paBulkParse(text) {
+  return String(text || '').split(/\r?\n/).map(l => l.replace(/\s+$/, '')).filter(l => l.trim()).map((line, i) => {
+    const parts = line.includes('\t') ? line.split('\t') : line.split(',');
+    return {
+      lineNo: i + 1,
+      post_url: (parts[0] || '').trim(),
+      ad_name: (parts[1] || '').trim(),
+      landing_url: (parts[2] || '').trim(),
+    };
+  }).filter(r => !/^소재\s*url$/i.test(r.post_url) && !/^post_?url$/i.test(r.post_url));
+}
+
+// 광고명 → 랜딩 URL 해석: ① 랜딩 직접입력 우선 → ② ';' 왼쪽 상품명 매핑(state.urlMap) → ③ 카페24 자동조회
+// (fetchLandingUrl ②와 동일 규칙 — DOM 의존 없는 순수 버전)
+async function resolvePaLanding(adName, explicitUrl) {
+  if (explicitUrl) return { ok: true, url: explicitUrl, source: '직접입력' };
+  const ez = String(adName || '').split(';')[0].trim();
+  if (!ez) return { ok: false, reason: "광고명에서 상품명(';' 왼쪽) 추출 실패" };
+  const mapped = state.urlMap && state.urlMap[ez];
+  if (mapped) return { ok: true, url: mapped, source: '매핑' };
+  try {
+    const core = ez.includes('-') ? ez.split('-').slice(1).join('-').trim() : ez;
+    const searchQuery = core.replace(/\([^)]*\)/g, '').trim();
+    const r = await fetch(`${PROXY}/api/cafe24?path=admin/products&product_name=${encodeURIComponent(searchQuery)}&limit=20&embed=options`);
+    const data = await r.json();
+    const products = data.products || [];
+    if (!products.length) return { ok: false, reason: `상품 '${ez}' 카페24 매칭 없음 — 랜딩URL을 직접 입력하세요` };
+    const lower = searchQuery.toLowerCase();
+    const best = products.find(p => (p.internal_product_name || '').trim() === ez)
+      || products.find(p => (p.product_name || '').toLowerCase().includes(lower))
+      || products[0];
+    const url = `https://ozkiz.com/product/detail.html?product_no=${best.product_no}`;
+    if (state.urlMap) state.urlMap[ez] = url; // 셀프 캐시
+    return { ok: true, url, source: '카페24' };
+  } catch (e) {
+    return { ok: false, reason: '카페24 조회 오류: ' + e.message };
+  }
+}
+
+// 미리보기 = 행별 입력검증 + 랜딩 해석 (생성 안 함)
+async function paBulkPreview() {
+  const text = document.getElementById('pa-bulk-input')?.value || '';
+  const rows = paBulkParse(text);
+  const resultEl = document.getElementById('pa-bulk-result');
+  if (!rows.length) { resultEl.innerHTML = '<div style="margin-top:10px;color:#c0392b">입력이 비어 있습니다.</div>'; return; }
+  resultEl.innerHTML = '<div style="margin-top:10px;color:var(--text2)">⏳ 랜딩 URL 해석·검증 중...</div>';
+  for (const row of rows) {
+    if (!row.post_url) { row._ok = false; row._reason = '소재 URL 없음'; continue; }
+    if (!row.ad_name) { row._ok = false; row._reason = '광고명 없음'; continue; }
+    const res = await resolvePaLanding(row.ad_name, row.landing_url);
+    if (res.ok) { row._ok = true; row._landing = res.url; row._source = res.source; }
+    else { row._ok = false; row._reason = res.reason; }
+  }
+  state._paBulkRows = rows;
+  renderPaBulkPreview(rows, null);
+  paBulkRecheckBtn();
+}
+
+// 캠페인 선택/검증 상태에 따라 생성 버튼 활성화
+function paBulkRecheckBtn() {
+  const btn = document.getElementById('pa-bulk-create-btn');
+  if (!btn) return;
+  const camp = document.getElementById('pa-bulk-campaign')?.value;
+  const anyValid = (state._paBulkRows || []).some(r => r._ok);
+  btn.disabled = !(anyValid && camp);
+  btn.style.opacity = btn.disabled ? '.5' : '1';
+}
+
+// 생성 = 유효 행마다 기존 단일 PA 생성(create_ad, ad_type=PA) 순차 호출. 행별 성공/실패·사유 표시.
+async function paBulkCreate() {
+  const all = state._paBulkRows || [];
+  const rows = all.filter(r => r._ok);
+  const campId = document.getElementById('pa-bulk-campaign')?.value;
+  const resultEl = document.getElementById('pa-bulk-result');
+  const btn = document.getElementById('pa-bulk-create-btn');
+  if (!campId) { resultEl.innerHTML = '<div style="margin-top:10px;color:#c0392b">캠페인을 먼저 선택해주세요.</div>'; return; }
+  if (!rows.length) return;
+  if (!confirm(`${rows.length}개의 파트너십애드를 PAUSED로 생성합니다. 진행할까요?`)) return;
+  if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
+  let ok = 0, fail = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    resultEl.innerHTML = `<div style="margin-top:10px;color:var(--text2)">⏳ 생성 중... ${i + 1}/${rows.length} (✅ ${ok} · ❌ ${fail})</div>`;
+    try {
+      const r = await authedFetch(`${PROXY}/api/meta?action=create_ad`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ad_type: 'PA', campaign_id: campId, ad_name: row.ad_name, post_url: row.post_url, landing_url: row._landing }),
+      });
+      let data;
+      try { data = await r.json(); } catch (e) { throw new Error(`응답 파싱 실패 (HTTP ${r.status})`); }
+      if (data.error) throw new Error(data.error);
+      row._created = true; row._adId = data.ad_id; row._adsetId = data.adset_id; ok++;
+    } catch (e) {
+      row._created = false; row._createErr = e.message; fail++;
+    }
+  }
+  renderPaBulkPreview(all, { done: true, ok, fail });
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+}
+
+// 결과/미리보기 표 — post=null이면 검증 결과, post={done,ok,fail}이면 생성 결과(행별 사유 포함)
+function renderPaBulkPreview(rows, post) {
+  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const validN = rows.filter(r => r._ok).length;
+  const invalidN = rows.length - validN;
+  const trs = rows.map((r, i) => {
+    let statusHtml, reasonHtml;
+    if (post && post.done) {
+      if (!r._ok) { statusHtml = '<span style="color:var(--text2)">— 건너뜀</span>'; reasonHtml = `<span style="color:var(--text2)">${esc(r._reason)}</span>`; }
+      else if (r._created) { statusHtml = '<span style="color:#1e7e34;font-weight:600">✅ 생성됨</span>'; reasonHtml = `<span style="color:var(--text2)">ad ${esc(r._adId || '')} · set ${esc(r._adsetId || '')}</span>`; }
+      else { statusHtml = '<span style="color:#c0392b;font-weight:600">❌ 실패</span>'; reasonHtml = `<span style="color:#c0392b">${esc(r._createErr)}</span>`; }
+    } else {
+      statusHtml = r._ok ? '<span style="color:#1e7e34;font-weight:600">● 생성 가능</span>' : '<span style="color:#c0392b;font-weight:600">● 검증 실패</span>';
+      reasonHtml = r._ok ? '<span style="color:var(--text2)">—</span>' : `<span style="color:#c0392b">${esc(r._reason)}</span>`;
+    }
+    const landing = r._ok
+      ? `${esc(r._landing)} <span style="color:var(--text2)">(${esc(r._source)})</span>`
+      : (r.landing_url ? esc(r.landing_url) : '<span style="color:#c0392b">미해석</span>');
+    return `<tr style="${r._ok === false ? 'background:#fdecea' : ''}">
+      <td style="padding:4px 6px">${i + 1}</td>
+      <td style="padding:4px 6px;font-size:11px"><b>${esc(r.ad_name)}</b></td>
+      <td style="padding:4px 6px;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.post_url)}</td>
+      <td style="padding:4px 6px;font-size:11px">${landing}</td>
+      <td style="padding:4px 6px">${statusHtml}</td>
+      <td style="padding:4px 6px;font-size:11px">${reasonHtml}</td>
+    </tr>`;
+  }).join('');
+  const summary = (post && post.done)
+    ? `<b>완료</b> — ✅ ${post.ok} 성공 · ❌ ${post.fail} 실패${invalidN ? ` · 건너뜀 ${invalidN}` : ''}`
+    : `${rows.length}행 → 생성 가능 <b>${validN}</b>${invalidN ? ` · <span style="color:#c0392b">검증 실패 ${invalidN}</span>` : ''}`;
+  document.getElementById('pa-bulk-result').innerHTML = `
+    <div style="margin:10px 0;font-size:13px">${summary}</div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="text-align:left;color:var(--text2);font-size:11px;border-bottom:1px solid var(--border)">
+        <th style="padding:4px 6px">#</th><th style="padding:4px 6px">광고명</th><th style="padding:4px 6px">소재URL</th>
+        <th style="padding:4px 6px">랜딩URL(출처)</th><th style="padding:4px 6px">상태</th><th style="padding:4px 6px">사유</th>
+      </tr></thead>
+      <tbody>${trs}</tbody>
+    </table></div>`;
 }
 
 function renderAdSettingForm(adType) {
