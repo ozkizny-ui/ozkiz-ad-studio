@@ -3266,7 +3266,7 @@ async function submitAdSetting(adType) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ image_base64: b64, filename: file.name }),
         });
-        const uploadData = await uploadRes.json();
+        const uploadData = await uploadJson(uploadRes);
         if (uploadData.error) throw new Error(uploadData.error);
         body.image_hash = uploadData.hash;
       }
@@ -3282,7 +3282,7 @@ async function submitAdSetting(adType) {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ video_base64: b64, filename: file.name }),
           });
-          const d = await uploadRes.json();
+          const d = await uploadJson(uploadRes);
           if (d.error) throw new Error(d.error);
           body.video_id = d.video_id;
         } else {
@@ -3290,7 +3290,7 @@ async function submitAdSetting(adType) {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ image_base64: b64, filename: file.name }),
           });
-          const d = await uploadRes.json();
+          const d = await uploadJson(uploadRes);
           if (d.error) throw new Error(d.error);
           body.image_hash = d.hash;
         }
@@ -3357,6 +3357,20 @@ function fileToBase64(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// 업로드 응답 파싱 — 본문 크기 초과(413 "Request Entity Too Large") 등 비-JSON 응답을
+// 'Unexpected token ...' 대신 사람이 읽을 수 있는 메시지로 변환.
+async function uploadJson(res) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    if (res.status === 413 || /too large|request entity/i.test(text)) {
+      throw new Error('이미지/영상 파일이 너무 큽니다 (업로드 한도 초과). 약 3MB 이하로 줄여서 다시 올려주세요.');
+    }
+    throw new Error(`업로드 응답 오류 (HTTP ${res.status}): ${(text || '').slice(0, 80)}`);
+  }
 }
 
 async function loadNotionPresale() {
