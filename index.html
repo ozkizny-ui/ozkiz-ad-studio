@@ -2843,32 +2843,39 @@ function renderAdSettingForm(adType) {
         <div class="as-val"><input type="text" id="collection-label" placeholder="레이블 입력..." class="as-input"></div>
       </div>`;
   } else if (adType === 'PA') {
+    // 상품명 입력 → 랜딩 URL 자동(이미지/영상과 동일 경로). 광고명·게시물 URL은 수동 입력.
     extraFields = `
       <div class="as-row">
-        <label class="as-label">상품명 검색</label>
-        <div class="as-val" style="display:flex;gap:6px">
-          <input type="text" id="pa-search" placeholder="세트-두근하트" class="as-input" style="flex:1"
-            onkeydown="if(event.key==='Enter')searchPaData()">
-          <button onclick="searchPaData()" class="btn btn-outline btn-sm" style="white-space:nowrap">🔍 검색</button>
+        <label class="as-label">상품명</label>
+        <div class="as-val" style="position:relative">
+          <input type="text" id="as-product" placeholder="원피스-모모리본 (이지어드민 상품명)" class="as-input"
+            autocomplete="off"
+            oninput="onProductInput(this.value)"
+            onblur="setTimeout(()=>hideProductList(),200)">
+          <div id="as-product-list" style="display:none;position:absolute;top:100%;left:0;right:0;
+            background:var(--bg);border:1px solid var(--border);border-radius:8px;
+            max-height:200px;overflow-y:auto;z-index:100;margin-top:2px;box-shadow:0 4px 12px rgba(0,0,0,0.1)"></div>
         </div>
       </div>
-      <div id="pa-results" style="margin-top:8px"></div>
-      <div id="pa-selected-fields" style="display:none">
-        <div class="as-row" style="margin-top:8px">
-          <label class="as-label">광고소재명</label>
-          <div class="as-val"><input type="text" id="pa-ad-name" class="as-input"></div>
+      <div class="as-row">
+        <label class="as-label">랜딩 URL</label>
+        <div class="as-val" style="display:flex;align-items:center;gap:6px">
+          <input type="text" id="landing-url" placeholder="상품명 선택 시 자동 입력 (직접 수정 가능)"
+            class="as-input" style="flex:1" oninput="onLandingUrlChange(this.value)">
+          <span id="landing-url-status" style="font-size:11px;white-space:nowrap;flex-shrink:0;display:none"></span>
         </div>
-        <div class="as-row">
-          <label class="as-label">릴스 URL</label>
-          <div class="as-val" style="display:flex;gap:6px;align-items:center">
-            <input type="text" id="pa-reels-url" class="as-input" style="flex:1">
-            <a id="pa-reels-link" href="#" target="_blank" style="font-size:11px;color:#185FA5;white-space:nowrap;text-decoration:none;flex-shrink:0">↗ 열기</a>
-          </div>
-        </div>
-        <div id="pa-id-check" style="margin:4px 0 0 100px;font-size:11px"></div>
-        <div class="as-row">
-          <label class="as-label">랜딩 URL</label>
-          <div class="as-val"><input type="text" id="landing-url" placeholder="https://ozkiz.com/product/..." class="as-input"></div>
+      </div>
+      <div class="as-row">
+        <label class="as-label">광고명</label>
+        <div class="as-val"><input type="text" id="pa-ad-name" class="as-input" placeholder="직접 입력 (= 광고세트명)"></div>
+      </div>
+      <div class="as-row">
+        <label class="as-label">게시물 URL</label>
+        <div class="as-val" style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="pa-reels-url" class="as-input" style="flex:1" placeholder="https://www.instagram.com/reel/...">
+          <a id="pa-reels-link" href="#" target="_blank"
+            onclick="this.href=(document.getElementById('pa-reels-url').value||'#')"
+            style="font-size:11px;color:#185FA5;white-space:nowrap;text-decoration:none;flex-shrink:0">↗ 열기</a>
         </div>
       </div>`;
   }
@@ -2991,8 +2998,6 @@ function renderAdSettingForm(adType) {
     <div id="as-result" style="margin-top:10px"></div>
   `;
 
-  // PA 타입이면 데이터 미리 로드
-  if (adType === 'PA') loadPaData();
 }
 
 
