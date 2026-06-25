@@ -2758,15 +2758,21 @@ function renderPaBulkPreview(rows, post) {
 
 function renderAdSettingForm(adType) {
   const container = document.getElementById('adsetting-result');
-  if (container) { container.oninput = refreshAdSetReady; container.onchange = refreshAdSetReady; setTimeout(refreshAdSetReady, 0); }
+  if (container) {
+    container.oninput = refreshAdSetReady; container.onchange = refreshAdSetReady;
+    setTimeout(() => {
+      refreshAdSetReady();
+      if (adType === 'CAROUSEL') { if (!state._caroCards || !state._caroCards.length) state._caroCards = [{}, {}]; renderCaroCards(); }
+    }, 0);
+  }
   const campaigns = state._adSettingCampaigns || [];
   const productSets = state._adSettingProductSets || [];
 
   const typeColors = {
-    IMAGE: '#639922', VIDEO: '#BA7517', COLLECTION: '#185FA5', PA: '#993556'
+    IMAGE: '#639922', VIDEO: '#BA7517', CAROUSEL: '#7A4FBF', COLLECTION: '#185FA5', PA: '#993556'
   };
   const typeBg = {
-    IMAGE: '#EAF3DE', VIDEO: '#FAEEDA', COLLECTION: '#E6F1FB', PA: '#FBEAF0'
+    IMAGE: '#EAF3DE', VIDEO: '#FAEEDA', CAROUSEL: '#EEE8FA', COLLECTION: '#E6F1FB', PA: '#FBEAF0'
   };
 
   const tabBtn = (type, label) => `
@@ -2843,6 +2849,23 @@ function renderAdSettingForm(adType) {
         <label class="as-label">레이블</label>
         <div class="as-val"><input type="text" id="collection-label" placeholder="레이블 입력..." class="as-input"></div>
       </div>`;
+  } else if (adType === 'CAROUSEL') {
+    extraFields = `
+      <div class="as-row">
+        <label class="as-label">캡션</label>
+        <div class="as-val">
+          <textarea id="caption-text" placeholder="캐러셀 전체 공통 캡션 (선택)"
+            style="width:100%;height:80px;padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical;box-sizing:border-box"></textarea>
+        </div>
+      </div>
+      <div class="as-row">
+        <label class="as-label">카드</label>
+        <div class="as-val">
+          <div id="caro-cards"></div>
+          <button onclick="addCaroCard()" style="font-size:12px;color:var(--accent);background:transparent;border:1px dashed var(--accent);border-radius:6px;padding:8px 12px;cursor:pointer;width:100%">+ 카드 추가</button>
+          <div style="font-size:11px;color:var(--text2);margin-top:6px">슬라이드는 카드 <b>2~10장</b>. 카드마다 이미지·랜딩URL·헤드라인(제목). 광고명은 위 상품명/소재설명에서 자동 생성(또는 직접 입력).</div>
+        </div>
+      </div>`;
   } else if (adType === 'PA') {
     // 상품명 입력 → 랜딩 URL 자동(이미지/영상과 동일 경로). 광고명·게시물 URL은 수동 입력.
     extraFields = `
@@ -2918,6 +2941,7 @@ function renderAdSettingForm(adType) {
     <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
       ${tabBtn('IMAGE','🖼 이미지')}
       ${tabBtn('VIDEO','🎬 영상')}
+      ${tabBtn('CAROUSEL','🎠 슬라이드')}
       ${tabBtn('COLLECTION','📂 컬렉션')}
       ${tabBtn('PA','🤝 PA')}
     </div>
@@ -2977,7 +3001,7 @@ function renderAdSettingForm(adType) {
       </div>` : ''}
 
       ${extraFields}
-      ${landingAndCaption}
+      ${adType === 'CAROUSEL' ? '' : landingAndCaption}
 
     </div>
 
@@ -3307,6 +3331,45 @@ function handleFileSelect(type, input) {
   refreshAdSetReady();
 }
 
+// ── 슬라이드(캐러셀) 카드 관리 — 카드별 이미지+랜딩URL+헤드라인. state._caroCards 기반. ──
+function renderCaroCards() {
+  const box = document.getElementById('caro-cards');
+  if (!box) return;
+  const cards = state._caroCards || (state._caroCards = []);
+  box.innerHTML = cards.map((c, i) => `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--bg)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <b style="font-size:12px">카드 ${i+1}</b>
+        ${cards.length > 2 ? `<button onclick="removeCaroCard(${i})" style="font-size:11px;color:var(--red);background:none;border:none;cursor:pointer">삭제</button>` : ''}
+      </div>
+      <div onclick="document.getElementById('caro-file-${i}').click()" style="border:0.5px dashed var(--border);border-radius:6px;padding:10px;text-align:center;cursor:pointer;background:var(--surface2);font-size:12px;color:var(--text2);margin-bottom:6px">
+        ${c.fileName ? '✓ ' + c.fileName : '🖼 이미지 업로드'}
+      </div>
+      <input type="file" id="caro-file-${i}" accept="image/*" style="display:none" onchange="handleCaroFile(${i}, this)">
+      <input type="text" class="as-input" placeholder="카드 랜딩 URL" value="${(c.landing||'').replace(/"/g,'&quot;')}" oninput="state._caroCards[${i}].landing=this.value" style="margin-bottom:6px">
+      <input type="text" class="as-input" placeholder="헤드라인 (카드 제목, 선택)" value="${(c.headline||'').replace(/"/g,'&quot;')}" oninput="state._caroCards[${i}].headline=this.value">
+    </div>`).join('');
+}
+function addCaroCard() {
+  if (!state._caroCards) state._caroCards = [];
+  if (state._caroCards.length >= 10) { alert('카드는 최대 10장입니다'); return; }
+  state._caroCards.push({});
+  renderCaroCards();
+}
+function removeCaroCard(i) {
+  if (!state._caroCards) return;
+  state._caroCards.splice(i, 1);
+  renderCaroCards();
+}
+function handleCaroFile(i, input) {
+  const f = input.files[0];
+  if (!f) return;
+  state._caroCards[i] = state._caroCards[i] || {};
+  state._caroCards[i].file = f;
+  state._caroCards[i].fileName = `${f.name} (${(f.size/1024/1024).toFixed(1)}MB)`;
+  renderCaroCards();
+}
+
 // PA 검색
 async function searchPaData() {
   const query = document.getElementById('pa-search')?.value?.trim().toLowerCase();
@@ -3425,7 +3488,7 @@ async function submitAdSetting(adType) {
   // 공통 유효성
   const landingUrl = document.getElementById('landing-url')?.value?.trim();
 
-  if (adType !== 'PA' && !landingUrl) {
+  if (adType !== 'PA' && adType !== 'CAROUSEL' && !landingUrl) {
     resultEl.innerHTML = '<div style="color:var(--red)">랜딩 URL을 입력해주세요</div>'; return;
   }
 
@@ -3453,6 +3516,43 @@ async function submitAdSetting(adType) {
           ${r0.ad_permalink ? `<a href="${r0.ad_permalink}" target="_blank" style="color:#185FA5">광고관리자에서 보기 ↗</a>` : `ad_id ${r0.ad_id || ''}`}
         </div>`;
       btn.disabled = false; btn.textContent = '광고 생성 (PAUSED)';
+      return;
+    }
+
+    // CAROUSEL(슬라이드): 카드별 이미지 업로드→hash → create_ad(CAROUSEL). 백엔드는 createAd가 이미 지원.
+    if (adType === 'CAROUSEL') {
+      const cards = (state._caroCards || []).filter(c => c && c.file && (c.landing || '').trim());
+      if (cards.length < 2) throw new Error('슬라이드는 이미지+랜딩URL을 갖춘 카드가 2장 이상 필요합니다');
+      const adNameC = document.getElementById('as-adname')?.value?.trim();
+      if (!adNameC) throw new Error('광고명이 비어있습니다 (상품명·소재설명 입력 또는 직접 입력)');
+      const childCards = [];
+      for (let i = 0; i < cards.length; i++) {
+        const c = cards[i];
+        resultEl.innerHTML = `<div style="color:var(--text2)">⏳ 카드 ${i+1}/${cards.length} 이미지 업로드 중...</div>`;
+        const up = await prepareImageForUpload(c.file);
+        const b64 = await fileToBase64(up.file);
+        const uploadRes = await authedFetch(`${PROXY}/api/meta?action=upload_image`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_base64: b64, filename: up.file.name }),
+        });
+        const ud = await uploadJson(uploadRes);
+        if (ud.error) throw new Error(`카드 ${i+1} 업로드 실패: ${ud.error}`);
+        childCards.push({ image_hash: ud.hash, link: (c.landing || '').trim(), name: (c.headline || '').trim() });
+      }
+      resultEl.innerHTML = '<div style="color:var(--text2)">⏳ 슬라이드 광고 생성 중...</div>';
+      const r = await authedFetch(`${PROXY}/api/meta?action=create_ad`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ad_type: 'CAROUSEL', campaign_id: campaignId, ad_name: adNameC, caption: document.getElementById('caption-text')?.value?.trim() || '', cards: childCards }),
+      });
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+      resultEl.innerHTML = `
+        <div style="background:#EEE8FA;border-radius:8px;padding:14px 16px;font-size:12px;color:#5B3A9E">
+          ✅ 슬라이드 광고 생성 완료 (PAUSED) — <b>${adNameC}</b> · 카드 ${cards.length}장<br>
+          광고 ID: ${data.ad_id || '-'} · 광고세트 ${data.adset_id || '-'}<br>
+          <span style="color:#1D9E75">광고관리자에서 검토 후 ACTIVE로 전환해주세요</span>
+        </div>`;
+      btn.disabled = false; btn.textContent = '⏸ 메타에 PAUSED 상태로 생성';
       return;
     }
 
