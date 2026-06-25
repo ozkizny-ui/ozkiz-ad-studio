@@ -2898,7 +2898,7 @@ function renderAdSettingForm(adType) {
           style="width:100%;height:140px;padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical;box-sizing:border-box"></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
           <span id="caption-status" style="font-size:11px;color:var(--text2)"></span>
-          <button onclick="regenCaption()" style="font-size:11px;color:#fff;background:var(--accent);border:none;border-radius:5px;cursor:pointer;padding:5px 10px;font-weight:600">✨ Claude로 캡션 생성</button>
+          <button onclick="regenCaption()" style="font-size:11px;color:var(--text2);background:transparent;border:1px solid var(--border);border-radius:5px;cursor:pointer;padding:5px 10px;font-weight:500">✨ Claude로 캡션 생성</button>
         </div>
       </div>
     </div>` : '';
@@ -2997,7 +2997,7 @@ function renderAdSettingForm(adType) {
 
     <!-- 생성 버튼 -->
     <button id="as-submit-btn" onclick="submitAdSetting('${adType}')"
-      style="width:100%;padding:11px;font-size:13px;font-weight:600;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer">
+      style="width:100%;padding:15px;font-size:15px;font-weight:700;border-radius:8px;border:none;background:var(--accent);color:#fff;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12)">
       ⏸ 메타에 PAUSED 상태로 생성
     </button>
     <div id="as-result" style="margin-top:10px"></div>
