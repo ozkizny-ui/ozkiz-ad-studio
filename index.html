@@ -2588,9 +2588,17 @@ function renderBulkUploadSection() {
     <div style="margin-top:16px;border:0.5px solid var(--border);border-radius:12px;padding:18px;background:var(--surface)">
       <div style="font-size:15px;font-weight:600;margin-bottom:4px">🤝 파트너십애드(PA) 대량</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:12px">
-        소재 URL과 광고명만 붙여넣으면 랜딩 URL을 자동으로 채워 PA를 한 번에 생성(PAUSED).
-        랜딩 URL을 비우면 <b>광고명 ';' 왼쪽 = 이지어드민 상품명</b>으로 카페24 랜딩을 자동 도출,
+        엑셀 시트로 PA를 한 번에 생성(PAUSED). 열: <b>[릴스URL · 광고명 · 랜딩URL(선택)]</b>.
+        랜딩URL을 비우면 <b>광고명 ';' 왼쪽 = 이지어드민 상품명</b>으로 카페24 랜딩을 자동 도출,
         직접 채우면 그 URL 그대로(카테고리 광고).
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <button onclick="downloadPaTemplate()"
+          style="padding:8px 14px;font-size:13px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2);cursor:pointer">⬇ 템플릿 다운로드</button>
+        <label style="padding:8px 14px;font-size:13px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2);cursor:pointer">
+          📄 시트 업로드
+          <input type="file" accept=".xlsx,.xls" style="display:none" onchange="handlePaSheet(this)">
+        </label>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
         <label style="font-size:12px;color:var(--text2)">캠페인(묶음 공통)</label>
@@ -2600,12 +2608,7 @@ function renderBulkUploadSection() {
           ${campOptions}
         </select>
       </div>
-      <textarea id="pa-bulk-input" rows="6"
-        placeholder="한 줄에 광고 1개. 엑셀에서 [소재URL · 광고명 · 랜딩URL(선택)] 3개 열을 복사해 붙여넣으세요 (탭 구분). 랜딩URL은 비워도 됩니다."
-        style="width:100%;box-sizing:border-box;padding:10px;font-size:12px;font-family:monospace;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text)"></textarea>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button onclick="paBulkPreview()"
-          style="padding:9px 16px;font-size:13px;font-weight:600;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2);cursor:pointer">✓ 미리보기 (랜딩 해석·검증)</button>
+      <div style="display:flex;gap:8px;margin-top:4px">
         <button id="pa-bulk-create-btn" onclick="paBulkCreate()" disabled
           style="padding:9px 16px;font-size:13px;font-weight:600;border-radius:8px;border:0;background:#993556;color:#fff;cursor:pointer;opacity:.5">⏸ PA 생성 (PAUSED)</button>
       </div>
@@ -2614,17 +2617,73 @@ function renderBulkUploadSection() {
 }
 
 // ── PA 대량 ──────────────────────────────────────────────────────
-// 입력 파싱: 줄마다 [소재URL, 광고명, 랜딩URL?] (엑셀 붙여넣기=탭 우선, 없으면 쉼표). 헤더 줄 스킵.
-function paBulkParse(text) {
-  return String(text || '').split(/\r?\n/).map(l => l.replace(/\s+$/, '')).filter(l => l.trim()).map((line, i) => {
-    const parts = line.includes('\t') ? line.split('\t') : line.split(',');
-    return {
-      lineNo: i + 1,
-      post_url: (parts[0] || '').trim(),
-      ad_name: (parts[1] || '').trim(),
-      landing_url: (parts[2] || '').trim(),
-    };
-  }).filter(r => !/^소재\s*url$/i.test(r.post_url) && !/^post_?url$/i.test(r.post_url));
+// 템플릿 다운로드: [릴스URL · 광고명 · 랜딩URL(선택)] + 사용가이드 시트
+function downloadPaTemplate() {
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.aoa_to_sheet([['릴스URL', '광고명', '랜딩URL(선택)']]);
+  ws1['!cols'] = [{ wch: 46 }, { wch: 40 }, { wch: 46 }];
+  XLSX.utils.book_append_sheet(wb, ws1, 'PA업로드');
+
+  const guide = [
+    ['파트너십애드(PA) 대량 업로드 — 사용가이드'],
+    [],
+    ['1) 한 행 = PA 광고 1개. 헤더(릴스URL·광고명·랜딩URL) 아래로 입력하세요.'],
+    ['2) 릴스URL = 크리에이터 게시물(릴스) 주소. 예: https://www.instagram.com/reel/XXXX/'],
+    ['3) 광고명 = 메타에 표시될 광고 이름.'],
+    ['4) 랜딩URL을 비우면 광고명의 ";" 왼쪽(=이지어드민 상품명)으로 카페24 랜딩을 자동 도출합니다.'],
+    ['5) 랜딩URL을 직접 채우면 그 URL 그대로 사용합니다(카테고리/기획전 등).'],
+    [],
+    ['예시 ↓'],
+    ['릴스URL', '광고명', '랜딩URL(선택)'],
+    ['https://www.instagram.com/reel/DXXXXXX/', '상의-(아트웍)링거하트;PA_오즈맘영상', ''],
+    ['https://www.instagram.com/reel/DYYYYYY/', '여름기획전', 'https://ozkiz.com/category/123'],
+  ];
+  const ws2 = XLSX.utils.aoa_to_sheet(guide);
+  ws2['!cols'] = [{ wch: 46 }, { wch: 40 }, { wch: 46 }];
+  XLSX.utils.book_append_sheet(wb, ws2, '사용가이드');
+
+  XLSX.writeFile(wb, 'Ozkiz_PA대량업로드_템플릿.xlsx');
+}
+
+// aoa → PA 행 [{lineNo, post_url, ad_name, landing_url}] (빈 행·헤더행 스킵)
+function paRowsFromAoa(aoa) {
+  const out = [];
+  let n = 0;
+  for (const r of (aoa || [])) {
+    const c0 = String((r && r[0]) == null ? '' : r[0]).trim();
+    const c1 = String((r && r[1]) == null ? '' : r[1]).trim();
+    const c2 = String((r && r[2]) == null ? '' : r[2]).trim();
+    if (!c0 && !c1 && !c2) continue;
+    if (/^릴스\s*url$/i.test(c0) || /^소재\s*url$/i.test(c0) || /^post_?url$/i.test(c0)) continue; // 헤더
+    out.push({ lineNo: ++n, post_url: c0, ad_name: c1, landing_url: c2 });
+  }
+  return out;
+}
+
+// 시트 업로드 → 파싱 → 즉시 미리보기(랜딩 해석·검증)
+function handlePaSheet(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    let rows;
+    try {
+      const wb = XLSX.read(ev.target.result, { type: 'binary' });
+      const wsName = wb.SheetNames.includes('PA업로드') ? 'PA업로드' : wb.SheetNames[0];
+      const ws = wb.Sheets[wsName];
+      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      rows = paRowsFromAoa(aoa);
+    } catch (e) {
+      document.getElementById('pa-bulk-result').innerHTML = `<div style="margin-top:10px;color:#c0392b">파싱 실패: ${e.message}</div>`;
+      return;
+    }
+    if (!rows.length) {
+      document.getElementById('pa-bulk-result').innerHTML = '<div style="margin-top:10px;color:#c0392b">데이터 행이 없습니다. 템플릿 헤더 아래로 입력하세요.</div>';
+      return;
+    }
+    paBulkPreviewRows(rows);
+  };
+  reader.readAsBinaryString(file);
 }
 
 // 광고명 → 랜딩 URL 해석: ① 랜딩 직접입력 우선 → ② ';' 왼쪽 상품명 매핑(state.urlMap) → ③ 카페24 자동조회
@@ -2654,15 +2713,13 @@ async function resolvePaLanding(adName, explicitUrl) {
   }
 }
 
-// 미리보기 = 행별 입력검증 + 랜딩 해석 (생성 안 함)
-async function paBulkPreview() {
-  const text = document.getElementById('pa-bulk-input')?.value || '';
-  const rows = paBulkParse(text);
+// 미리보기 = 행별 입력검증 + 랜딩 해석 (생성 안 함). 시트 업로드 직후 호출.
+async function paBulkPreviewRows(rows) {
   const resultEl = document.getElementById('pa-bulk-result');
-  if (!rows.length) { resultEl.innerHTML = '<div style="margin-top:10px;color:#c0392b">입력이 비어 있습니다.</div>'; return; }
+  if (!rows || !rows.length) { resultEl.innerHTML = '<div style="margin-top:10px;color:#c0392b">입력이 비어 있습니다.</div>'; return; }
   resultEl.innerHTML = '<div style="margin-top:10px;color:var(--text2)">⏳ 랜딩 URL 해석·검증 중...</div>';
   for (const row of rows) {
-    if (!row.post_url) { row._ok = false; row._reason = '소재 URL 없음'; continue; }
+    if (!row.post_url) { row._ok = false; row._reason = '릴스 URL 없음'; continue; }
     if (!row.ad_name) { row._ok = false; row._reason = '광고명 없음'; continue; }
     const res = await resolvePaLanding(row.ad_name, row.landing_url);
     if (res.ok) { row._ok = true; row._landing = res.url; row._source = res.source; }
