@@ -3307,8 +3307,16 @@ async function regenCaption() {
   if (!url) { alert('랜딩 URL을 먼저 입력해주세요'); return; }
   const statusEl = document.getElementById('caption-status');
   _captionBusy = true;
-  if (statusEl) statusEl.textContent = '⏳ Claude 캡션 생성 중...';
+  if (statusEl) statusEl.textContent = '⏳ 카페24 인증 확인 중...';
   try {
+    // 리뷰·상품정보는 카페24에서 옴(랜딩URL은 저장된 매핑이라 별개). 카페24 로그아웃(2h 만료)이면
+    // 빈 프롬프트로 Claude가 "정보 없음"을 뱉으므로, 미리 차단하고 명확히 안내.
+    const authed = await fetch(`${PROXY}/api/cafe24-auth?action=status`).then(r => r.json()).then(d => !!d.authenticated).catch(() => false);
+    if (!authed) {
+      if (statusEl) statusEl.innerHTML = '⚠️ 카페24 로그인이 필요해요 — 왼쪽 사이드바 <b>"카페24 로그인 필요"</b> 클릭 후 다시 눌러주세요. (리뷰·상품정보가 카페24에서 옵니다)';
+      return;
+    }
+    if (statusEl) statusEl.textContent = '⏳ Claude 캡션 생성 중...';
     const caption = await generateCaption(url, product);
     const ta = document.getElementById('caption-text');
     if (ta) ta.value = caption;
