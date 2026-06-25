@@ -2585,35 +2585,8 @@ function renderBulkUploadSection() {
       <div id="bulk-preview"></div>
     </div>
 
-    <div style="margin-top:16px;border:0.5px solid var(--border);border-radius:12px;padding:18px;background:var(--surface)">
-      <div style="font-size:15px;font-weight:600;margin-bottom:4px">🤝 파트너십애드(PA) 대량</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">
-        엑셀 시트로 PA를 한 번에 생성(PAUSED). 열: <b>[릴스URL · 광고명 · 랜딩URL(선택)]</b>.
-        랜딩URL을 비우면 <b>광고명 ';' 왼쪽 = 이지어드민 상품명</b>으로 카페24 랜딩을 자동 도출,
-        직접 채우면 그 URL 그대로(카테고리 광고).
-      </div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-        <button onclick="downloadPaTemplate()"
-          style="padding:8px 14px;font-size:13px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2);cursor:pointer">⬇ 템플릿 다운로드</button>
-        <label style="padding:8px 14px;font-size:13px;border-radius:8px;border:0.5px solid var(--border);background:var(--surface2);cursor:pointer">
-          📄 시트 업로드
-          <input type="file" accept=".xlsx,.xls" style="display:none" onchange="handlePaSheet(this)">
-        </label>
-      </div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-        <label style="font-size:12px;color:var(--text2)">캠페인(묶음 공통)</label>
-        <select id="pa-bulk-campaign" onchange="paBulkRecheckBtn()"
-          style="padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);max-width:360px">
-          <option value="">— 캠페인 선택 —</option>
-          ${campOptions}
-        </select>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:4px">
-        <button id="pa-bulk-create-btn" onclick="paBulkCreate()" disabled
-          style="padding:9px 16px;font-size:13px;font-weight:600;border-radius:8px;border:0;background:#993556;color:#fff;cursor:pointer;opacity:.5">⏸ PA 생성 (PAUSED)</button>
-      </div>
-      <div id="pa-bulk-result"></div>
-    </div>`;
+    <!-- PA 대량 섹션 숨김(2026-06-25): PA 자동생성은 Meta 앱 심사(Instagram Public Content Access/oEmbed Read) 선행 필요로 보류.
+         심사 통과 시 이 자리 복원. downloadPaTemplate/handlePaSheet/paRowsFromAoa/paBulkPreviewRows/paBulkCreate 등 함수는 유지. -->`;
 }
 
 // ── PA 대량 ──────────────────────────────────────────────────────
@@ -3000,7 +2973,7 @@ function renderAdSettingForm(adType) {
       ${tabBtn('IMAGE','🖼 이미지')}
       ${tabBtn('VIDEO','🎬 영상')}
       ${tabBtn('CAROUSEL','🎠 슬라이드')}
-      ${tabBtn('PA','🤝 PA')}
+      <!-- PA 단건 탭 숨김(2026-06-25): PA 자동생성 Meta 심사 선행 필요로 보류. 심사 통과 시 복원: ${'$'}{tabBtn('PA','🤝 PA')} -->
     </div>
 
     <!-- 입력 폼 -->
