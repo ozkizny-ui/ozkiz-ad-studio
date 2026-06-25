@@ -2821,9 +2821,6 @@ function renderAdSettingForm(adType) {
         </div>
       </div>`;
   } else if (adType === 'COLLECTION') {
-    const psOptions = productSets.length
-      ? productSets.map(ps => `<option value="${ps.id}">${ps.name} · ${ps.product_count||'?'}개</option>`).join('')
-      : '<option value="">제품 세트 없음</option>';
     extraFields = `
       <div class="as-row">
         <label class="as-label">소재</label>
@@ -2839,9 +2836,13 @@ function renderAdSettingForm(adType) {
       <div class="as-row">
         <label class="as-label">제품 세트</label>
         <div class="as-val" style="display:flex;align-items:center;gap:6px">
-          <select id="product-set-id" style="flex:1;padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text)">
-            ${psOptions}
-          </select>
+          <div style="position:relative;flex:1">
+            <input type="text" id="product-set-search" class="as-input" placeholder="제품 세트 검색... (총 ${productSets.length}개)"
+              autocomplete="off" oninput="filterProductSetList(this.value)" onfocus="filterProductSetList(this.value)"
+              onblur="setTimeout(()=>{const l=document.getElementById('product-set-list'); if(l) l.style.display='none'},200)">
+            <input type="hidden" id="product-set-id">
+            <div id="product-set-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;max-height:240px;overflow-y:auto;z-index:100;margin-top:2px;box-shadow:0 4px 12px rgba(0,0,0,0.1)"></div>
+          </div>
           <span style="font-size:11px;background:#E6F1FB;color:#185FA5;padding:3px 8px;border-radius:4px;white-space:nowrap;flex-shrink:0">Meta</span>
         </div>
       </div>
@@ -3370,6 +3371,36 @@ function handleCaroFile(i, input) {
   renderCaroCards();
 }
 
+// ── 컬렉션 제품세트: 키워드 검색 콤보박스 (목록이 많아 검색으로 빠르게) ──
+function filterProductSetList(val) {
+  const list = document.getElementById('product-set-list');
+  if (!list) return;
+  const sets = state._adSettingProductSets || [];
+  const q = (val || '').toLowerCase().trim();
+  const matched = (q ? sets.filter(s => String(s.name||'').toLowerCase().includes(q)) : sets).slice(0, 80);
+  list.innerHTML = '';
+  if (!matched.length) {
+    list.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:var(--text2)">검색 결과 없음</div>';
+    list.style.display = 'block';
+    return;
+  }
+  matched.forEach(s => {
+    const el = document.createElement('div');
+    el.textContent = `${s.name} · ${s.product_count != null ? s.product_count : '?'}개`;
+    el.style.cssText = 'padding:8px 14px;font-size:12px;color:var(--text);cursor:pointer';
+    el.addEventListener('mouseover', () => el.style.background = 'var(--surface2)');
+    el.addEventListener('mouseout',  () => el.style.background = '');
+    el.addEventListener('mousedown', () => selectProductSet(s.id, s.name, s.product_count)); // mousedown: input blur보다 먼저
+    list.appendChild(el);
+  });
+  list.style.display = 'block';
+}
+function selectProductSet(id, name, count) {
+  const idEl = document.getElementById('product-set-id'); if (idEl) idEl.value = id;
+  const se = document.getElementById('product-set-search'); if (se) se.value = `${name} · ${count != null ? count : '?'}개`;
+  const list = document.getElementById('product-set-list'); if (list) list.style.display = 'none';
+}
+
 // PA 검색
 async function searchPaData() {
   const query = document.getElementById('pa-search')?.value?.trim().toLowerCase();
@@ -3590,6 +3621,7 @@ async function submitAdSetting(adType) {
       }
     } else if (adType === 'COLLECTION') {
       body.product_set_id = document.getElementById('product-set-id')?.value;
+      if (!body.product_set_id) throw new Error('제품 세트를 검색해서 선택해주세요');
       body.collection_label = document.getElementById('collection-label')?.value?.trim();
       const file = state._adFile_collection;
       if (file) {
