@@ -2862,10 +2862,48 @@ function renderAdSettingForm(adType) {
       <div class="as-row">
         <label class="as-label">영상 (Drive)</label>
         <div class="as-val">
-          <input type="text" id="video-drive-filename" placeholder="Drive 광고소재 폴더의 영상 파일명 (예: 원피스모리본_영상켄_260617.mp4)"
+          <input type="text" id="video-drive-filename" placeholder="Drive 광고소재 폴더의 영상 파일명 (예: 소재설명_제작자_날짜.mp4)"
             oninput="if(document.getElementById('as-adname')) document.getElementById('as-adname').value = bulkParseFilename(this.value).adName"
             style="width:100%;padding:8px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);box-sizing:border-box">
-          <div style="font-size:11px;color:var(--text2);margin-top:4px">🎬 Drive 폴더에 올린 영상의 <b>파일명</b>을 적어주세요(확장자 있어도/없어도 OK). 광고명은 파일명에서 자동 생성. 대용량도 Meta가 Drive에서 직접 가져갑니다.</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:4px">🎬 Drive 폴더에 올린 영상의 <b>파일명</b>을 적어주세요(확장자 있어도/없어도 OK).</div>
+          <details style="margin-top:10px;border:0.5px solid var(--border2);border-radius:10px;overflow:hidden">
+            <summary style="padding:10px 14px;cursor:pointer;font-size:12px;font-weight:500;background:var(--surface2);display:flex;align-items:center;justify-content:space-between;list-style:none">
+              <span>📖 사용방법 — 영상 광고 만들기</span>
+              <span style="color:var(--muted);font-size:11px">▼ 펼치기</span>
+            </summary>
+            <div style="padding:14px;font-size:12px;line-height:1.7;color:var(--text)">
+              <div style="display:flex;gap:8px;margin-bottom:12px">
+                <span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">1</span>
+                <div>
+                  <div style="font-weight:600">광고명을 정하고, 영상 파일명을 똑같이 짓기</div>
+                  <div style="color:var(--text2);margin-top:2px">만들 광고의 이름을 먼저 정한 뒤, 영상 파일 이름을 그 광고명과 똑같이 지어주세요. 확장자(.mp4·.mov 등)를 뺀 파일명이 그대로 Meta 광고명이 됩니다.</div>
+                  <div style="margin-top:6px;font-family:monospace;font-size:11px;background:var(--bg);border-radius:6px;padding:6px 8px;color:var(--text2)">소재설명_제작자_날짜.mp4 → 광고명: 소재설명_제작자_날짜</div>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-bottom:12px">
+                <span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">2</span>
+                <div>
+                  <div style="font-weight:600">구글 드라이브 '광고소재' 폴더에 업로드</div>
+                  <div style="color:var(--text2);margin-top:2px">이름을 지은 영상 파일을 아래 드라이브 폴더에 올려주세요.</div>
+                  <a href="https://drive.google.com/drive/u/0/folders/1Owv3k2aYgeatjnke-pS-PVKvN2AIggP5" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;text-decoration:none;color:var(--accent);border:1px solid var(--border2);border-radius:6px;padding:6px 10px">📁 광고소재 폴더 열기 ↗</a>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-bottom:12px">
+                <span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">3</span>
+                <div>
+                  <div style="font-weight:600">위 '영상 (Drive)' 칸에 파일명 그대로 입력</div>
+                  <div style="color:var(--text2);margin-top:2px">방금 올린 파일명을 그대로 적으면 광고명이 자동으로 채워집니다. 확장자는 있어도 없어도 괜찮아요.</div>
+                </div>
+              </div>
+              <div style="background:var(--bg);border-radius:6px;padding:8px 10px">
+                <div style="font-weight:600;color:var(--text2);margin-bottom:4px">💡 참고</div>
+                <ul style="margin:0;padding-left:16px;color:var(--text2)">
+                  <li>대용량 영상도 문제없어요 — Meta가 드라이브에서 직접 가져갑니다.</li>
+                  <li>생성된 광고는 PAUSED(꺼짐) 상태입니다 — 검토 후 광고관리자에서 켜주세요.</li>
+                </ul>
+              </div>
+            </div>
+          </details>
         </div>
       </div>`;
   } else if (adType === 'COLLECTION') {
