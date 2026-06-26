@@ -304,6 +304,7 @@ input,select,textarea{font-family:var(--font-body)}
       <div class="sb-status-dot" style="background:var(--red)"></div>
       <span style="color:var(--red)">메타 API 미연결</span>
     </div>
+    <div class="sb-status-item" id="status-ad-count" style="display:none"></div>
     <div class="sb-status-item" id="status-write" style="cursor:pointer" onclick="promptUnlock()" title="쓰기 인증 (예산/광고/저장)">
       <div class="sb-status-dot" style="background:var(--red)"></div>
       <span style="color:var(--red)">🔒 쓰기 잠김</span>
@@ -1399,6 +1400,20 @@ async function applyRainBoost() {
   state._rainBoostedAds = [];
 }
 
+// ACTIVE 광고 로드 현황 배너. 프록시가 count/truncated를 줄 때만 표시(구 프록시면 숨김).
+// CAP=400 (프록시가 limit200 × 2페이지로 가져오는 상한). 초과 시 일부 누락 경고.
+function updateAdCountBanner(count, truncated) {
+  const el = document.getElementById('status-ad-count');
+  if (!el) return;
+  if (count == null && !truncated) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  if (truncated) {
+    el.innerHTML = `<div class="sb-status-dot" style="background:var(--red)"></div><span style="color:var(--red);font-weight:700">⚠️ ACTIVE 광고 400개 초과 — 일부 누락 중! 한도 상향 필요</span>`;
+  } else {
+    el.innerHTML = `<div class="sb-status-dot" style="background:var(--green)"></div><span style="color:var(--muted)">✓ ACTIVE 광고 ${count}개 로드됨</span>`;
+  }
+}
+
 async function fetchMetaAds() {
   const btn = document.getElementById('fetch-btn');
   btn.innerHTML = '<span class="spinner"></span> 불러오는 중...';
@@ -1416,6 +1431,9 @@ async function fetchMetaAds() {
     if (data.error) throw new Error(data.error);
 
     const ads = (data.data || []).filter(ad => ad.effective_status === 'ACTIVE');
+    // 프록시가 새 응답 계약(count/truncated)을 줄 때만 배너 표시. 구 프록시면 숨김 유지.
+    const _hasContract = (typeof data.count === 'number') || (typeof data.truncated === 'boolean');
+    updateAdCountBanner(_hasContract ? (data.count ?? ads.length) : null, data.truncated === true);
     state._selectedAds = null; // 새 데이터 로드시 전체 선택으로 리셋
     state.metaAds = ads.map(ad => {
       const productName = parseAdName(ad.name || '');
