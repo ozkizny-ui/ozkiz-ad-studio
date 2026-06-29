@@ -1482,22 +1482,27 @@ async function fetchMetaAds() {
 
       // 카테고리 광고는 재고 체크 불필요
       const isCategoryAd = productName.includes('카테고리');
+      // (아트웍) 광고는 재고 기반 품절 OFF 대상에서 제외
+      const isArtwork = productName.includes('(아트웍)');
 
       // 재고 상태
       const inv = isCategoryAd ? { online: null, offline: null, skus: null } : matchInventory(productName);
       const pKey = productName.toLowerCase().replace(/[-\s]/g,'');
+      // 정확 일치 우선(형제 상품명 오매칭 방지). 없을 때만 느슨 매칭 폴백.
       const mappedStatus = state._stockProductMap
-        ? Object.entries(state._stockProductMap).find(([k]) =>
-            k === pKey || k.includes(pKey) || pKey.includes(k)
-          )?.[1]
+        ? (pKey in state._stockProductMap
+            ? state._stockProductMap[pKey]
+            : Object.entries(state._stockProductMap).find(([k]) =>
+                k === pKey || k.includes(pKey) || pKey.includes(k)
+              )?.[1])
         : null;
 
       let shouldOff = false, isPresale = false;
-      if (!isCategoryAd && mappedStatus) {
+      if (!isCategoryAd && !isArtwork && mappedStatus) {
         if (mappedStatus === 'size_warn') shouldOff = true;
         else if (mappedStatus === 'presale_far') { isPresale = true; } // 예약판매는 OFF 안 함
         else if (mappedStatus === 'presale_near') { isPresale = true; }
-      } else if (!isCategoryAd && inv.skus) {
+      } else if (!isCategoryAd && !isArtwork && inv.skus) {
         const { alerts } = analyzeStockAlerts(inv.skus);
         const sizeWarn = alerts.find(a => a.type === 'size_warn');
         if ((inv.online||0) < 0) {
