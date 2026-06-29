@@ -330,6 +330,11 @@ input,select,textarea{font-family:var(--font-body)}
     <span class="nav-icon">📦</span>
     <span class="nav-label">재고 연동 현황</span>
   </button>
+  <button class="nav-item" data-page="adneed">
+    <span class="nav-icon">⚡</span>
+    <span class="nav-label">광고 집행 요망</span>
+    <span class="nav-badge hidden" id="badge-adneed">0</span>
+  </button>
 
   <button class="nav-item" data-page="usp">
     <span class="nav-icon">✦</span>
@@ -403,6 +408,20 @@ input,select,textarea{font-family:var(--font-body)}
   <div id="stock-result">
     <div class="empty-state">
       <div class="empty-state-icon">📦</div>
+      왼쪽 사이드바에서 이지어드민 엑셀을 먼저 업로드해주세요
+    </div>
+  </div>
+</div>
+
+<!-- PAGE: 광고 집행 요망 -->
+<div class="page" id="page-adneed">
+  <div class="page-header">
+    <div class="page-title">광고 집행 요망</div>
+    <div class="page-sub">현재 시즌 기준 · 광고집행요망 · 재시도 후보 · 카테고리 추천</div>
+  </div>
+  <div id="adneed-result">
+    <div class="empty-state">
+      <div class="empty-state-icon">⚡</div>
       왼쪽 사이드바에서 이지어드민 엑셀을 먼저 업로드해주세요
     </div>
   </div>
@@ -712,7 +731,7 @@ function updateStatusUI() {
 }
 
 // ── NAV (해시 라우팅: 탭별 URL #roas/#rules/#stock/#usp/#adsetting) ──
-const NAV_PAGES = ['roas','rules','ruleanalysis','stock','usp','adsetting'];
+const NAV_PAGES = ['roas','rules','ruleanalysis','stock','adneed','usp','adsetting'];
 
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '');
@@ -729,6 +748,7 @@ function activateTab(page) {
   pageEl.classList.add('active');
   if (page === 'roas') updateMetaEditorBar();
   if (page === 'stock') renderStockPage();
+  if (page === 'adneed') renderAdNeedPage();
   if (page === 'rules') renderRulesEditor();
   if (page === 'ruleanalysis') renderRuleAnalysisPage();
   if (page === 'adsetting') renderAdSettingPage();
@@ -4080,9 +4100,9 @@ async function loadNotionPresale() {
   }
 }
 
-function renderStockPage() {
-  if (!state.inventoryData.length) return;
-  if (state._stockSort == null) state._stockSort = 'stockValue';   // 기본 정렬: 온라인 재고총액 많은 순
+// 재고 데이터 계산 (DOM 비의존) — 재고연동현황 탭과 광고집행요망 탭 공용
+function computeStockData() {
+  if (!state.inventoryData.length) return null;
   // 노션 예판 목록 로드 (아직 안 됐으면)
   if (!state._notionLoaded && !state._notionLoading) {
     state._notionLoading = true;
@@ -4215,12 +4235,16 @@ function renderStockPage() {
       stockStatus = 'color_warn';
     }
 
-    // 광고 집행 여부: state.metaAds 상품명 매칭
+    // 광고 집행 여부 + 최근 광고성과(ROAS) 매칭: state.metaAds 상품명 매칭
     const nameParsed = name.toLowerCase().replace(/[-\s]/g,'');
-    const hasAd = (state.metaAds || []).some(ad => {
+    const matchedAds = (state.metaAds || []).filter(ad => {
       const adName = (ad.name||'').toLowerCase().replace(/[-\s]/g,'');
-      return nameParsed.includes(adName) || adName.includes(nameParsed);
+      return adName && (nameParsed.includes(adName) || adName.includes(nameParsed));
     });
+    const hasAd = matchedAds.length > 0;
+    const adSpend = matchedAds.reduce((s,a)=>s+(a.spend||0),0);
+    const adRev   = matchedAds.reduce((s,a)=>s+(a.purchaseValue||0),0);
+    const adRoas  = adSpend > 0 ? Math.round(adRev/adSpend*100) : null;  // 최근 광고성과(spend 가중)
 
     // SERA 지표 매칭 (P코드 우선, 상품명 fallback)
     const repCode = g.repCode || (skus.find(s => s.repCode)?.repCode) || '';
@@ -4231,7 +4255,7 @@ function renderStockPage() {
       total: totalAvail + totalStore,
       season: meta.season, category: meta.category,
       stockStatus, colorWarns,
-      notionEntry, hasAd, repCode,
+      notionEntry, hasAd, adSpend, adRev, adRoas, repCode,
       highStock: isHighStock(skus),
       seraViews:      sera ? sera.views : null,
       seraOrders:     sera ? sera.orders : null,
@@ -4273,6 +4297,17 @@ function renderStockPage() {
   // 광고세팅 재고 표시용: 필터/품절 포함 전체 상품 맵 (이름 기준)
   state._allStockProducts = {};
   allProducts.forEach(p => { state._allStockProducts[p.name] = p; });
+
+  return { allProducts, products, alertItems, presaleNear, ok, seasons, categories, seraMatchCode, seraMatchName };
+}
+
+function renderStockPage() {
+  if (!state.inventoryData.length) return;
+  if (state._stockSort == null) state._stockSort = 'stockValue';   // 기본 정렬: 온라인 재고총액 많은 순
+  const sd = computeStockData();
+  if (!sd) return;
+  const { products, alertItems, presaleNear, ok, seasons, categories, seraMatchCode, seraMatchName } = sd;
+  const seraMatchTotal = seraMatchCode + seraMatchName;
   state._stockFilter   = state._stockFilter || '';
   state._stockSeasons  = state._stockSeasons || [];
   state._stockCategory = state._stockCategory || '';
@@ -4336,12 +4371,6 @@ function renderStockPage() {
     <button id="stock-collapse-btn" class="btn btn-outline btn-sm" onclick="toggleStockCollapse(this)">${state._stockCollapsed?'⊕ 옵션 펼치기':'⊖ 옵션 접기'}</button>
     <button class="btn btn-outline btn-sm" onclick="exportStockExcel()">⬇ 엑셀</button>
     <button class="btn btn-outline btn-sm" onclick="copyStockTSV(this)">📋 복사</button>
-  </div>
-  <div style="margin-bottom:10px">
-    <button onclick="applyQuickFilter()" style="padding:7px 14px;border-radius:8px;font-size:12px;font-weight:500;border:none;background:var(--accent);color:white;cursor:pointer">
-      ⚡ 광고 집행 요망
-    </button>
-    <span style="font-size:11px;color:var(--muted);margin-left:8px">현재 시즌 + 재고 많음 + 광고 미집행</span>
   </div>
   <div style="margin-bottom:10px">${strategyNote}${seraNote}</div>
   <div id="stock-table-wrap"></div>
@@ -4437,6 +4466,129 @@ function applyQuickFilter() {
   state._stockSort         = 'stockValue'; // 기본 정렬: 온라인 재고총액 많은 순
   closeSeasonDropdown();
   renderStockPage();
+}
+
+// ── 광고 집행 요망 탭 ───────────────────────────────────────────────
+// 시즌 판정 (대시보드 다음주광고계획과 동일 규칙: 무시즌·사계절 포함)
+const AD_SEASON_WORD = ['겨울','겨울','봄','봄','봄','여름','여름','여름','가을','가을','가을','겨울'];
+function adCurSeasonWord() { return AD_SEASON_WORD[new Date(Date.now()+9*3600*1000).getUTCMonth()]; }
+function adInSeason(season) { const w = adCurSeasonWord(); return !season || season === '사계절' || String(season).includes(w); }
+const AD_NEED_TARGET = 250; // 목표 ROAS(%) — 미만이면 '성과 미달'
+
+function renderAdNeedPage() {
+  const el = document.getElementById('adneed-result');
+  if (!el) return;
+  if (!state.inventoryData.length) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚡</div>왼쪽 사이드바에서 이지어드민 엑셀을 먼저 업로드해주세요</div>`;
+    return;
+  }
+  const sd = computeStockData();
+  if (!sd) return;
+  const { products } = sd;
+  const word = adCurSeasonWord();
+  const eligible = products.filter(p => adInSeason(p.season));
+
+  // 1) 광고집행요망: 재고 많음 & SERA 클릭가치 700↑ & 광고 미집행
+  const adNeed = eligible
+    .filter(p => p.highStock && (p.seraClickValue||0) > 700 && !p.hasAd)
+    .sort((a,b) => (b.onlineStockValue - a.onlineStockValue) || ((b.seraClickValue||0)-(a.seraClickValue||0)));
+
+  // 2) 재시도 후보: 광고 집행 중이나 최근 성과 미달(ROAS<목표) & 재고 많음
+  const retry = eligible
+    .filter(p => p.highStock && p.hasAd && p.adRoas != null && p.adRoas < AD_NEED_TARGET)
+    .sort((a,b) => (b.onlineStockValue - a.onlineStockValue));
+
+  // 3) 카테고리 추천: 재고 많음 제품 신호 합산 + 평균 ROAS
+  const catMap = {};
+  eligible.filter(p => p.highStock).forEach(p => {
+    const c = p.category || '기타';
+    if (!catMap[c]) catMap[c] = { cat:c, count:0, stockValue:0, clickValue:0, adSpend:0, adRev:0, adCount:0 };
+    const m = catMap[c];
+    m.count++; m.stockValue += p.onlineStockValue||0; m.clickValue += p.seraClickValue||0;
+    if (p.adRoas != null) { m.adSpend += p.adSpend||0; m.adRev += p.adRev||0; m.adCount++; }
+  });
+  const cats = Object.values(catMap)
+    .map(m => ({ ...m, roas: m.adSpend > 0 ? Math.round(m.adRev/m.adSpend*100) : null }))
+    .sort((a,b) => (b.stockValue - a.stockValue) || (b.clickValue - a.clickValue));
+
+  // 사이드바 배지 = 광고집행요망 건수
+  const badge = document.getElementById('badge-adneed');
+  if (badge) { badge.textContent = adNeed.length; badge.classList.toggle('hidden', adNeed.length === 0); }
+
+  // ── HTML 빌더 ──
+  const won = v => (v>0 ? Math.round(v).toLocaleString() + '원' : '<span style="color:var(--muted)">—</span>');
+  const num = v => (v||0).toLocaleString();
+  const roasCell = r => r==null ? '<span style="color:var(--muted)">—</span>'
+    : `<b style="color:${r>=AD_NEED_TARGET?'var(--green)':(r>=150?'var(--amber)':'var(--red)')}">${r}%</b>`;
+  const tWrap = 'overflow-x:auto;border:0.5px solid var(--border2);border-radius:10px';
+  const tbl = 'width:100%;border-collapse:collapse;font-size:12px';
+  const TH = 'padding:8px 10px;text-align:right;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border2);white-space:nowrap';
+  const THl = TH.replace('text-align:right','text-align:left');
+  const TD = 'padding:7px 10px;text-align:right;border-bottom:0.5px solid var(--border);white-space:nowrap';
+  const TDl = TD.replace('text-align:right','text-align:left');
+  const seasonCell = s => s ? s : '<span style="color:var(--muted)">미지정</span>';
+
+  function section(title, tag, desc, body) {
+    return `<div style="margin-bottom:24px">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:3px;flex-wrap:wrap">
+        <span style="font-size:15px;font-weight:700;color:var(--text)">${title}</span>
+        <span style="font-size:11px;color:var(--accent);font-weight:600">${tag}</span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${desc}</div>
+      ${body}</div>`;
+  }
+  function emptyRow(cols, msg) {
+    return `<tr><td colspan="${cols}" style="padding:16px;text-align:center;color:var(--muted)">${msg}</td></tr>`;
+  }
+
+  // 1) 광고집행요망 표
+  let t1 = `<div style="${tWrap}"><table style="${tbl}"><thead><tr>
+    <th style="${THl}">제품</th><th style="${THl}">카테고리</th><th style="${THl}">시즌</th>
+    <th style="${TH}">가용재고</th><th style="${TH}">온라인 재고총액</th><th style="${TH}">SERA 클릭가치</th></tr></thead><tbody>`;
+  t1 += adNeed.length ? adNeed.map(p => `<tr>
+    <td style="${TDl}">${p.name}</td><td style="${TDl}">${p.category||'<span style="color:var(--muted)">—</span>'}</td>
+    <td style="${TDl}">${seasonCell(p.season)}</td>
+    <td style="${TD}">${num(p.totalAvail)}개</td><td style="${TD}">${won(p.onlineStockValue)}</td>
+    <td style="${TD}"><b style="color:var(--green)">${num(p.seraClickValue)}</b></td></tr>`).join('')
+    : emptyRow(6, `조건(재고 많음 · 클릭가치 700↑ · 광고 미집행 · ${word} 시즌) 충족 제품 없음`);
+  t1 += `</tbody></table></div>`;
+
+  // 2) 재시도 후보 표
+  let t2 = `<div style="${tWrap}"><table style="${tbl}"><thead><tr>
+    <th style="${THl}">제품</th><th style="${THl}">카테고리</th>
+    <th style="${TH}">최근 ROAS</th><th style="${TH}">광고비</th>
+    <th style="${TH}">가용재고</th><th style="${TH}">온라인 재고총액</th><th style="${TH}">SERA 클릭가치</th></tr></thead><tbody>`;
+  t2 += retry.length ? retry.map(p => `<tr>
+    <td style="${TDl}">${p.name}</td><td style="${TDl}">${p.category||'<span style="color:var(--muted)">—</span>'}</td>
+    <td style="${TD}">${roasCell(p.adRoas)}</td><td style="${TD}">${won(p.adSpend)}</td>
+    <td style="${TD}">${num(p.totalAvail)}개</td><td style="${TD}">${won(p.onlineStockValue)}</td>
+    <td style="${TD}">${p.seraClickValue!=null?num(p.seraClickValue):'<span style="color:var(--muted)">—</span>'}</td></tr>`).join('')
+    : emptyRow(7, `조건(재고 많음 · 광고 집행 중 · 최근 ROAS ${AD_NEED_TARGET}% 미만) 충족 제품 없음`);
+  t2 += `</tbody></table></div>`;
+
+  // 3) 카테고리 추천 표
+  let t3 = `<div style="${tWrap}"><table style="${tbl}"><thead><tr>
+    <th style="${THl}">카테고리</th><th style="${TH}">제품수</th>
+    <th style="${TH}">온라인 재고총액 합</th><th style="${TH}">SERA 클릭가치 합</th><th style="${TH}">평균 ROAS</th></tr></thead><tbody>`;
+  t3 += cats.length ? cats.map(c => `<tr>
+    <td style="${TDl}"><b>${c.cat}</b></td><td style="${TD}">${c.count}개</td>
+    <td style="${TD}">${won(c.stockValue)}</td><td style="${TD}">${num(Math.round(c.clickValue))}</td>
+    <td style="${TD}">${roasCell(c.roas)}</td></tr>`).join('')
+    : emptyRow(5, `${word} 시즌 · 재고 많음 카테고리 없음`);
+  t3 += `</tbody></table></div>`;
+
+  const hasAdPerf = products.some(p => p.adRoas != null);
+  const perfNote = hasAdPerf ? ''
+    : `<div style="font-size:11px;color:var(--amber);background:rgba(245,158,11,.08);border:0.5px solid rgba(245,158,11,.3);border-radius:8px;padding:8px 12px;margin-bottom:14px">⚠️ Meta 광고 성과가 로드되지 않아 ROAS·재시도 후보가 비어 있어요. <b>광고비 조정 규칙 엔진</b> 탭에서 <b>🔄 데이터 불러오기</b>를 누르면 채워집니다.</div>`;
+  el.innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">🗓️ 현재 시즌 <b style="color:var(--text)">${word}</b> 기준 · ROAS는 현재 불러온 Meta 광고 성과(최근) 기준</div>
+    ${perfNote}
+    ${section('🎯 광고집행요망', '재고 많음 · 클릭가치 700↑ · 광고 미집행',
+        '광고를 아직 안 돌렸지만 재고가 많고 자사몰 클릭가치가 높은 제품 — 신규 집행 1순위.', t1)}
+    ${section('🔁 재시도 후보', `재고 많음 · 광고 집행 중 · 최근 ROAS ${AD_NEED_TARGET}% 미만`,
+        '이미 광고를 돌렸지만 성과가 목표에 못 미친 제품 — 소재·타겟 교체 후 재도전 후보.', t2)}
+    ${section('🗂️ 카테고리 추천', '재고 많음 제품 신호 합산 + 평균 ROAS',
+        '카테고리별로 밀어야 할 재고(온라인 재고총액 합)와 자사몰 수요(클릭가치 합)를 합산했어요. 평균 ROAS는 해당 카테고리 광고 성과(spend 가중).', t3)}`;
 }
 
 function toggleSeasonDropdown() {
