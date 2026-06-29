@@ -3974,6 +3974,7 @@ function renderStockPage() {
   const optionKey = cols.find(k => k.includes('옵션'));
   const availKey  = cols.find(k => k.includes('가용재고'));
   const storeKey  = cols.find(k => k.includes('매장총재고'));
+  const costKey   = cols.find(k => k.includes('원가'));
 
   // 전략파일 매핑 (상품명 → 시즌, 복종)
   const strategyMap = {};
@@ -4038,6 +4039,7 @@ function renderStockPage() {
       option,
       avail: parseInt(row[availKey]||0),
       store: parseInt(row[storeKey]||0),
+      cost: costKey ? (parseInt(String(row[costKey]||0).replace(/,/g,'')) || 0) : 0,
       repCode,
     });
   });
@@ -4049,6 +4051,8 @@ function renderStockPage() {
   const allProducts = Object.entries(grouped).map(([name, skus]) => {
     const totalAvail = skus.reduce((s,r)=>s+r.avail,0);
     const totalStore = skus.reduce((s,r)=>s+r.store,0);
+    // 온라인 재고총액 = Σ(옵션별 가용재고 × 원가). 음수 가용재고는 0 처리(재고자산).
+    const onlineStockValue = skus.reduce((s,r)=> s + Math.max(0, r.avail) * (r.cost||0), 0);
     const meta = strategyMap[name] || { season: '', category: '' };
 
     // 새 품절 판단
@@ -4098,7 +4102,7 @@ function renderStockPage() {
     const sera = findSeraMatch(name, repCode);
 
     return {
-      name, skus, totalAvail, totalStore,
+      name, skus, totalAvail, totalStore, onlineStockValue,
       total: totalAvail + totalStore,
       season: meta.season, category: meta.category,
       stockStatus, colorWarns,
@@ -4380,6 +4384,10 @@ function getStockSorted() {
       const av = a.seraClickValue ?? -1, bv = b.seraClickValue ?? -1;
       if (bv !== av) return bv - av;
     }
+    if (sortBy === 'stockValue') {
+      const av = a.onlineStockValue ?? -1, bv = b.onlineStockValue ?? -1;
+      if (bv !== av) return bv - av;
+    }
     return b.totalAvail - a.totalAvail;
   });
 }
@@ -4448,6 +4456,7 @@ function renderStockTable() {
     <select onchange="state._stockSort=this.value;renderStockTable()"
       style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
       <option value="" ${sortBy===''?'selected':''}>가용재고 많은 순</option>
+      <option value="stockValue" ${sortBy==='stockValue'?'selected':''}>온라인 재고총액 많은 순</option>
       <option value="clickValue" ${sortBy==='clickValue'?'selected':''}>클릭가치 높은 순</option>
     </select>
     <span style="font-size:11px;color:var(--muted);margin-left:4px">${filtered.length}개 표시 중</span>
@@ -4461,6 +4470,7 @@ function renderStockTable() {
         <th style="${thStyle}">옵션</th>
         <th style="${thRStyle}">가용재고</th>
         <th style="${thRStyle}">매장총재고</th>
+        <th style="${thRStyle}">온라인 재고총액</th>
         <th style="${thRStyle}">조회수</th>
         <th style="${thRStyle}">주문</th>
         <th style="${thRStyle}">클릭가치</th>
@@ -4508,6 +4518,7 @@ function renderStockTable() {
         <td style="padding:8px 12px;color:var(--muted)">${skuCount}개 옵션</td>
         <td style="padding:8px 12px;text-align:right;font-weight:600;${availColor}">${p.totalAvail}</td>
         <td style="padding:8px 12px;text-align:right;font-weight:500;${storeColor}">${p.totalStore}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:600;color:var(--text)">₩${(p.onlineStockValue||0).toLocaleString()}</td>
         <td style="padding:8px 12px;text-align:right;color:var(--text)">${seraViewsCell}</td>
         <td style="padding:8px 12px;text-align:right;color:var(--text)">${seraOrdersCell}</td>
         <td style="padding:8px 12px;text-align:right;font-weight:600;color:var(--accent)">${seraCvCell}</td>
@@ -4532,7 +4543,8 @@ function renderStockTable() {
         <td style="padding:8px 12px;text-align:right;font-weight:600;${availColor}">${sku.avail}</td>
         <td style="padding:8px 12px;text-align:right;font-weight:500;${storeColor}">${sku.store}</td>
         ${i === 0
-          ? `<td style="padding:8px 12px;text-align:right;vertical-align:middle;color:var(--text)" rowspan="${skuCount}">${seraViewsCell}</td>
+          ? `<td style="padding:8px 12px;text-align:right;vertical-align:middle;font-weight:600;color:var(--text)" rowspan="${skuCount}">₩${(p.onlineStockValue||0).toLocaleString()}</td>
+             <td style="padding:8px 12px;text-align:right;vertical-align:middle;color:var(--text)" rowspan="${skuCount}">${seraViewsCell}</td>
              <td style="padding:8px 12px;text-align:right;vertical-align:middle;color:var(--text)" rowspan="${skuCount}">${seraOrdersCell}</td>
              <td style="padding:8px 12px;text-align:right;vertical-align:middle;font-weight:600;color:var(--accent)" rowspan="${skuCount}">${seraCvCell}</td>
              <td style="padding:8px 12px;text-align:center;vertical-align:middle" rowspan="${skuCount}">${adTag}</td>
@@ -4544,7 +4556,7 @@ function renderStockTable() {
   });
 
   if (filtered.length > 200) {
-    html += `<tr><td colspan="${showCreative ? 12 : 11}" style="padding:12px;text-align:center;color:var(--muted);font-size:12px">
+    html += `<tr><td colspan="${showCreative ? 13 : 12}" style="padding:12px;text-align:center;color:var(--muted);font-size:12px">
       상위 200개 표시 중 (전체 ${filtered.length}개) — 검색으로 좁혀보세요
     </td></tr>`;
   }
@@ -4561,7 +4573,7 @@ function toggleStockCollapse(btn) {
 
 // 현재 화면(필터·정렬·펼침상태) 그대로 → 엑셀/복사용 2차원 배열 [헤더, ...행]
 function buildStockAOA() {
-  const header = ['상품명','시즌','복종','옵션','가용재고','매장총재고','조회수','주문','클릭가치','광고','상태'];
+  const header = ['상품명','시즌','복종','옵션','가용재고','매장총재고','온라인재고총액','조회수','주문','클릭가치','광고','상태'];
   const rows = [header];
   const products = getStockSorted();
   const collapsed = state._stockCollapsed || false;
@@ -4573,11 +4585,11 @@ function buildStockAOA() {
     const status = stockStatusText(p);
     if (collapsed) {
       rows.push([p.name, p.season||'', p.category||'', `${p.skus.length}개 옵션`,
-        p.totalAvail, p.totalStore, views, orders, cv, ad, status]);
+        p.totalAvail, p.totalStore, (p.onlineStockValue||0), views, orders, cv, ad, status]);
     } else {
       p.skus.forEach(sku => {
         rows.push([p.name, p.season||'', p.category||'', sku.option,
-          sku.avail, sku.store, views, orders, cv, ad, status]);
+          sku.avail, sku.store, (p.onlineStockValue||0), views, orders, cv, ad, status]);
       });
     }
   });
