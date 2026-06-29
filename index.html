@@ -321,6 +321,10 @@ input,select,textarea{font-family:var(--font-body)}
     <span class="nav-icon">⚙️</span>
     <span class="nav-label">예산 규칙 편집</span>
   </button>
+  <button class="nav-item" data-page="ruleanalysis">
+    <span class="nav-icon">📈</span>
+    <span class="nav-label">예산규칙 분석</span>
+  </button>
   <button class="nav-item" data-page="stock">
     <span class="nav-icon">📦</span>
     <span class="nav-label">재고 연동 현황</span>
@@ -408,6 +412,15 @@ input,select,textarea{font-family:var(--font-body)}
     <div class="page-sub">시간대별 자동 예산 조정 규칙 · 영구 저장</div>
   </div>
   <div id="rules-editor"></div>
+</div>
+
+<!-- PAGE: 예산규칙 분석 -->
+<div class="page" id="page-ruleanalysis">
+  <div class="page-header">
+    <div class="page-title">예산규칙 분석</div>
+    <div class="page-sub">일별 ROAS 추이 · 데드존 분석 · 규칙 개선 제안</div>
+  </div>
+  <div id="rule-analysis-result"></div>
 </div>
 
 <!-- PAGE: USP -->
@@ -696,7 +709,7 @@ function updateStatusUI() {
 }
 
 // ── NAV (해시 라우팅: 탭별 URL #roas/#rules/#stock/#usp/#adsetting) ──
-const NAV_PAGES = ['roas','rules','stock','usp','adsetting'];
+const NAV_PAGES = ['roas','rules','ruleanalysis','stock','usp','adsetting'];
 
 function pageFromHash() {
   const h = (location.hash || '').replace(/^#\/?/, '');
@@ -713,6 +726,7 @@ function activateTab(page) {
   pageEl.classList.add('active');
   if (page === 'stock') renderStockPage();
   if (page === 'rules') renderRulesEditor();
+  if (page === 'ruleanalysis') renderRuleAnalysisPage();
   if (page === 'adsetting') renderAdSettingPage();
 }
 
@@ -729,6 +743,110 @@ function initNav() {
   window.addEventListener('hashchange', () => activateTab(pageFromHash() || 'roas'));
   // 최초 진입: URL 해시에 맞는 탭(없으면 기본 roas)
   activateTab(pageFromHash() || 'roas');
+}
+
+// ── 예산규칙 분석 탭 ─────────────────────────────────────────────
+async function renderRuleAnalysisPage() {
+  const el = document.getElementById('rule-analysis-result');
+  if (!el) return;
+  el.innerHTML = '<div style="color:var(--muted);padding:24px;text-align:center">⏳ 일별 ROAS 불러오는 중…</div>';
+
+  let daily = [];
+  try {
+    const r = await fetch(`${PROXY}/api/meta?action=get_daily_insights&days=14`);
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    daily = j.data || [];
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--red);padding:24px">일별 ROAS 조회 실패: ${e.message}</div>`;
+    return;
+  }
+  if (!daily.length) { el.innerHTML = '<div style="color:var(--muted);padding:24px">데이터가 없습니다.</div>'; return; }
+
+  // 마지막 날(오늘)은 부분집계 → 평균에서 제외
+  const full = daily.length > 1 ? daily.slice(0, -1) : daily;
+  const recent = full.slice(-7);
+  const sp7 = recent.reduce((s,d)=>s+d.spend,0), pv7 = recent.reduce((s,d)=>s+d.purchaseValue,0);
+  const avgRoas = sp7 ? Math.round(pv7/sp7*100) : 0;
+
+  // 데드존 밴드 분석 (state.metaAds 기반 — 오늘 집행 광고)
+  const ads = (state.metaAds||[]).filter(a => a.spend > 0);
+  const totalSpend = ads.reduce((s,a)=>s+a.spend,0);
+  const BANDS = [
+    { label:'~100%',    lo:0,   hi:100,  c:'var(--red)' },
+    { label:'100~150%', lo:100, hi:150,  c:'var(--amber)' },
+    { label:'150~200%', lo:150, hi:200,  c:'var(--amber)', dead:true },
+    { label:'200~300%', lo:200, hi:300,  c:'var(--accent)', dead:true },
+    { label:'300%+',    lo:300, hi:1e9,  c:'var(--green)' },
+  ];
+  BANDS.forEach(b => {
+    const inB = ads.filter(a => a.roas >= b.lo && a.roas < b.hi);
+    b.spend = inB.reduce((s,a)=>s+a.spend,0);
+    b.count = inB.length;
+    b.pct = totalSpend ? Math.round(b.spend/totalSpend*100) : 0;
+  });
+  const deadPct = totalSpend ? Math.round(BANDS.filter(b=>b.dead).reduce((s,b)=>s+b.spend,0)/totalSpend*100) : null;
+  const hasAds = ads.length > 0;
+
+  // ROAS 추이 막대 (cap 300%)
+  const cap = 300, barH = 130;
+  const bars = daily.map((d,i) => {
+    const isToday = (i === daily.length-1) && daily.length>1;
+    const h = d.roas != null ? Math.max(2, Math.min(d.roas, cap)/cap*barH) : 2;
+    const col = isToday ? 'var(--border2)' : (d.roas>=200 ? 'var(--green)' : d.roas>=150 ? 'var(--accent)' : 'var(--amber)');
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0">
+      <div style="font-size:10px;color:var(--text2)">${d.roas!=null?d.roas+'%':'-'}</div>
+      <div title="${d.date}" style="width:100%;max-width:30px;height:${Math.round(h)}px;background:${col};border-radius:3px 3px 0 0"></div>
+      <div style="font-size:9px;color:var(--muted);white-space:nowrap">${d.date.slice(5)}${isToday?'*':''}</div>
+    </div>`;
+  }).join('');
+  const targetBottom = Math.round(200/cap*barH) + 16;
+
+  const bandRows = BANDS.map(b => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <div style="width:78px;font-size:11px;color:var(--text2);text-align:right">${b.label}${b.dead?' ⚠':''}</div>
+      <div style="flex:1;background:var(--surface2);border-radius:4px;height:18px;overflow:hidden">
+        <div style="width:${b.pct}%;height:100%;background:${b.c};opacity:.85"></div>
+      </div>
+      <div style="width:150px;font-size:11px;color:var(--text)">${b.pct}% · ₩${b.spend.toLocaleString()} · ${b.count}개</div>
+    </div>`).join('');
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px">
+      <div style="background:var(--surface2);border-radius:10px;padding:14px"><div style="font-size:12px;color:var(--text2)">최근 7일 평균 ROAS</div><div style="font-size:24px;font-weight:700;color:${avgRoas>=200?'var(--green)':'var(--red)'}">${avgRoas}%</div></div>
+      <div style="background:var(--surface2);border-radius:10px;padding:14px"><div style="font-size:12px;color:var(--text2)">목표 ROAS</div><div style="font-size:24px;font-weight:700;color:var(--text)">200%</div></div>
+      <div style="background:var(--surface2);border-radius:10px;padding:14px"><div style="font-size:12px;color:var(--text2)">데드존(150~300%) 예산비중</div><div style="font-size:24px;font-weight:700;color:var(--amber)">${deadPct!=null?deadPct+'%':'—'}</div></div>
+    </div>
+
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:14px">📈 일별 ROAS 추이 <span style="font-size:11px;color:var(--muted);font-weight:400">(1d-click · 점선=목표 200% · *=오늘 부분집계)</span></div>
+      <div style="position:relative;display:flex;align-items:flex-end;gap:6px;height:${barH+24}px;padding-top:4px;border-bottom:1px solid var(--border2)">
+        <div style="position:absolute;left:0;right:0;bottom:${targetBottom}px;border-top:1px dashed var(--accent);opacity:.5"></div>
+        ${bars}
+      </div>
+    </div>
+
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px">🎯 ROAS 구간별 예산 분포 <span style="font-size:11px;color:var(--muted);font-weight:400">(오늘 집행 광고)</span></div>
+      ${hasAds
+        ? `<div style="font-size:12px;color:var(--text2);margin-bottom:12px">증액은 300%↑에서만, 감액은 150%↓에서만 작동 → <b style="color:var(--text)">150~300% 데드존에 예산 ${deadPct}%</b>가 고여 평균 ROAS를 끌어내립니다.</div>${bandRows}`
+        : `<div style="font-size:12px;color:var(--muted);padding:8px 0">⚠ 'Meta 광고 예산 조정' 탭에서 <b>데이터 불러오기</b>를 먼저 하면 구간별 분포가 표시됩니다.</div>`}
+    </div>
+
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px">💡 규칙 개선 제안</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${[
+          ['① 점심 데드존 트림 추가','13:00 · ROAS 150~220% → 구매전환값 ×0.8 감액. 어중간한 중위 광고 예산을 줄여 평균 ROAS↑'],
+          ['② 증액 문턱 완화(조건부)','구매 ≥2 + ROAS ≥250% → +15% (현재 300%부터). 견조한 250~300% 광고 볼륨 확보'],
+          ['③ 야간 트림 앞당기기','ROAS ≤200% 트림(현 21:00)을 16:00에도 1회 추가 → 부진 예산 조기 회수'],
+        ].map(([t,d])=>`<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px"><div style="font-size:13px;font-weight:600">${t}</div><div style="font-size:12px;color:var(--text2);margin-top:2px">${d}</div></div>`).join('')}
+      </div>
+    </div>
+
+    <div style="background:var(--surface2);border:1px dashed var(--border2);border-radius:12px;padding:14px 18px;color:var(--text2);font-size:12px">
+      🗂 <b>규칙 변경 이력</b> — Phase 2에서 활성화 예정 (구글 로그인으로 편집자 기록 + 변경 diff 적재 후 여기 표시)
+    </div>`;
 }
 
 // ── Supabase 데이터 로드 ─────────────────────────────────────────
