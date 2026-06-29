@@ -320,7 +320,7 @@ input,select,textarea{font-family:var(--font-body)}
   </button>
   <button class="nav-item" data-page="rules">
     <span class="nav-icon">⚙️</span>
-    <span class="nav-label">예산 규칙 편집</span>
+    <span class="nav-label">예산규칙</span>
   </button>
   <button class="nav-item" data-page="ruleanalysis">
     <span class="nav-icon">📈</span>
@@ -384,6 +384,7 @@ input,select,textarea{font-family:var(--font-body)}
     <button class="btn btn-outline" id="rain-btn" onclick="checkWeatherAndBoost()" style="border-color:#4B9FE1;color:#4B9FE1">☔ 레인 아이템 증액 체크</button>
   </div>
   <div id="weather-status" style="font-size:12px;color:var(--muted);margin-top:-4px;margin-bottom:8px"></div>
+  <div id="meta-editor-bar" style="font-size:12px;margin-bottom:10px"></div>
 
   <div id="roas-result">
     <div class="empty-state">
@@ -410,8 +411,8 @@ input,select,textarea{font-family:var(--font-body)}
 <!-- PAGE: RULES -->
 <div class="page" id="page-rules">
   <div class="page-header">
-    <div class="page-title">예산 규칙 편집</div>
-    <div class="page-sub">시간대별 자동 예산 조정 규칙 · 영구 저장</div>
+    <div class="page-title">예산규칙</div>
+    <div class="page-sub">현재 적용 중인 규칙(읽기 전용) · 변경·실행 이력</div>
   </div>
   <div id="rules-editor"></div>
 </div>
@@ -726,6 +727,7 @@ function activateTab(page) {
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   pageEl.classList.add('active');
+  if (page === 'roas') updateMetaEditorBar();
   if (page === 'stock') renderStockPage();
   if (page === 'rules') renderRulesEditor();
   if (page === 'ruleanalysis') renderRuleAnalysisPage();
@@ -863,10 +865,7 @@ async function renderRuleAnalysisPage() {
       </div>
     </div>
 
-    <details ontoggle="if(this.open) loadRuleEditHistory()" style="background:var(--surface);border:1px solid var(--border);border-radius:12px">
-      <summary style="font-size:14px;font-weight:600;padding:16px 18px;cursor:pointer;list-style:none">🗂 규칙 변경 이력 <span style="font-size:11px;color:var(--muted);font-weight:400">(기록용 · 클릭해서 펼치기)</span></summary>
-      <div id="rule-edit-history" style="font-size:12px;color:var(--muted);padding:0 18px 16px">펼치면 불러옵니다…</div>
-    </details>`;
+`;
 }
 
 async function loadRuleEditHistory() {
@@ -1804,7 +1803,19 @@ function onEditorCredential(resp) {
     return;
   }
   setEditorEmail(email);
-  renderRulesEditor();
+  updateMetaEditorBar();
+}
+function updateMetaEditorBar() {
+  const el = document.getElementById('meta-editor-bar');
+  if (!el) return;
+  const email = state._editorEmail || getEditorEmail();
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface2);border-radius:8px">
+      <span style="color:var(--muted)">👤 실행자:</span>
+      ${email
+        ? `<b style="color:var(--text)">${email}</b><a onclick="editorLogout()" style="color:var(--muted);cursor:pointer;text-decoration:underline">로그아웃</a>`
+        : `<span id="editor-login-btn"></span><span style="color:var(--amber)">← 수동 실행 기록을 위해 로그인하세요</span>`}
+    </div>`;
+  if (!email) initEditorLoginButton();
 }
 function initEditorLoginButton() {
   const box = document.getElementById('editor-login-btn');
@@ -1816,64 +1827,71 @@ function initEditorLoginButton() {
   }
   google.accounts.id.renderButton(box, { type:'standard', size:'small', text:'signin_with', shape:'pill' });
 }
-function editorLogout() { try { localStorage.removeItem('ad_editor_email'); } catch(e){} state._editorEmail=''; try { google.accounts.id.disableAutoSelect(); } catch(e){} renderRulesEditor(); }
+function editorLogout() { try { localStorage.removeItem('ad_editor_email'); } catch(e){} state._editorEmail=''; try { google.accounts.id.disableAutoSelect(); } catch(e){} updateMetaEditorBar(); }
+
+// 규칙 로직 변경 이력 — 규칙은 코드로만 바뀌므로 코드에 직접 기록(최신이 위)
+const RULE_CHANGELOG = [
+  { date: '2026-06-29', by: 'Claude Code', text: 'r17 추가 — 오후 4:00 · ROAS 150~200% → 구매전환값 ×0.7 트림(방향가드 내장). 데드존 중간대 조기 회수용.' },
+];
+
+// 규칙 변경(코드) + 수동 실행(budget_rule_edits) 이력 병합 표시
+async function loadRuleHistory() {
+  const box = document.getElementById('rule-history');
+  if (!box) return;
+  const items = RULE_CHANGELOG.map(c => ({ when: c.date + ' 00:00', who: c.by, kind: '규칙변경', text: c.text }));
+  try {
+    const runs = await sbGet('budget_rule_edits') || [];
+    runs.forEach(r => {
+      const p = n => String(n).padStart(2,'0');
+      let when = '';
+      if (r.created_at) { const d = new Date(new Date(r.created_at).getTime()+9*3600*1000); when = `${String(d.getUTCFullYear()).slice(2)}/${p(d.getUTCMonth()+1)}/${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`; }
+      items.push({ when, who: (r.editor||'').split('@')[0], kind: '수동실행', text: r.memo || r.after_val || '예산 수동 조정' });
+    });
+  } catch(e) {}
+  items.sort((a,b) => (a.when < b.when ? 1 : -1));
+  if (!items.length) { box.innerHTML = '<span style="color:var(--muted)">기록 없음</span>'; return; }
+  box.innerHTML = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:520px">
+    <thead><tr style="color:var(--muted);text-align:left"><th style="padding:6px 8px;font-weight:600">시각</th><th style="padding:6px 8px;font-weight:600">구분</th><th style="padding:6px 8px;font-weight:600">담당</th><th style="padding:6px 8px;font-weight:600">내용</th></tr></thead><tbody>
+    ${items.map(it => `<tr style="border-top:0.5px solid var(--border)">
+      <td style="padding:6px 8px;color:var(--text2);white-space:nowrap">${it.when}</td>
+      <td style="padding:6px 8px"><span class="tag ${it.kind==='규칙변경'?'green':'gray'}" style="font-size:10px">${it.kind}</span></td>
+      <td style="padding:6px 8px">${it.who}</td>
+      <td style="padding:6px 8px;color:var(--text)">${it.text}</td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
 
 function renderRulesEditor() {
   const el = document.getElementById('rules-editor');
   if (!el) return;
 
-  const editorEmail = state._editorEmail || getEditorEmail();
-  const editorBar = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--surface2);border-radius:8px;font-size:12px">
-      <span style="color:var(--muted)">✏️ 편집자:</span>
-      ${editorEmail
-        ? `<b style="color:var(--text)">${editorEmail}</b><a onclick="editorLogout()" style="color:var(--muted);cursor:pointer;text-decoration:underline">로그아웃</a>`
-        : `<span id="editor-login-btn"></span><span style="color:var(--amber)">← 규칙 변경 기록을 위해 로그인하세요</span>`}
-    </div>`;
-  let html = editorBar + `
-  <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">규칙 설명, 발동 시각, 활성 여부를 수정하고 저장 버튼을 눌러주세요. <span style="color:var(--muted)">· 목표 분석·전략 제안은 <b>예산규칙 분석</b> 탭으로 이동했어요.</span></div>
+  let rowsHtml = '';
+  BUDGET_RULES.forEach(rule => {
+    const disabled = rule.disabled || false;
+    const h = String(Math.floor(rule.triggerMin/60)).padStart(2,'0');
+    const m = String(rule.triggerMin%60).padStart(2,'0');
+    rowsHtml += `<tr style="border-bottom:0.5px solid var(--border);${disabled?'opacity:.45':''}">
+      <td style="padding:8px 12px;text-align:center;font-size:11px">${disabled?'<span style="color:var(--muted)">OFF</span>':'<span style="color:var(--green);font-weight:600">ON</span>'}</td>
+      <td style="padding:8px 12px;color:var(--text)">${rule.label}</td>
+      <td style="padding:8px 12px;text-align:center;color:var(--text2);white-space:nowrap">${h}:${m}</td>
+      <td style="padding:8px 12px;text-align:center"><span class="tag ${rule.dir==='up'?'green':'red'}" style="font-size:10px">${rule.dir==='up'?'▲ 증액':'▼ 감액'}</span></td>
+    </tr>`;
+  });
+
+  el.innerHTML = `
+  <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">규칙 로직(ROAS 조건·배수)은 코드로만 변경됩니다. 아래는 <b>현재 적용 중인 규칙(읽기 전용)</b>이고, 변경·실행 내역은 하단 이력에 쌓입니다. · 전략 분석은 <b>예산규칙 분석</b> 탭.</div>
   <table style="width:100%;border-collapse:collapse;font-size:12px">
     <thead><tr style="background:var(--surface2);border-bottom:1px solid var(--border2)">
       <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:48px">활성</th>
       <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px">규칙 설명</th>
-      <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:120px">발동 시각</th>
+      <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:90px">발동 시각</th>
       <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:60px">방향</th>
-    </tr></thead><tbody>`;
+    </tr></thead><tbody>${rowsHtml}</tbody>
+  </table>
+  <div style="margin-top:22px;font-size:14px;font-weight:600;margin-bottom:8px">🗂 규칙 변경 · 실행 이력</div>
+  <div id="rule-history" style="font-size:12px;color:var(--muted)">불러오는 중…</div>`;
 
-  BUDGET_RULES.forEach((rule, i) => {
-    const disabled = rule.disabled || false;
-    const h = Math.floor(rule.triggerMin/60);
-    const m = rule.triggerMin % 60;
-    const rowBg = disabled ? 'opacity:.45' : '';
-    html += `<tr style="border-bottom:0.5px solid var(--border);${rowBg}">
-      <td style="padding:8px 12px;text-align:center">
-        <input type="checkbox" id="rule-active-${i}" ${disabled ? '' : 'checked'}
-          style="width:16px;height:16px;cursor:pointer">
-      </td>
-      <td style="padding:8px 12px">
-        <input type="text" id="rule-label-${i}" value="${rule.label}"
-          style="width:100%;padding:5px 8px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
-      </td>
-      <td style="padding:8px 12px;text-align:center;white-space:nowrap">
-        <input type="number" id="rule-h-${i}" value="${h}" min="0" max="23"
-          style="width:46px;padding:4px 5px;border:1px solid var(--border2);border-radius:6px;font-size:12px;text-align:center;background:var(--surface);color:var(--text)">
-        <span style="margin:0 2px">:</span>
-        <input type="number" id="rule-m-${i}" value="${m}" min="0" max="59"
-          style="width:46px;padding:4px 5px;border:1px solid var(--border2);border-radius:6px;font-size:12px;text-align:center;background:var(--surface);color:var(--text)">
-      </td>
-      <td style="padding:8px 12px;text-align:center">
-        <span class="tag ${rule.dir==='up'?'green':'red'}" style="font-size:10px">${rule.dir==='up'?'▲ 증액':'▼ 감액'}</span>
-      </td>
-    </tr>`;
-  });
-
-  html += `</tbody></table>
-  <div style="margin-top:16px;display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap">
-    <input id="rule-edit-memo" placeholder="변경 메모(선택)" style="flex:1;min-width:160px;max-width:340px;padding:9px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
-    <button onclick="saveRulesFromEditor()" style="padding:9px 24px;border-radius:8px;background:var(--accent);color:white;font-size:13px;font-weight:600;border:none;cursor:pointer">💾 저장</button>
-  </div>`;
-
-  el.innerHTML = html;
-  if (!editorEmail) initEditorLoginButton();
+  loadRuleHistory();
 }
 
 async function saveRulesFromEditor() {
@@ -2201,6 +2219,13 @@ async function runAll() {
   btn.innerHTML = '▶ 광고비 조정 실행';
   btn.disabled = false;
   showAlert('roas-result', `✅ 완료! 성공 ${ok}개 · 실패 ${fail}개`, 'success');
+
+  // 수동 실행 기록(option a) → 예산규칙 탭 이력에 누적. 실행자 로그인 시에만.
+  const _editor = state._editorEmail || getEditorEmail();
+  if (_editor && (ok + fail) > 0) {
+    sbUpsert('budget_rule_edits', [{ editor: _editor, rule_id: 'manual', field: '수동실행', after_val: `${ok}건`, memo: `수동 예산조정 — 성공 ${ok} · 실패 ${fail}` }])
+      .catch(e => console.log('실행 기록 저장 실패:', e));
+  }
 }
 
 // ── STOCK PAGE ───────────────────────────────────────────────────
