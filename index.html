@@ -695,7 +695,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initNav();
   initUpload();
-  if (state.inventoryData.length) renderStockPage();
+  refreshActiveDataTab();
 });
 
 async function checkCafe24Auth() {
@@ -752,6 +752,16 @@ function activateTab(page) {
   if (page === 'rules') renderRulesEditor();
   if (page === 'ruleanalysis') renderRuleAnalysisPage();
   if (page === 'adsetting') renderAdSettingPage();
+}
+
+// 재고/SERA/메타 데이터 로드·갱신 후, 현재 보고 있는 데이터 탭을 다시 그림
+// (비동기 로드 완료 시 stock 탭만 갱신하면 adneed 탭이 빈 상태로 남는 문제 방지)
+function refreshActiveDataTab() {
+  if (!state.inventoryData.length) return;
+  const adneedActive = document.getElementById('page-adneed') &&
+    document.getElementById('page-adneed').classList.contains('active');
+  if (adneedActive) renderAdNeedPage();
+  else renderStockPage();
 }
 
 function initNav() {
@@ -954,8 +964,8 @@ async function loadFromSupabase() {
     // 소재 제작 상태 (key=rep_code|상품명, status=before|making)
     await loadCreativeStatus();
 
-    // 재고 데이터 있으면 재고 탭 렌더
-    if (state.inventoryData.length) renderStockPage();
+    // 재고 데이터 있으면 현재 데이터 탭(재고/광고집행요망) 렌더
+    refreshActiveDataTab();
 
   } catch(e) { console.log('Supabase 로드 실패:', e); }
 }
@@ -1106,7 +1116,7 @@ function initUpload() {
           if (dateEl) { dateEl.textContent = `업로드: ${dateStr}`; dateEl.style.display = 'block'; }
         } catch(e) { console.log('저장 실패:', e); }
         document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 로드됨`;
-        renderStockPage();
+        refreshActiveDataTab();
       } catch(err) {
         alert('파일 읽기 오류: ' + err.message);
       }
@@ -1140,7 +1150,7 @@ function initUpload() {
           saveStrategyToSupabase(state.strategyData);
         } catch(e) {}
         document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 로드됨`;
-        if (state.inventoryData.length) { state._stockProductMap = null; renderStockPage(); }
+        if (state.inventoryData.length) { state._stockProductMap = null; refreshActiveDataTab(); }
       } catch(err) { alert('전략파일 오류: ' + err.message); }
     };
     reader.readAsBinaryString(file);
@@ -1178,7 +1188,7 @@ function initUpload() {
         })).filter(r => r.code || r.name);
         try { saveSeraToSupabase(state._seraData); } catch(e) {}
         document.getElementById('sera-text').textContent = `✓ ${state._seraData.length}개 로드됨`;
-        if (state.inventoryData.length) { state._stockProductMap = null; renderStockPage(); }
+        if (state.inventoryData.length) { state._stockProductMap = null; refreshActiveDataTab(); }
       } catch(err) { alert('SERA 파일 오류: ' + err.message); }
     };
     reader.readAsBinaryString(file);
@@ -1728,7 +1738,7 @@ async function fetchMetaAds() {
       const toSave = state.metaAds.map(r => ({ id: r.id, name: r.name, nameRaw: r.nameRaw, status: r.status }));
       localStorage.setItem('meta_ads_cache', JSON.stringify(toSave));
     } catch(e) {}
-    if (state.inventoryData.length) renderStockPage();
+    refreshActiveDataTab();
     const nAction = state.metaAds.filter(r => r.action !== 'hold').length;
     document.getElementById('badge-roas').textContent = nAction;
     document.getElementById('badge-roas').classList.toggle('hidden', nAction === 0);
