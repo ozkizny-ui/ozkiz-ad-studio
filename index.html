@@ -362,6 +362,7 @@ input,select,textarea{font-family:var(--font-body)}
         <input type="file" id="sera-file" accept=".xlsx,.xls,.csv">
         <div class="upload-zone-text" id="sera-text">📂 SERA 업로드</div>
       </label>
+      <div id="sera-date-label" style="font-size:10px;color:var(--muted);margin-top:4px;display:none"></div>
     </div>
   </div>
 
@@ -769,6 +770,7 @@ async function renderRuleAnalysisPage() {
   const recent = full.slice(-7);
   const sp7 = recent.reduce((s,d)=>s+d.spend,0), pv7 = recent.reduce((s,d)=>s+d.purchaseValue,0);
   const avgRoas = sp7 ? Math.round(pv7/sp7*100) : 0;
+  const TARGET = 220; // 목표 ROAS(%)
 
   // 데드존 밴드 분석 (state.metaAds 기반 — 오늘 집행 광고)
   const ads = (state.metaAds||[]).filter(a => a.spend > 0);
@@ -794,14 +796,14 @@ async function renderRuleAnalysisPage() {
   const bars = daily.map((d,i) => {
     const isToday = (i === daily.length-1) && daily.length>1;
     const h = d.roas != null ? Math.max(2, Math.min(d.roas, cap)/cap*barH) : 2;
-    const col = isToday ? 'var(--border2)' : (d.roas>=200 ? 'var(--green)' : d.roas>=150 ? 'var(--accent)' : 'var(--amber)');
+    const col = isToday ? 'var(--border2)' : (d.roas>=TARGET ? 'var(--green)' : d.roas>=150 ? 'var(--accent)' : 'var(--amber)');
     return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0">
       <div style="font-size:10px;color:var(--text2)">${d.roas!=null?d.roas+'%':'-'}</div>
       <div title="${d.date}" style="width:100%;max-width:30px;height:${Math.round(h)}px;background:${col};border-radius:3px 3px 0 0"></div>
       <div style="font-size:9px;color:var(--muted);white-space:nowrap">${d.date.slice(5)}${isToday?'*':''}</div>
     </div>`;
   }).join('');
-  const targetBottom = Math.round(200/cap*barH) + 16;
+  const targetBottom = Math.round(TARGET/cap*barH) + 16;
 
   const bandRows = BANDS.map(b => `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
@@ -814,13 +816,13 @@ async function renderRuleAnalysisPage() {
 
   el.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px">
-      <div style="background:var(--surface2);border-radius:10px;padding:14px"><div style="font-size:12px;color:var(--text2)">최근 7일 평균 ROAS</div><div style="font-size:24px;font-weight:700;color:${avgRoas>=200?'var(--green)':'var(--red)'}">${avgRoas}%</div></div>
-      <div style="background:var(--surface2);border-radius:10px;padding:14px"><div style="font-size:12px;color:var(--text2)">목표 ROAS</div><div style="font-size:24px;font-weight:700;color:var(--text)">200%</div></div>
+      <div style="background:var(--surface2);border-radius:10px;padding:14px"><div style="font-size:12px;color:var(--text2)">최근 7일 평균 ROAS</div><div style="font-size:24px;font-weight:700;color:${avgRoas>=TARGET?'var(--green)':'var(--red)'}">${avgRoas}%</div></div>
+      <div style="background:var(--surface2);border-radius:10px;padding:14px"><div style="font-size:12px;color:var(--text2)">목표 ROAS</div><div style="font-size:24px;font-weight:700;color:var(--text)">${TARGET}%</div></div>
       <div style="background:var(--surface2);border-radius:10px;padding:14px"><div style="font-size:12px;color:var(--text2)">데드존(150~300%) 예산비중</div><div style="font-size:24px;font-weight:700;color:var(--amber)">${deadPct!=null?deadPct+'%':'—'}</div></div>
     </div>
 
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:14px">📈 일별 ROAS 추이 <span style="font-size:11px;color:var(--muted);font-weight:400">(1d-click · 점선=목표 200% · *=오늘 부분집계)</span></div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:14px">📈 일별 ROAS 추이 <span style="font-size:11px;color:var(--muted);font-weight:400">(1d-click · 점선=목표 ${TARGET}% · *=오늘 부분집계)</span></div>
       <div style="position:relative;display:flex;align-items:flex-end;gap:6px;height:${barH+24}px;padding-top:4px;border-bottom:1px solid var(--border2)">
         <div style="position:absolute;left:0;right:0;bottom:${targetBottom}px;border-top:1px dashed var(--accent);opacity:.5"></div>
         ${bars}
@@ -845,11 +847,10 @@ async function renderRuleAnalysisPage() {
       </div>
     </div>
 
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:10px">🗂 규칙 변경 이력</div>
-      <div id="rule-edit-history" style="font-size:12px;color:var(--muted)">불러오는 중…</div>
-    </div>`;
-  loadRuleEditHistory();
+    <details ontoggle="if(this.open) loadRuleEditHistory()" style="background:var(--surface);border:1px solid var(--border);border-radius:12px">
+      <summary style="font-size:14px;font-weight:600;padding:16px 18px;cursor:pointer;list-style:none">🗂 규칙 변경 이력 <span style="font-size:11px;color:var(--muted);font-weight:400">(기록용 · 클릭해서 펼치기)</span></summary>
+      <div id="rule-edit-history" style="font-size:12px;color:var(--muted);padding:0 18px 16px">펼치면 불러옵니다…</div>
+    </details>`;
 }
 
 async function loadRuleEditHistory() {
@@ -908,7 +909,7 @@ async function loadFromSupabase() {
 
     // SERA 지표 (조회수/주문수/클릭가치)
     // ⚠️ Supabase에서 읽으면 컬럼 키가 영문(code/views/...) → 영문 키로 매핑해서 통일
-    const seraRows = await sbGet('sera', 'code,name,views,orders,opv,click_value');
+    const seraRows = await sbGet('sera', 'code,name,views,orders,opv,click_value,updated_at');
     if (seraRows && seraRows.length) {
       state._seraData = seraRows.map(r => ({
         code: String(r.code||'').trim(),
@@ -919,6 +920,14 @@ async function loadFromSupabase() {
         clickValue: parseFloat(r.click_value||0) || 0,
       }));
       document.getElementById('sera-text').textContent = `✓ ${state._seraData.length}개 (저장됨)`;
+      // 업로드 날짜 (이지어드민 재고와 동일 표시)
+      if (seraRows[0]?.updated_at) {
+        const d = new Date(seraRows[0].updated_at);
+        const kst = new Date(d.getTime() + 9*3600*1000);
+        const dateStr = `${kst.getUTCFullYear()}.${String(kst.getUTCMonth()+1).padStart(2,'0')}.${String(kst.getUTCDate()).padStart(2,'0')} ${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}`;
+        const el = document.getElementById('sera-date-label');
+        if (el) { el.textContent = `업로드: ${dateStr}`; el.style.display = 'block'; }
+      }
     }
 
     // 상품명 → 랜딩 URL 매핑 (이지어드민 상품명 기준)
