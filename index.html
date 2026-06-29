@@ -1850,7 +1850,7 @@ function renderRulesEditor() {
       <td style="padding:8px 12px;text-align:center;font-family:monospace;font-size:11px;font-weight:600;color:var(--accent)">${rule.id}</td>
       <td style="padding:8px 12px;color:var(--text)">${rule.label}</td>
       <td style="padding:8px 12px;text-align:center;color:var(--text2);white-space:nowrap">${h}:${m}</td>
-      <td style="padding:8px 12px;text-align:center"><span class="tag ${rule.dir==='up'?'green':'red'}" style="font-size:10px">${rule.dir==='up'?'▲ 증액':'▼ 감액'}</span></td>
+      <td style="padding:8px 12px;text-align:center"><span class="tag ${rule.dir==='up'?'green':'red'}" style="font-size:10px;white-space:nowrap;display:inline-block">${rule.dir==='up'?'▲ 증액':'▼ 감액'}</span></td>
     </tr>`;
   });
 
@@ -1862,7 +1862,7 @@ function renderRulesEditor() {
       <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:48px">규칙</th>
       <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px">규칙 설명</th>
       <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:90px">발동 시각</th>
-      <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:60px">방향</th>
+      <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:84px">방향</th>
     </tr></thead><tbody>${rowsHtml}</tbody>
   </table>
   <div style="margin-top:22px;font-size:14px;font-weight:600;margin-bottom:8px">🗂 규칙 변경 · 실행 이력</div>
