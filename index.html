@@ -695,20 +695,40 @@ function updateStatusUI() {
   meta.innerHTML = `<div class="sb-status-dot" style="background:var(--green)"></div><span style="color:var(--green)">메타 API 연결됨</span>`;
 }
 
-// ── NAV ──────────────────────────────────────────────────────────
+// ── NAV (해시 라우팅: 탭별 URL #roas/#rules/#stock/#usp/#adsetting) ──
+const NAV_PAGES = ['roas','rules','stock','usp','adsetting'];
+
+function pageFromHash() {
+  const h = (location.hash || '').replace(/^#\/?/, '');
+  return NAV_PAGES.includes(h) ? h : null;
+}
+
+// 탭 활성화: nav/페이지 클래스 토글 + 페이지별 렌더
+function activateTab(page) {
+  if (!NAV_PAGES.includes(page)) page = 'roas';
+  const pageEl = document.getElementById('page-' + page);
+  if (!pageEl) return;
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  pageEl.classList.add('active');
+  if (page === 'stock') renderStockPage();
+  if (page === 'rules') renderRulesEditor();
+  if (page === 'adsetting') renderAdSettingPage();
+}
+
 function initNav() {
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('page-' + btn.dataset.page).classList.add('active');
-      // 페이지별 렌더링
-      if (btn.dataset.page === 'stock') renderStockPage();
-      if (btn.dataset.page === 'rules') renderRulesEditor();
-      if (btn.dataset.page === 'adsetting') renderAdSettingPage();
+      const page = btn.dataset.page;
+      // 같은 탭 재클릭은 해시 변화가 없어 hashchange가 안 뜨므로 직접 갱신
+      if (pageFromHash() === page) { activateTab(page); return; }
+      location.hash = page;   // 해시 변경 → hashchange 핸들러가 activateTab 호출
     });
   });
+  // URL 해시 변경(클릭·뒤로가기·직접입력) → 해당 탭 활성화
+  window.addEventListener('hashchange', () => activateTab(pageFromHash() || 'roas'));
+  // 최초 진입: URL 해시에 맞는 탭(없으면 기본 roas)
+  activateTab(pageFromHash() || 'roas');
 }
 
 // ── Supabase 데이터 로드 ─────────────────────────────────────────
