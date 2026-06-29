@@ -2294,6 +2294,7 @@ ${reviewBlock}
 // 광고 세팅 페이지 렌더링
 async function renderAdSettingPage() {
   const container = document.getElementById('adsetting-result');
+  state._caroCards = null; // 페이지 재진입 시 슬라이드 카드(이미지·URL) 초기화
   container.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text2)">⏳ 불러오는 중...</div>`;
 
   const [campaigns, productSets] = await Promise.all([
@@ -3924,6 +3925,12 @@ async function submitAdSetting(adType) {
           광고 ID: ${data.ad_id || '-'} · 광고세트 ${data.adset_id || '-'}<br>
           <span style="color:#1D9E75">광고관리자에서 검토 후 ACTIVE로 전환해주세요</span>
         </div>`;
+      // 생성 완료 → 폼 초기화(이미지·URL·카드·캡션·상품명 비우기)
+      state._caroCards = [{}, {}];
+      renderCaroCards();
+      ['landing-url','caption-text','as-product','as-desc','as-adname'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+      const _si = document.getElementById('as-stock-info'); if (_si) _si.style.display = 'none';
+      const _ls = document.getElementById('landing-url-status'); if (_ls) _ls.style.display = 'none';
       btn.disabled = false; btn.textContent = '⏸ 메타에 PAUSED 상태로 생성';
       return;
     }
