@@ -3122,6 +3122,14 @@ function renderAdSettingForm(adType) {
         </div>
       </div>
       <div class="as-row">
+        <label class="as-label">공통 랜딩 URL</label>
+        <div class="as-val" style="display:flex;align-items:center;gap:6px">
+          <input type="text" id="landing-url" placeholder="상품명 선택 시 자동 입력 · 카드에 URL 없으면 이 URL 사용"
+            class="as-input" style="flex:1" oninput="onLandingUrlChange(this.value)">
+          <span id="landing-url-status" style="font-size:11px;white-space:nowrap;flex-shrink:0;display:none"></span>
+        </div>
+      </div>
+      <div class="as-row">
         <label class="as-label">카드</label>
         <div class="as-val">
           <div id="caro-cards"></div>
@@ -3679,7 +3687,7 @@ function renderCaroCards() {
         ${c.fileName ? '✓ ' + c.fileName : '🖼 이미지 업로드'}
       </div>
       <input type="file" id="caro-file-${i}" accept="image/*" style="display:none" onchange="handleCaroFile(${i}, this)">
-      <input type="text" class="as-input" placeholder="카드 랜딩 URL" value="${(c.landing||'').replace(/"/g,'&quot;')}" oninput="state._caroCards[${i}].landing=this.value" style="margin-bottom:6px">
+      <input type="text" class="as-input" placeholder="카드 랜딩 URL (비우면 공통 URL 사용)" value="${(c.landing||'').replace(/"/g,'&quot;')}" oninput="state._caroCards[${i}].landing=this.value" style="margin-bottom:6px">
       <input type="text" class="as-input" placeholder="헤드라인 (카드 제목, 선택)" value="${(c.headline||'').replace(/"/g,'&quot;')}" oninput="state._caroCards[${i}].headline=this.value">
     </div>`).join('');
 }
@@ -3884,8 +3892,9 @@ async function submitAdSetting(adType) {
 
     // CAROUSEL(슬라이드): 카드별 이미지 업로드→hash → create_ad(CAROUSEL). 백엔드는 createAd가 이미 지원.
     if (adType === 'CAROUSEL') {
-      const cards = (state._caroCards || []).filter(c => c && c.file && (c.landing || '').trim());
-      if (cards.length < 2) throw new Error('슬라이드는 이미지+랜딩URL을 갖춘 카드가 2장 이상 필요합니다');
+      const commonUrl = (document.getElementById('landing-url')?.value || '').trim();
+      const cards = (state._caroCards || []).filter(c => c && c.file && ((c.landing || '').trim() || commonUrl));
+      if (cards.length < 2) throw new Error('슬라이드는 이미지 + (카드별 또는 공통) 랜딩URL을 갖춘 카드가 2장 이상 필요합니다');
       const adNameC = document.getElementById('as-adname')?.value?.trim();
       if (!adNameC) throw new Error('광고명이 비어있습니다 (상품명·소재설명 입력 또는 직접 입력)');
       const childCards = [];
@@ -3900,7 +3909,7 @@ async function submitAdSetting(adType) {
         });
         const ud = await uploadJson(uploadRes);
         if (ud.error) throw new Error(`카드 ${i+1} 업로드 실패: ${ud.error}`);
-        childCards.push({ image_hash: ud.hash, link: (c.landing || '').trim(), name: (c.headline || '').trim() });
+        childCards.push({ image_hash: ud.hash, link: ((c.landing || '').trim() || commonUrl), name: (c.headline || '').trim() });
       }
       resultEl.innerHTML = '<div style="color:var(--text2)">⏳ 슬라이드 광고 생성 중...</div>';
       const r = await authedFetch(`${PROXY}/api/meta?action=create_ad`, {
