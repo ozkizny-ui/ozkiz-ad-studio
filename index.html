@@ -770,7 +770,11 @@ async function renderRuleAnalysisPage() {
   const recent = full.slice(-7);
   const sp7 = recent.reduce((s,d)=>s+d.spend,0), pv7 = recent.reduce((s,d)=>s+d.purchaseValue,0);
   const avgRoas = sp7 ? Math.round(pv7/sp7*100) : 0;
-  const TARGET = 220; // 목표 ROAS(%)
+  const TARGET = 250; // 목표 ROAS(%)
+  const nowMin = kstMinutes();
+  const activeRules = BUDGET_RULES.filter(r => !r.disabled && r.triggerMin <= nowMin);
+  const totalRules = BUDGET_RULES.filter(r => !r.disabled).length;
+  const upRules = activeRules.filter(r => r.dir === 'up').length, dnRules = activeRules.filter(r => r.dir === 'dn').length;
 
   // 데드존 밴드 분석 (state.metaAds 기반 — 오늘 집행 광고)
   const ads = (state.metaAds||[]).filter(a => a.spend > 0);
@@ -837,13 +841,25 @@ async function renderRuleAnalysisPage() {
     </div>
 
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:10px">💡 규칙 개선 제안</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px">🧠 전략 분석 & 개선 제안 <span style="font-size:11px;color:var(--muted);font-weight:400">— ROAS ${TARGET}~300% 유지 + 매출 극대화</span></div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:12px">아침 보수적 감액 → 오전 성과 확인 → 증액 구조로 ROAS ${TARGET}~300% 유지에 적합한 설계입니다. 다만 증액은 300%↑·감액은 150%↓에서만 작동해 <b style="color:var(--text)">150~300% 데드존</b>이 평균을 끌어내립니다. 아래 제안으로 데드존을 줄이면 목표 돌파가 가능합니다.</div>
       <div style="display:flex;flex-direction:column;gap:10px">
         ${[
-          ['① 점심 데드존 트림 추가','13:00 · ROAS 150~220% → 구매전환값 ×0.8 감액. 어중간한 중위 광고 예산을 줄여 평균 ROAS↑'],
-          ['② 증액 문턱 완화(조건부)','구매 ≥2 + ROAS ≥250% → +15% (현재 300%부터). 견조한 250~300% 광고 볼륨 확보'],
-          ['③ 야간 트림 앞당기기','ROAS ≤200% 트림(현 21:00)을 16:00에도 1회 추가 → 부진 예산 조기 회수'],
-        ].map(([t,d])=>`<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px"><div style="font-size:13px;font-weight:600">${t}</div><div style="font-size:12px;color:var(--text2);margin-top:2px">${d}</div></div>`).join('')}
+          ['제안','점심 데드존 트림 추가','13:00 · ROAS 150~230% → 구매전환값 ×0.8 감액. 어중간한 중위 광고 예산을 줄여 평균 ROAS를 끌어올립니다.'],
+          ['제안','증액 문턱 완화 + 고효율 예외','구매 ≥2 + ROAS ≥250% → +15% 증액(현재 300%부터). 또한 ROAS 500%↑ 고효율은 예산>구매전환값이어도 증액 허용해 매출 볼륨 확보.'],
+          ['제안','오후 감액 정밀화','오후 감액 시 ROAS 300%↑ 소재는 제외해 효율 소재는 계속 태우고, ROAS ≤200%는 16:00에도 트림 1회 추가(현 21:00만)로 부진 예산 조기 회수.'],
+          ['주의','오전 8시 감액 타이밍','8시 감액(장바구니 ≤2 + ROAS ≤150%)은 당일 데이터가 부족한 시점입니다. 전날 성과 좋은 소재는 예외 처리 조건을 고려하세요.'],
+          ['양호','오후 단계 감액 구조','오후 12·3·6시 단계 감액은 예산 소진 후 ROAS 하락 방어에 좋은 구조 — 현재 방향 유지 추천.'],
+        ].map(([tag,t,d])=>{
+          const tc = tag==='주의'?'var(--amber)':tag==='양호'?'var(--green)':'var(--accent)';
+          return `<div style="border:1px solid var(--border);border-left:3px solid ${tc};border-radius:8px;padding:10px 12px">
+            <div style="font-size:13px;font-weight:600"><span style="font-size:10px;color:${tc};border:1px solid ${tc};border-radius:4px;padding:1px 6px;margin-right:6px">${tag}</span>${t}</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:3px;line-height:1.6">${d}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="margin-top:12px;font-size:11px;color:var(--muted);padding:8px 12px;background:var(--surface2);border-radius:8px">
+        📊 활성 규칙 ${totalRules}개 · 오늘 발동 완료 ${activeRules.length}개 (증액 ${upRules}개 / 감액 ${dnRules}개) · 최근 7일 이력: ${Object.keys(JSON.parse(localStorage.getItem('budget_rule_history_v2')||'{}')).length}일치 저장됨
       </div>
     </div>
 
@@ -1799,74 +1815,6 @@ function renderRulesEditor() {
   const el = document.getElementById('rules-editor');
   if (!el) return;
 
-  // ── 전략 인사이트 카드 ──────────────────────────────────────────
-  const now = kstMinutes();
-  const activeRules = BUDGET_RULES.filter(r => !r.disabled && r.triggerMin <= now);
-  const upRules  = activeRules.filter(r => r.dir === 'up').length;
-  const dnRules  = activeRules.filter(r => r.dir === 'dn').length;
-  const totalRules = BUDGET_RULES.filter(r => !r.disabled).length;
-
-  // 현재 규칙 구조 분석 → 목표(ROAS 250-300%, 매출 극대화) 대비 추천
-  const insights = [
-    {
-      type: 'info',
-      icon: '🎯',
-      title: '현재 전략 방향',
-      desc: '아침 보수적 감액 → 오전 중 성과 확인 → 증액 구조로, ROAS 250-300% 유지에 적합한 설계예요. 오후 감액은 예산 소진 후 ROAS 하락 방어에 효과적이에요.',
-    },
-    {
-      type: 'tip',
-      icon: '💡',
-      title: '매출 극대화 관점 추천',
-      desc: 'ROAS 300% 이상인 소재는 오후 감액 규칙에서 제외하는 조건을 추가하면, 효율 좋은 소재는 계속 태우면서 비효율 소재만 감액하는 정밀 운영이 가능해요.',
-    },
-    {
-      type: 'tip',
-      icon: '📈',
-      title: '증액 조건 개선 포인트',
-      desc: '현재 증액 조건 대부분이 "예산 ≤ 구매전환값"일 때만 작동해요. ROAS 500% 이상 고효율 소재는 구매전환값보다 예산이 높아도 증액을 허용하면 매출 극대화에 유리해요.',
-    },
-    {
-      type: 'caution',
-      icon: '⚠️',
-      title: '오전 8시 감액 타이밍',
-      desc: '오전 8시 감액(장바구니 ≤2 + ROAS ≤150%)은 당일 데이터 축적이 부족한 시점이에요. 전날 성과가 좋았던 소재는 예외 처리하는 조건을 넣는 것도 고려해봐요.',
-    },
-    {
-      type: 'ok',
-      icon: '✅',
-      title: '오후 감액 전략',
-      desc: '오후 12시·3시·6시 단계적 감액은 예산 소진 후 ROAS 하락을 방어하는 좋은 구조예요. 현재 방향 유지 추천.',
-    },
-  ];
-
-  const cardColors = {
-    info:    { bg: '#EBF5FF', border: '#4B9FE1', text: '#0C447C' },
-    tip:     { bg: '#F0FBF4', border: '#1D9E75', text: '#0A5E40' },
-    caution: { bg: '#FEF7ED', border: '#F59E0B', text: '#78350F' },
-    ok:      { bg: '#F0FBF4', border: '#1D9E75', text: '#0A5E40' },
-  };
-
-  const insightHtml = `
-  <div style="margin-bottom:20px">
-    <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text)">
-      🧠 목표 분석 — ROAS 250~300% 유지 + 매출 극대화
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      ${insights.map(ins => {
-        const c = cardColors[ins.type];
-        return `<div style="background:${c.bg};border:1px solid ${c.border};border-radius:10px;padding:12px 14px">
-          <div style="font-size:12px;font-weight:600;color:${c.text};margin-bottom:4px">${ins.icon} ${ins.title}</div>
-          <div style="font-size:11px;color:var(--text);line-height:1.6">${ins.desc}</div>
-        </div>`;
-      }).join('')}
-    </div>
-    <div style="margin-top:10px;font-size:11px;color:var(--muted);padding:8px 12px;background:var(--surface2);border-radius:8px">
-      📊 현재 활성 규칙 ${totalRules}개 · 오늘 발동 완료 ${activeRules.length}개 (증액 ${upRules}개 / 감액 ${dnRules}개)
-      &nbsp;·&nbsp; 최근 7일 이력: ${Object.keys(JSON.parse(localStorage.getItem('budget_rule_history_v2')||'{}')).length}일치 저장됨
-    </div>
-  </div>`;
-
   const editorEmail = state._editorEmail || getEditorEmail();
   const editorBar = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--surface2);border-radius:8px;font-size:12px">
       <span style="color:var(--muted)">✏️ 편집자:</span>
@@ -1874,8 +1822,8 @@ function renderRulesEditor() {
         ? `<b style="color:var(--text)">${editorEmail}</b><a onclick="editorLogout()" style="color:var(--muted);cursor:pointer;text-decoration:underline">로그아웃</a>`
         : `<span id="editor-login-btn"></span><span style="color:var(--amber)">← 규칙 변경 기록을 위해 로그인하세요</span>`}
     </div>`;
-  let html = insightHtml + editorBar + `
-  <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">규칙 설명, 발동 시각, 활성 여부를 수정하고 저장 버튼을 눌러주세요.</div>
+  let html = editorBar + `
+  <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">규칙 설명, 발동 시각, 활성 여부를 수정하고 저장 버튼을 눌러주세요. <span style="color:var(--muted)">· 목표 분석·전략 제안은 <b>예산규칙 분석</b> 탭으로 이동했어요.</span></div>
   <table style="width:100%;border-collapse:collapse;font-size:12px">
     <thead><tr style="background:var(--surface2);border-bottom:1px solid var(--border2)">
       <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:48px">활성</th>
