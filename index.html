@@ -868,31 +868,6 @@ async function renderRuleAnalysisPage() {
 `;
 }
 
-async function loadRuleEditHistory() {
-  const box = document.getElementById('rule-edit-history');
-  if (!box) return;
-  let rows = [];
-  try { rows = await sbGet('budget_rule_edits') || []; }
-  catch (e) { box.innerHTML = `<span style="color:var(--red)">이력 조회 실패: ${e.message}</span>`; return; }
-  if (!rows.length) { box.innerHTML = '<span style="color:var(--muted)">아직 기록된 변경이 없어요. \'예산 규칙 편집\'에서 규칙을 수정·저장하면 여기에 쌓입니다.</span>'; return; }
-  rows.sort((a,b) => (a.created_at < b.created_at ? 1 : -1));
-  const FIELD = { label:'규칙 설명', trigger_min:'발동시각', active:'활성' };
-  const fmtKst = ts => { const k = new Date(new Date(ts).getTime() + 9*3600*1000); const p = n => String(n).padStart(2,'0'); return `${String(k.getUTCFullYear()).slice(2)}/${p(k.getUTCMonth()+1)}/${p(k.getUTCDate())} ${p(k.getUTCHours())}:${p(k.getUTCMinutes())}`; };
-  box.innerHTML = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:560px">
-    <thead><tr style="color:var(--muted);text-align:left">
-      <th style="padding:6px 8px;font-weight:600">시각</th><th style="padding:6px 8px;font-weight:600">편집자</th><th style="padding:6px 8px;font-weight:600">규칙</th><th style="padding:6px 8px;font-weight:600">항목</th><th style="padding:6px 8px;font-weight:600">변경</th><th style="padding:6px 8px;font-weight:600">메모</th>
-    </tr></thead><tbody>
-    ${rows.slice(0,100).map(r => `<tr style="border-top:0.5px solid var(--border)">
-      <td style="padding:6px 8px;color:var(--text2);white-space:nowrap">${fmtKst(r.created_at)}</td>
-      <td style="padding:6px 8px">${(r.editor||'').split('@')[0]}</td>
-      <td style="padding:6px 8px"><code>${r.rule_id||''}</code></td>
-      <td style="padding:6px 8px">${FIELD[r.field]||r.field||''}</td>
-      <td style="padding:6px 8px"><span style="color:var(--muted)">${r.before_val??''}</span> → <b>${r.after_val??''}</b></td>
-      <td style="padding:6px 8px;color:var(--text2)">${r.memo||''}</td>
-    </tr>`).join('')}
-  </tbody></table></div>`;
-}
-
 // ── Supabase 데이터 로드 ─────────────────────────────────────────
 async function loadFromSupabase() {
   try {
@@ -1892,58 +1867,6 @@ function renderRulesEditor() {
   <div id="rule-history" style="font-size:12px;color:var(--muted)">불러오는 중…</div>`;
 
   loadRuleHistory();
-}
-
-async function saveRulesFromEditor() {
-  const editor = state._editorEmail || getEditorEmail();
-  const fmtT = m => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
-
-  // 변경 전 스냅샷 (감사로그 diff용)
-  const before = {};
-  BUDGET_RULES.forEach(r => { before[r.id] = { label: r.label, triggerMin: r.triggerMin, disabled: !!r.disabled }; });
-
-  // 입력값 반영
-  BUDGET_RULES.forEach((rule, i) => {
-    const labelEl  = document.getElementById(`rule-label-${i}`);
-    const hEl      = document.getElementById(`rule-h-${i}`);
-    const mEl      = document.getElementById(`rule-m-${i}`);
-    const activeEl = document.getElementById(`rule-active-${i}`);
-    if (labelEl)  rule.label      = labelEl.value.trim();
-    if (hEl && mEl) rule.triggerMin = parseInt(hEl.value)*60 + parseInt(mEl.value);
-    if (activeEl) rule.disabled   = !activeEl.checked;
-  });
-
-  // diff 계산 (항목별 1행)
-  const edits = [];
-  BUDGET_RULES.forEach(r => {
-    const b = before[r.id]; if (!b) return;
-    if (b.label !== r.label)            edits.push({ rule_id: r.id, field: 'label',       before_val: b.label,                 after_val: r.label });
-    if (b.triggerMin !== r.triggerMin)  edits.push({ rule_id: r.id, field: 'trigger_min', before_val: fmtT(b.triggerMin),      after_val: fmtT(r.triggerMin) });
-    if (b.disabled !== !!r.disabled)    edits.push({ rule_id: r.id, field: 'active',      before_val: b.disabled?'OFF':'ON',   after_val: r.disabled?'OFF':'ON' });
-  });
-
-  // 변경이 있는데 편집자 로그인이 안 돼 있으면 확인
-  if (edits.length && !editor) {
-    if (!confirm('편집자 구글 로그인이 안 돼 있어요. 변경 이력 기록 없이 저장할까요?\n([취소] 후 상단에서 로그인하면 기록됩니다)')) return;
-  }
-
-  saveCustomRules(); // localStorage 백업
-
-  const rows = BUDGET_RULES.map(r => ({ id: r.id, trigger_min: r.triggerMin, disabled: r.disabled || false }));
-  try {
-    await sbUpsert('budget_rules', rows);                 // 규칙 저장
-    if (edits.length && editor) {                          // 감사로그 적재
-      const memo = (document.getElementById('rule-edit-memo')?.value || '').trim();
-      await sbUpsert('budget_rule_edits', edits.map(e => ({ ...e, editor, memo })));
-    }
-  } catch (e) { console.log('규칙/감사로그 저장 실패:', e); }
-
-  renderRulesEditor();
-  const toast = document.createElement('div');
-  toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1D9E75;color:white;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:500;z-index:9999';
-  toast.textContent = edits.length ? `✅ 규칙 저장 · 변경 ${edits.length}건 기록${editor?'':'(미기록)'}` : '✅ 규칙이 저장됐어요';
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 2500);
 }
 
 // ── 체크박스 선택 실행 ───────────────────────────────────────────
