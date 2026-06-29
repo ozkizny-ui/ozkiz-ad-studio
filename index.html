@@ -4082,6 +4082,7 @@ async function loadNotionPresale() {
 
 function renderStockPage() {
   if (!state.inventoryData.length) return;
+  if (state._stockSort == null) state._stockSort = 'stockValue';   // 기본 정렬: 온라인 재고총액 많은 순
   // 노션 예판 목록 로드 (아직 안 됐으면)
   if (!state._notionLoaded && !state._notionLoading) {
     state._notionLoading = true;
@@ -4146,7 +4147,7 @@ function renderStockPage() {
   // 카페24 상품코드(P코드) 컬럼 — SERA 매칭 키 (루프 밖에서 1회 탐색)
   const repCodeKey = findRepCodeKey(data);
 
-  // 상품명 기준으로 그룹핑
+  // P코드(카페24 상품코드) 기준으로 그룹핑 — 없으면 상품명 fallback (대시보드 다음주광고계획과 동일한 단위)
   const grouped = {};
   data.forEach(row => {
     const name   = String(row[nameKey]||'').trim();
@@ -4154,9 +4155,11 @@ function renderStockPage() {
     if (!name) return;
     // 제외 키워드 포함된 상품 숨김
     if (EXCLUDE_KEYWORDS.some(kw => name.includes(kw))) return;
-    if (!grouped[name]) grouped[name] = [];
     const repCode = repCodeKey ? String(row[repCodeKey]||'').trim() : '';
-    grouped[name].push({
+    const key = repCode || ('__name__' + name);   // P코드로 묶고, 없으면 상품명
+    if (!grouped[key]) grouped[key] = { name, repCode, skus: [] };
+    if (repCode && !grouped[key].repCode) grouped[key].repCode = repCode;
+    grouped[key].skus.push({
       option,
       avail: parseInt(row[availKey]||0),
       store: parseInt(row[storeKey]||0),
@@ -4169,7 +4172,8 @@ function renderStockPage() {
   const NOTION_MAP = {};
   (state._notionPresale || []).forEach(n => { NOTION_MAP[n.name] = n; });
 
-  const allProducts = Object.entries(grouped).map(([name, skus]) => {
+  const allProducts = Object.values(grouped).map(g => {
+    const name = g.name, skus = g.skus;
     const totalAvail = skus.reduce((s,r)=>s+r.avail,0);
     const totalStore = skus.reduce((s,r)=>s+r.store,0);
     // 온라인 재고총액 = Σ(옵션별 가용재고 × 원가). 음수 가용재고는 0 처리(재고자산).
@@ -4219,7 +4223,7 @@ function renderStockPage() {
     });
 
     // SERA 지표 매칭 (P코드 우선, 상품명 fallback)
-    const repCode = (skus.find(s => s.repCode)?.repCode) || '';
+    const repCode = g.repCode || (skus.find(s => s.repCode)?.repCode) || '';
     const sera = findSeraMatch(name, repCode);
 
     return {
@@ -4254,14 +4258,10 @@ function renderStockPage() {
   // ── ROAS 엔진에서 참조할 수 있도록 상품명 → stockStatus 맵 저장 ──
   // 필터링된 것 + 제외된 것(품절) 모두 포함해야 하므로 전체 grouped 기준으로 다시 빌드
   state._stockProductMap = {};
-  Object.keys(grouped).forEach(name => {
-    const p = products.find(p => p.name === name);
-    if (p) {
-      state._stockProductMap[name.toLowerCase().replace(/[-\s]/g,'')] = p.stockStatus;
-    } else {
-      // 필터링으로 숨겨진 것 (재고 0 + 예약판매 아님) → 품절로 처리
-      state._stockProductMap[name.toLowerCase().replace(/[-\s]/g,'')] = 'size_warn';
-    }
+  allProducts.forEach(p => {
+    const key = (p.name||'').toLowerCase().replace(/[-\s]/g,'');
+    // 필터(재고 0 + 예약판매 아님)로 숨겨진 건 품절로 처리
+    state._stockProductMap[key] = products.includes(p) ? p.stockStatus : 'size_warn';
   });
 
   // 분류
@@ -4332,7 +4332,7 @@ function renderStockPage() {
       style="padding:7px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
       <option value="">전체 복종</option>${catOpts}
     </select>
-    <button class="btn btn-outline btn-sm" onclick="state._stockFilter='';state._stockSeasons=[];state._stockCategory='';state._stockAdFilter='';state._stockStatusFilter='';state._stockHighStockOnly=false;state._stockQuickMode=false;closeSeasonDropdown();renderStockPage()">초기화</button>
+    <button class="btn btn-outline btn-sm" onclick="state._stockFilter='';state._stockSeasons=[];state._stockCategory='';state._stockAdFilter='';state._stockStatusFilter='';state._stockHighStockOnly=false;state._stockQuickMode=false;state._stockSort='stockValue';closeSeasonDropdown();renderStockPage()">초기화</button>
     <button id="stock-collapse-btn" class="btn btn-outline btn-sm" onclick="toggleStockCollapse(this)">${state._stockCollapsed?'⊕ 옵션 펼치기':'⊖ 옵션 접기'}</button>
     <button class="btn btn-outline btn-sm" onclick="exportStockExcel()">⬇ 엑셀</button>
     <button class="btn btn-outline btn-sm" onclick="copyStockTSV(this)">📋 복사</button>
@@ -4434,6 +4434,7 @@ function applyQuickFilter() {
   state._stockFilter       = '';
   state._stockCategory     = '';
   state._stockQuickMode    = true; // 광고 집행 요망 모드 → 클릭가치 700 이하 제외
+  state._stockSort         = 'stockValue'; // 기본 정렬: 온라인 재고총액 많은 순
   closeSeasonDropdown();
   renderStockPage();
 }
