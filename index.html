@@ -3057,9 +3057,9 @@ function renderAdSettingForm(adType) {
 
       ${adType !== 'PA' ? `
       <div class="as-row">
-        <label class="as-label">상품명</label>
+        <label class="as-label">상품/카테고리</label>
         <div class="as-val" style="position:relative">
-          <input type="text" id="as-product" placeholder="원피스-모모리본" class="as-input"
+          <input type="text" id="as-product" placeholder="상품명 또는 카테고리 검색…" class="as-input"
             autocomplete="off"
             oninput="onProductInput(this.value)"
             onblur="setTimeout(()=>hideProductList(),200)">
@@ -3176,43 +3176,90 @@ function hideCampaignList() {
 
 
 // 상품명 자동완성
+// 광고 카테고리 → 랜딩 URL 고정표 (단건 세팅 상품명/카테고리 자동완성용)
+// URL은 카테고리마다 경로가 달라(new_list·hot_summer_list·rain 등) 통째로 저장.
+const AD_CATEGORIES = [
+  ['신상카테고리(142)', 'https://ozkiz.com/product/new_list.html?cate_no=142'],
+  ['BEST카테고리(118)', 'https://ozkiz.com/product/list.html?cate_no=118'],
+  ['세일카테고리(105)', 'https://ozkiz.com/product/list.html?cate_no=105'],
+  ['실내복카테고리(204)', 'https://ozkiz.com/product/list.html?cate_no=204'],
+  ['모기장카테고리(953)', 'https://ozkiz.com/product/list.html?cate_no=953'],
+  ['스윔웨어카테고리(277)', 'https://ozkiz.com/product/hot_summer_list.html?cate_no=277'],
+  ['층간소음카테고리(442)', 'https://ozkiz.com/product/list.html?cate_no=442'],
+  ['레인카테고리(275)', 'https://ozkiz.com/product/rain.html?cate_no=275'],
+  ['발레카테고리(916)', 'https://ozkiz.com/product/list.html?cate_no=916'],
+  ['코스튬카테고리(263)', 'https://ozkiz.com/product/list.html?cate_no=263'],
+  ['아트웍카테고리(540)', 'https://ozkiz.com/product/list.html?cate_no=540'],
+  ['원피스카테고리(172)', 'https://ozkiz.com/product/list.html?cate_no=172'],
+  ['상하복카테고리(331)', 'https://ozkiz.com/product/list.html?cate_no=331'],
+  ['운동화카테고리(217)', 'https://ozkiz.com/product/list.html?cate_no=217'],
+  ['실내화카테고리(237)', 'https://ozkiz.com/product/list.html?cate_no=237'],
+  ['아쿠아슈즈카테고리(780)', 'https://ozkiz.com/product/list.html?cate_no=780'],
+];
+
 function onProductInput(val) {
   updateAdName();
   const list = document.getElementById('as-product-list');
   if (!list) return;
 
   if (!val || val.length < 1) { list.style.display = 'none'; return; }
-
-  // 이지어드민 데이터에서 검색 (중복 제거)
-  const ezData = state.inventoryData;
-  if (!ezData.length) { list.style.display = 'none'; return; }
-
-  const nameKey = Object.keys(ezData[0]).find(k => k.includes('상품명')) || Object.keys(ezData[0])[0];
-  const EXCLUDE = ['수선','우일신','일상화보','옷체부','데일리라이크','(브레드)','(신비)'];
   const lower = val.toLowerCase();
 
-  const uniqueNames = [...new Set(
-    ezData
-      .map(r => String(r[nameKey]||'').trim())
-      .filter(n => n && n.toLowerCase().includes(lower) && !EXCLUDE.some(kw => n.includes(kw)))
-  )].slice(0, 15);
+  // ① 카테고리 매칭 (고정표) — 상단에 태그로 노출
+  const catMatches = AD_CATEGORIES.filter(([name]) => name.toLowerCase().includes(lower));
 
-  if (!uniqueNames.length) {
+  // ② 이지어드민 상품 매칭 (중복 제거)
+  let uniqueNames = [];
+  const ezData = state.inventoryData;
+  if (ezData.length) {
+    const nameKey = Object.keys(ezData[0]).find(k => k.includes('상품명')) || Object.keys(ezData[0])[0];
+    const EXCLUDE = ['수선','우일신','일상화보','옷체부','데일리라이크','(브레드)','(신비)'];
+    uniqueNames = [...new Set(
+      ezData
+        .map(r => String(r[nameKey]||'').trim())
+        .filter(n => n && n.toLowerCase().includes(lower) && !EXCLUDE.some(kw => n.includes(kw)))
+    )].slice(0, 15);
+  }
+
+  if (!catMatches.length && !uniqueNames.length) {
     list.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:var(--text2)">검색 결과 없음</div>';
     list.style.display = 'block';
     return;
   }
 
+  const sectionHeader = (text, top) => {
+    const h = document.createElement('div');
+    h.textContent = text;
+    h.style.cssText = 'padding:6px 14px;font-size:11px;color:var(--text2);background:var(--surface2)' + (top ? ';border-top:1px solid var(--border)' : '');
+    return h;
+  };
+
   list.innerHTML = '';
-  uniqueNames.forEach(name => {
-    const el = document.createElement('div');
-    el.textContent = name;
-    el.style.cssText = 'padding:8px 14px;font-size:12px;color:var(--text);cursor:pointer';
-    el.addEventListener('mouseover', () => el.style.background = 'var(--surface2)');
-    el.addEventListener('mouseout',  () => el.style.background = '');
-    el.addEventListener('click',     () => selectAdProduct(name));
-    list.appendChild(el);
-  });
+  if (catMatches.length) {
+    list.appendChild(sectionHeader('카테고리', false));
+    catMatches.forEach(([name, url]) => {
+      const el = document.createElement('div');
+      el.style.cssText = 'padding:8px 14px;font-size:12px;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:8px';
+      el.innerHTML = '<span style="flex-shrink:0;font-size:11px;padding:2px 7px;border-radius:5px;background:#EEEDFE;color:#3C3489">카테고리</span><span></span>';
+      el.lastChild.textContent = name;
+      el.addEventListener('mouseover', () => el.style.background = 'var(--surface2)');
+      el.addEventListener('mouseout',  () => el.style.background = '');
+      el.addEventListener('click',     () => selectAdCategory(name, url));
+      list.appendChild(el);
+    });
+  }
+  if (uniqueNames.length) {
+    if (catMatches.length) list.appendChild(sectionHeader('상품', true));
+    uniqueNames.forEach(name => {
+      const el = document.createElement('div');
+      el.textContent = name;
+      el.style.cssText = 'padding:8px 14px;font-size:12px;color:var(--text);cursor:pointer';
+      el.addEventListener('mouseover', () => el.style.background = 'var(--surface2)');
+      el.addEventListener('mouseout',  () => el.style.background = '');
+      el.addEventListener('click',     () => selectAdProduct(name));
+      list.appendChild(el);
+    });
+  }
   list.style.display = 'block';
 }
 
@@ -3230,6 +3277,22 @@ async function selectAdProduct(name) {
   refreshAdSetReady();
   // 카페24에서 랜딩 URL 자동 조회
   await fetchLandingUrl(name);
+  refreshAdSetReady();
+}
+
+// 카테고리 선택: 고정표 URL을 즉시 채움 (재고조회·카페24 조회 불필요)
+function selectAdCategory(name, url) {
+  const input = document.getElementById('as-product');
+  if (input) input.value = name;
+  hideProductList();
+  updateAdName();
+  // 카테고리는 재고 개념 없음 → 재고 박스 숨김
+  const box = document.getElementById('as-stock-info');
+  if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+  // 랜딩 URL 즉시 입력
+  const urlInput = document.getElementById('landing-url');
+  if (urlInput) { urlInput.value = url; onLandingUrlChange(url); }
+  setLandingStatus('<span style="color:#3C3489;background:#EEEDFE;padding:2px 8px;border-radius:4px">✓ 카테고리</span>');
   refreshAdSetReady();
 }
 
