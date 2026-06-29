@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OZkids AD Studio</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💡</text></svg>">
 <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet">
 <style>
@@ -844,9 +845,36 @@ async function renderRuleAnalysisPage() {
       </div>
     </div>
 
-    <div style="background:var(--surface2);border:1px dashed var(--border2);border-radius:12px;padding:14px 18px;color:var(--text2);font-size:12px">
-      🗂 <b>규칙 변경 이력</b> — Phase 2에서 활성화 예정 (구글 로그인으로 편집자 기록 + 변경 diff 적재 후 여기 표시)
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:10px">🗂 규칙 변경 이력</div>
+      <div id="rule-edit-history" style="font-size:12px;color:var(--muted)">불러오는 중…</div>
     </div>`;
+  loadRuleEditHistory();
+}
+
+async function loadRuleEditHistory() {
+  const box = document.getElementById('rule-edit-history');
+  if (!box) return;
+  let rows = [];
+  try { rows = await sbGet('budget_rule_edits') || []; }
+  catch (e) { box.innerHTML = `<span style="color:var(--red)">이력 조회 실패: ${e.message}</span>`; return; }
+  if (!rows.length) { box.innerHTML = '<span style="color:var(--muted)">아직 기록된 변경이 없어요. \'예산 규칙 편집\'에서 규칙을 수정·저장하면 여기에 쌓입니다.</span>'; return; }
+  rows.sort((a,b) => (a.created_at < b.created_at ? 1 : -1));
+  const FIELD = { label:'규칙 설명', trigger_min:'발동시각', active:'활성' };
+  const fmtKst = ts => { const k = new Date(new Date(ts).getTime() + 9*3600*1000); const p = n => String(n).padStart(2,'0'); return `${String(k.getUTCFullYear()).slice(2)}/${p(k.getUTCMonth()+1)}/${p(k.getUTCDate())} ${p(k.getUTCHours())}:${p(k.getUTCMinutes())}`; };
+  box.innerHTML = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:560px">
+    <thead><tr style="color:var(--muted);text-align:left">
+      <th style="padding:6px 8px;font-weight:600">시각</th><th style="padding:6px 8px;font-weight:600">편집자</th><th style="padding:6px 8px;font-weight:600">규칙</th><th style="padding:6px 8px;font-weight:600">항목</th><th style="padding:6px 8px;font-weight:600">변경</th><th style="padding:6px 8px;font-weight:600">메모</th>
+    </tr></thead><tbody>
+    ${rows.slice(0,100).map(r => `<tr style="border-top:0.5px solid var(--border)">
+      <td style="padding:6px 8px;color:var(--text2);white-space:nowrap">${fmtKst(r.created_at)}</td>
+      <td style="padding:6px 8px">${(r.editor||'').split('@')[0]}</td>
+      <td style="padding:6px 8px"><code>${r.rule_id||''}</code></td>
+      <td style="padding:6px 8px">${FIELD[r.field]||r.field||''}</td>
+      <td style="padding:6px 8px"><span style="color:var(--muted)">${r.before_val??''}</span> → <b>${r.after_val??''}</b></td>
+      <td style="padding:6px 8px;color:var(--text2)">${r.memo||''}</td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
 }
 
 // ── Supabase 데이터 로드 ─────────────────────────────────────────
@@ -1728,6 +1756,36 @@ function saveCustomRules() {
   localStorage.setItem('custom_budget_rules', JSON.stringify(toSave));
 }
 
+// ── 편집자 구글 로그인 (규칙 편집 감사로그용, openhan.kr 제한) ──
+const GOOGLE_CLIENT_ID = '726552617389-aii2e9d53u6cisgr3oja4k4l4s858grm.apps.googleusercontent.com';
+const EDITOR_DOMAIN = 'openhan.kr';
+function getEditorEmail() { try { return localStorage.getItem('ad_editor_email') || ''; } catch(e){ return ''; } }
+function setEditorEmail(v) { try { localStorage.setItem('ad_editor_email', v); } catch(e){} state._editorEmail = v; }
+function decodeJwtPayload(t) { try { return JSON.parse(decodeURIComponent(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')).split('').map(c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''))); } catch(e){ return null; } }
+let _gisInited = false;
+function onEditorCredential(resp) {
+  const p = decodeJwtPayload(resp.credential);
+  const email = (p && p.email) ? p.email : '';
+  if (!email || (p.hd !== EDITOR_DOMAIN && !email.endsWith('@'+EDITOR_DOMAIN))) {
+    alert('openhan.kr 계정으로 로그인해 주세요' + (email ? ' (현재: '+email+')' : ''));
+    try { google.accounts.id.disableAutoSelect(); } catch(e){}
+    return;
+  }
+  setEditorEmail(email);
+  renderRulesEditor();
+}
+function initEditorLoginButton() {
+  const box = document.getElementById('editor-login-btn');
+  if (!box) return;
+  if (!(window.google && google.accounts && google.accounts.id)) { setTimeout(initEditorLoginButton, 500); return; }
+  if (!_gisInited) {
+    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onEditorCredential, hd: EDITOR_DOMAIN });
+    _gisInited = true;
+  }
+  google.accounts.id.renderButton(box, { type:'standard', size:'small', text:'signin_with', shape:'pill' });
+}
+function editorLogout() { try { localStorage.removeItem('ad_editor_email'); } catch(e){} state._editorEmail=''; try { google.accounts.id.disableAutoSelect(); } catch(e){} renderRulesEditor(); }
+
 function renderRulesEditor() {
   const el = document.getElementById('rules-editor');
   if (!el) return;
@@ -1800,7 +1858,14 @@ function renderRulesEditor() {
     </div>
   </div>`;
 
-  let html = insightHtml + `
+  const editorEmail = state._editorEmail || getEditorEmail();
+  const editorBar = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--surface2);border-radius:8px;font-size:12px">
+      <span style="color:var(--muted)">✏️ 편집자:</span>
+      ${editorEmail
+        ? `<b style="color:var(--text)">${editorEmail}</b><a onclick="editorLogout()" style="color:var(--muted);cursor:pointer;text-decoration:underline">로그아웃</a>`
+        : `<span id="editor-login-btn"></span><span style="color:var(--amber)">← 규칙 변경 기록을 위해 로그인하세요</span>`}
+    </div>`;
+  let html = insightHtml + editorBar + `
   <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">규칙 설명, 발동 시각, 활성 여부를 수정하고 저장 버튼을 눌러주세요.</div>
   <table style="width:100%;border-collapse:collapse;font-size:12px">
     <thead><tr style="background:var(--surface2);border-bottom:1px solid var(--border2)">
@@ -1838,14 +1903,24 @@ function renderRulesEditor() {
   });
 
   html += `</tbody></table>
-  <div style="margin-top:16px;text-align:right">
+  <div style="margin-top:16px;display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap">
+    <input id="rule-edit-memo" placeholder="변경 메모(선택)" style="flex:1;min-width:160px;max-width:340px;padding:9px 10px;border:1px solid var(--border2);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
     <button onclick="saveRulesFromEditor()" style="padding:9px 24px;border-radius:8px;background:var(--accent);color:white;font-size:13px;font-weight:600;border:none;cursor:pointer">💾 저장</button>
   </div>`;
 
   el.innerHTML = html;
+  if (!editorEmail) initEditorLoginButton();
 }
 
-function saveRulesFromEditor() {
+async function saveRulesFromEditor() {
+  const editor = state._editorEmail || getEditorEmail();
+  const fmtT = m => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+
+  // 변경 전 스냅샷 (감사로그 diff용)
+  const before = {};
+  BUDGET_RULES.forEach(r => { before[r.id] = { label: r.label, triggerMin: r.triggerMin, disabled: !!r.disabled }; });
+
+  // 입력값 반영
   BUDGET_RULES.forEach((rule, i) => {
     const labelEl  = document.getElementById(`rule-label-${i}`);
     const hEl      = document.getElementById(`rule-h-${i}`);
@@ -1855,22 +1930,36 @@ function saveRulesFromEditor() {
     if (hEl && mEl) rule.triggerMin = parseInt(hEl.value)*60 + parseInt(mEl.value);
     if (activeEl) rule.disabled   = !activeEl.checked;
   });
+
+  // diff 계산 (항목별 1행)
+  const edits = [];
+  BUDGET_RULES.forEach(r => {
+    const b = before[r.id]; if (!b) return;
+    if (b.label !== r.label)            edits.push({ rule_id: r.id, field: 'label',       before_val: b.label,                 after_val: r.label });
+    if (b.triggerMin !== r.triggerMin)  edits.push({ rule_id: r.id, field: 'trigger_min', before_val: fmtT(b.triggerMin),      after_val: fmtT(r.triggerMin) });
+    if (b.disabled !== !!r.disabled)    edits.push({ rule_id: r.id, field: 'active',      before_val: b.disabled?'OFF':'ON',   after_val: r.disabled?'OFF':'ON' });
+  });
+
+  // 변경이 있는데 편집자 로그인이 안 돼 있으면 확인
+  if (edits.length && !editor) {
+    if (!confirm('편집자 구글 로그인이 안 돼 있어요. 변경 이력 기록 없이 저장할까요?\n([취소] 후 상단에서 로그인하면 기록됩니다)')) return;
+  }
+
   saveCustomRules(); // localStorage 백업
 
-  // Supabase에도 저장 (trigger_min, disabled만)
-  const rows = BUDGET_RULES.map(r => ({
-    id: r.id,
-    trigger_min: r.triggerMin,
-    disabled: r.disabled || false,
-  }));
-  // 게이트웨이 경유(토큰+service_role). WRITE_VIA_GATEWAY=false면 sbUpsert가 anon 직접으로 폴백.
-  sbUpsert('budget_rules', rows).catch(e => console.log('규칙 Supabase 저장 실패:', e));
+  const rows = BUDGET_RULES.map(r => ({ id: r.id, trigger_min: r.triggerMin, disabled: r.disabled || false }));
+  try {
+    await sbUpsert('budget_rules', rows);                 // 규칙 저장
+    if (edits.length && editor) {                          // 감사로그 적재
+      const memo = (document.getElementById('rule-edit-memo')?.value || '').trim();
+      await sbUpsert('budget_rule_edits', edits.map(e => ({ ...e, editor, memo })));
+    }
+  } catch (e) { console.log('규칙/감사로그 저장 실패:', e); }
 
   renderRulesEditor();
-  // 저장 완료 토스트
   const toast = document.createElement('div');
   toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1D9E75;color:white;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:500;z-index:9999';
-  toast.textContent = '✅ 규칙이 저장됐어요';
+  toast.textContent = edits.length ? `✅ 규칙 저장 · 변경 ${edits.length}건 기록${editor?'':'(미기록)'}` : '✅ 규칙이 저장됐어요';
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), 2500);
 }
