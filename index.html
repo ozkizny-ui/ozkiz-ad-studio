@@ -801,7 +801,10 @@ async function renderRuleAnalysisPage() {
   let logs = [], logsErr = null;
   try {
     const since = new Date(Date.now() - 7*24*3600*1000).toISOString();
-    logs = (await sbGet('budget_rule_logs')).filter(l => l.executed_at && l.executed_at >= since);
+    logs = (await sbGet('budget_rule_logs')).filter(l => l.executed_at && l.executed_at >= since)
+      // 예산 0(CBO 캠페인 예산 관리) 실패 제외 — 애초에 조정 불가능했던 건이라 분석 대상 아님.
+      // (auto-adjust에 2026-07-07 스킵 가드 적용 — 이 필터는 가드 이전의 과거 로그 정리용)
+      .filter(l => !(l.success === false && !(l.old_budget > 0)));
   } catch (e) { logsErr = e.message; }
 
   // 마지막 날(오늘)은 부분집계 → 평균에서 제외
