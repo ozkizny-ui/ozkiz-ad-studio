@@ -2983,9 +2983,13 @@ function renderPaBulkPreview(rows, post) {
 
 function renderAdSettingForm(adType) {
   const container = document.getElementById('adsetting-result');
+  state._adSettingType = adType;
+  state._descSel = { type: null, creator: null };   // 탭 전환 시 토글 잔존 상태 초기화
   if (container) {
     container.oninput = refreshAdSetReady; container.onchange = refreshAdSetReady;
     setTimeout(() => {
+      renderDescChips();
+      updateDescFromBuilder();
       refreshAdSetReady();
       if (adType === 'CAROUSEL') { if (!state._caroCards || !state._caroCards.length) state._caroCards = [{}, {}]; renderCaroCards(); }
     }, 0);
@@ -3259,8 +3263,26 @@ function renderAdSettingForm(adType) {
       </div>
       <div class="as-row">
         <label class="as-label">소재 설명</label>
-        <div class="as-val"><input type="text" id="as-desc" placeholder="[소재설명_제작자_날짜]" class="as-input"
-          oninput="updateAdName()"></div>
+        <div class="as-val">
+          <input type="hidden" id="as-desc">
+          <div id="as-desc-builder" style="border:1px solid var(--border);border-radius:6px;background:var(--surface2);padding:10px 12px">
+            <div style="font-size:11px;color:var(--text2);margin-bottom:5px">소재 유형 <span style="color:#E24B4A">*</span> <span style="color:var(--muted)">— 대시보드 소재 분류 기준</span></div>
+            <div id="as-type-chips" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px"></div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:5px">설명 (후킹·컨셉 등 자유입력)</div>
+            <input type="text" id="as-desc-free" class="as-input" placeholder="여름신상모음" oninput="updateDescFromBuilder()" style="margin-bottom:10px">
+            <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+              <div>
+                <div style="font-size:11px;color:var(--text2);margin-bottom:5px">제작자 <span style="color:#E24B4A">*</span></div>
+                <div id="as-creator-chips" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--text2);margin-bottom:5px">날짜 (자동)</div>
+                <span id="as-desc-date" style="display:inline-block;font-family:monospace;font-size:12px;color:var(--text);padding:4px 10px;background:var(--bg);border:0.5px solid var(--border);border-radius:14px"></span>
+              </div>
+            </div>
+            <div id="as-desc-preview" style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-family:monospace;font-size:12px;color:var(--text)"></div>
+          </div>
+        </div>
       </div>
       <div class="as-row">
         <label class="as-label">광고명</label>
@@ -3592,6 +3614,89 @@ async function fetchLandingUrl(productName) {
   }
 }
 
+// ── 소재설명 토글 빌더 — 소재설명 = [유형키워드]_[자유설명]_[제작자]_[날짜YYMMDD] ──
+//  유형 키워드는 대시보드(주간소재성과) 분류기가 그대로 읽는 값. 맨 앞 고정이라
+//  자유설명에 다른 키워드가 섞여도 '먼저 나오는 키워드 우선' 규칙에 의해 오분류 없음.
+//  이미지/슬라이드 탭 → 이미지 키워드, 영상 탭 → 영상 키워드.
+const DESC_TYPE_KW = {
+  '오즈맘·후기':    { img: '오즈맘',         vid: '오즈맘' },
+  'AI-모델':        { img: 'ai모델이미지',   vid: 'ai모델영상' },     // AI 제작 + 모델(사람) 등장
+  'AI-제품·컨셉':   { img: 'ai제품이미지',   vid: 'ai제품영상' },     // AI 제작 + 제품만 등장
+  '실사-모델':      { img: '실사모델이미지', vid: '실사모델영상' },   // 직접 촬영 + 실제 사람 모델
+  '실사-제품·컨셉': { img: '실사제품이미지', vid: '실사제품영상' },   // 직접 촬영 + 제품만 등장
+  '인스타-릴스':    { img: '인스타릴스',     vid: '인스타릴스' },
+  '인스타-피드':    { img: '인스타피드',     vid: '인스타피드' },
+  '라방숏클립':     { img: '라방숏클립',     vid: '라방숏클립' },
+  '브이캣':         { img: '브이캣',         vid: '브이캣' },
+  '기타':           { img: '',               vid: '' },
+};
+const DESC_CREATORS = ['유니스', '켄', '헤이즐', '스텔라', '앤서니', '레이첼', '그외'];
+
+function _descToday() {
+  const d = new Date();
+  return String(d.getFullYear() % 100).padStart(2, '0')
+    + String(d.getMonth() + 1).padStart(2, '0')
+    + String(d.getDate()).padStart(2, '0');
+}
+
+function renderDescChips() {
+  const typeBox = document.getElementById('as-type-chips');
+  const creatorBox = document.getElementById('as-creator-chips');
+  if (!typeBox || !creatorBox) return;
+  const sel = state._descSel || (state._descSel = { type: null, creator: null });
+  const chip = (label, active, fn) => `
+    <button onclick="${fn}('${label}')" style="padding:4px 11px;font-size:11px;border-radius:14px;cursor:pointer;white-space:nowrap;
+      border:${active ? '1.5px' : '0.5px'} solid ${active ? 'var(--accent)' : 'var(--border)'};
+      background:${active ? '#EEEDFE' : 'var(--bg)'};
+      color:${active ? '#534AB7' : 'var(--text2)'};
+      font-weight:${active ? '600' : '400'}">${label}</button>`;
+  typeBox.innerHTML = Object.keys(DESC_TYPE_KW).map(t => chip(t, sel.type === t, 'toggleDescType')).join('');
+  creatorBox.innerHTML = DESC_CREATORS.map(c => chip(c, sel.creator === c, 'toggleDescCreator')).join('')
+    + (sel.creator === '그외'
+      ? `<input type="text" id="as-creator-free" class="as-input" placeholder="제작자 직접 입력" value="${(sel.creatorFree || '').replace(/"/g,'&quot;')}"
+          oninput="state._descSel.creatorFree=this.value;updateDescFromBuilder()" style="width:130px;padding:4px 10px;font-size:11px;border-radius:14px">`
+      : '');
+  const dateEl = document.getElementById('as-desc-date');
+  if (dateEl) dateEl.textContent = _descToday();
+}
+
+function toggleDescType(label) {
+  const sel = state._descSel || (state._descSel = { type: null, creator: null });
+  sel.type = sel.type === label ? null : label;
+  renderDescChips();
+  updateDescFromBuilder();
+}
+
+function toggleDescCreator(name) {
+  const sel = state._descSel || (state._descSel = { type: null, creator: null });
+  sel.creator = sel.creator === name ? null : name;
+  renderDescChips();
+  updateDescFromBuilder();
+}
+
+function updateDescFromBuilder() {
+  const hidden = document.getElementById('as-desc');
+  if (!hidden || !document.getElementById('as-desc-builder')) return;
+  const sel = state._descSel || {};
+  const fmt = state._adSettingType === 'VIDEO' ? 'vid' : 'img';
+  const kw = sel.type ? DESC_TYPE_KW[sel.type][fmt] : '';
+  const free = (document.getElementById('as-desc-free')?.value || '').trim();
+  const creatorName = sel.creator === '그외' ? (sel.creatorFree || '').trim() : sel.creator;
+  const parts = [];
+  if (kw) parts.push(kw);
+  if (free) parts.push(free);
+  if (creatorName) parts.push(creatorName);
+  const desc = (sel.type || free || creatorName) ? [...parts, _descToday()].join('_') : '';
+  hidden.value = desc;
+  const prev = document.getElementById('as-desc-preview');
+  if (prev) {
+    prev.innerHTML = desc
+      ? `소재설명: <b>${desc}</b>${state._adSettingType === 'VIDEO' ? '<br><span style="color:var(--text2)">🎬 Drive 영상 파일명도 광고명(상품명;소재설명)과 동일하게 지어주세요</span>' : ''}`
+      : '<span style="color:var(--text2)">유형·제작자를 선택하면 소재설명이 자동 조합됩니다</span>';
+  }
+  updateAdName();
+}
+
 // 광고명 자동 생성
 function updateAdName() {
   const product = document.getElementById('as-product')?.value?.trim() || '';
@@ -3609,10 +3714,14 @@ function refreshAdSetReady() {
   const val = id => { const e = document.getElementById(id); return e ? (e.value || '').trim() : null; };
   const color = (el, ok) => { if (el) { el.classList.toggle('fld-ok', ok); el.classList.toggle('fld-miss', !ok); } };
   const imgFile = document.getElementById('img-file');
+  // 소재설명: 유형·제작자 토글 필수. '기타' 유형은 자유설명, '그외' 제작자는 직접입력까지 있어야 완료.
+  const descSel = state._descSel || {};
+  const creatorOk = descSel.creator === '그외' ? !!(descSel.creatorFree || '').trim() : !!descSel.creator;
+  const descOk = !!(descSel.type && creatorOk && (descSel.type !== '기타' || val('as-desc-free')));
   const fields = [
     ['캠페인',  'as-campaign-search', !!val('as-campaign')],   // 선택값은 hidden #as-campaign 기준
     ['상품명',  'as-product',         !!val('as-product')],
-    ['소재설명', 'as-desc',            !!val('as-desc')],
+    ['소재설명', 'as-desc-builder',    descOk],
     ['광고명',  'as-adname',          !!val('as-adname')],
     ['이미지',  'img-drop',           !!(imgFile && imgFile.files && imgFile.files.length)],
     ['랜딩',    'landing-url',         !!val('landing-url')],
@@ -3865,6 +3974,19 @@ async function submitAdSetting(adType) {
     resultEl.innerHTML = '<div style="color:var(--red)">랜딩 URL을 입력해주세요</div>'; return;
   }
 
+  // 소재설명 토글 필수 — 대시보드 소재 분류가 이 키워드로 동작
+  if (adType !== 'PA') {
+    const sel = state._descSel || {};
+    if (!sel.type) { resultEl.innerHTML = '<div style="color:var(--red)">소재 유형을 선택해주세요 (소재 설명 토글)</div>'; return; }
+    if (!sel.creator) { resultEl.innerHTML = '<div style="color:var(--red)">제작자를 선택해주세요 (소재 설명 토글)</div>'; return; }
+    if (sel.creator === '그외' && !(sel.creatorFree || '').trim()) {
+      resultEl.innerHTML = '<div style="color:var(--red)">제작자 \'그외\'를 선택했으면 이름을 직접 입력해주세요</div>'; return;
+    }
+    if (sel.type === '기타' && !document.getElementById('as-desc-free')?.value?.trim()) {
+      resultEl.innerHTML = '<div style="color:var(--red)">유형이 \'기타\'면 설명(자유입력)을 입력해주세요</div>'; return;
+    }
+  }
+
   btn.disabled = true;
   btn.textContent = '⏳ 생성 중...';
   resultEl.innerHTML = '';
@@ -3874,6 +3996,15 @@ async function submitAdSetting(adType) {
     if (adType === 'VIDEO') {
       const filename = document.getElementById('video-drive-filename')?.value?.trim();
       if (!filename) throw new Error('Drive 영상 파일명을 입력해주세요');
+      // 영상 광고명 = Drive 파일명. 토글로 만든 광고명과 다르면 대시보드 분류가 깨지므로 확인.
+      const productV = document.getElementById('as-product')?.value?.trim() || '';
+      const descV = document.getElementById('as-desc')?.value?.trim() || '';
+      const expectedV = productV && descV ? `${productV};${descV}` : '';
+      const filenameBase = bulkParseFilename(filename).adName;
+      if (expectedV && filenameBase !== expectedV
+        && !confirm(`Drive 파일명이 토글로 만든 광고명과 달라요.\n\n파일명: ${filenameBase}\n광고명: ${expectedV}\n\n대시보드 소재 분류는 파일명(=광고명) 기준입니다.\n파일명 그대로 진행할까요?`)) {
+        btn.disabled = false; btn.textContent = '⏸ 메타에 PAUSED 상태로 생성'; return;
+      }
       resultEl.innerHTML = '<div style="color:var(--text2)">⏳ Drive 영상 업로드 + 광고 생성 중… (인코딩 대기로 수십 초 걸릴 수 있어요)</div>';
       const res = await authedFetch(`${PROXY}/api/bulk-create-ads`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3929,7 +4060,10 @@ async function submitAdSetting(adType) {
       // 생성 완료 → 폼 초기화(이미지·URL·카드·캡션·상품명 비우기)
       state._caroCards = [{}, {}];
       renderCaroCards();
-      ['landing-url','caption-text','as-product','as-desc','as-adname'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+      ['landing-url','caption-text','as-product','as-desc','as-desc-free','as-adname'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+      state._descSel = { type: null, creator: null };
+      renderDescChips();
+      updateDescFromBuilder();
       const _si = document.getElementById('as-stock-info'); if (_si) _si.style.display = 'none';
       const _ls = document.getElementById('landing-url-status'); if (_ls) _ls.style.display = 'none';
       btn.disabled = false; btn.textContent = '⏸ 메타에 PAUSED 상태로 생성';
