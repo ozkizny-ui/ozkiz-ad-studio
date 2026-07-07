@@ -797,6 +797,13 @@ async function renderRuleAnalysisPage() {
   }
   if (!daily.length) { el.innerHTML = '<div style="color:var(--muted);padding:24px">데이터가 없습니다.</div>'; return; }
 
+  // 실행 로그(최근 7일) — budget_rule_logs 기반 규칙별 성과·판정·왕복 분석
+  let logs = [], logsErr = null;
+  try {
+    const since = new Date(Date.now() - 7*24*3600*1000).toISOString();
+    logs = (await sbGet('budget_rule_logs')).filter(l => l.executed_at && l.executed_at >= since);
+  } catch (e) { logsErr = e.message; }
+
   // 마지막 날(오늘)은 부분집계 → 평균에서 제외
   const full = daily.length > 1 ? daily.slice(0, -1) : daily;
   const recent = full.slice(-7);
@@ -841,6 +848,98 @@ async function renderRuleAnalysisPage() {
   }).join('');
   const targetBottom = Math.round(TARGET/cap*barH) + 16;
 
+  // ── 로그 집계: 규칙별 성과 / 판정 분포 / 왕복 감지 ──
+  const _kstDate = iso => new Date(new Date(iso).getTime() + 9*3600*1000).toISOString().slice(0,10);
+  const _wonS = v => (v >= 0 ? '+' : '−') + '₩' + Math.abs(v).toLocaleString();
+  const VERDICT_STYLE = { '정상':'var(--green)', '기회손실':'var(--amber)', '과잉증액':'var(--red)', '과소감액':'var(--amber)', '표본부족':'var(--muted)' };
+
+  const ruleMap = {};
+  const verdictTotal = {};
+  logs.forEach(l => {
+    const key = l.rule_label || l.rule_id || '(라벨 없음)';
+    const m = ruleMap[key] || (ruleMap[key] = { label:key, cnt:0, net:0, fails:0, roasSum:0, roasN:0, v:{}, manual:0 });
+    m.cnt++;
+    if (l.success === false) m.fails++;
+    else m.net += (l.new_budget||0) - (l.old_budget||0);
+    if (l.roas_at_trigger != null) { m.roasSum += Number(l.roas_at_trigger); m.roasN++; }
+    if (l.verdict) { m.v[l.verdict] = (m.v[l.verdict]||0)+1; verdictTotal[l.verdict] = (verdictTotal[l.verdict]||0)+1; }
+    if (String(l.rule_id||'').startsWith('manual')) m.manual++;
+  });
+  const ruleRows = Object.values(ruleMap).sort((a,b)=>b.cnt-a.cnt);
+  const totalNet = ruleRows.reduce((s,m)=>s+m.net,0);
+  const manualCnt = logs.filter(l=>String(l.rule_id||'').startsWith('manual')).length;
+
+  // 왕복 감지: 같은 광고세트가 같은 날(KST) 여러 번 조정 + 증감 방향 반전
+  const byAdsetDay = {};
+  logs.filter(l => l.success !== false && l.adset_id).forEach(l => {
+    const k = l.adset_id + '|' + _kstDate(l.executed_at);
+    (byAdsetDay[k] = byAdsetDay[k] || []).push(l);
+  });
+  const churn = [];
+  Object.values(byAdsetDay).forEach(arr => {
+    if (arr.length < 2) return;
+    arr.sort((a,b)=>a.executed_at.localeCompare(b.executed_at));
+    let flips = 0;
+    for (let i=1;i<arr.length;i++) {
+      const d1 = (arr[i-1].new_budget||0)-(arr[i-1].old_budget||0);
+      const d2 = (arr[i].new_budget||0)-(arr[i].old_budget||0);
+      if (d1*d2 < 0) flips++;
+    }
+    if (flips >= 1) churn.push({ name: arr[0].ad_name, date: _kstDate(arr[0].executed_at), n: arr.length, flips,
+      seq: [arr[0].old_budget, ...arr.map(x=>x.new_budget)].map(v=>'₩'+(v||0).toLocaleString()).join(' → ') });
+  });
+  churn.sort((a,b)=> b.flips - a.flips || b.n - a.n);
+
+  // 오늘 실제 발동 (로그 기준 — 시간 경과 추정치 대체)
+  const _todayK = _kstDate(new Date().toISOString());
+  const todayLogs = logs.filter(l=>_kstDate(l.executed_at)===_todayK);
+  const todayRuleCnt = new Set(todayLogs.map(l=>l.rule_id)).size;
+
+  const verdictChips = v => Object.entries(v).sort((a,b)=>b[1]-a[1]).map(([k,n]) =>
+    `<span style="font-size:10px;color:${VERDICT_STYLE[k]||'var(--muted)'};border:1px solid currentColor;border-radius:4px;padding:0 5px;margin-right:3px;white-space:nowrap">${k} ${n}</span>`).join('');
+
+  const ruleTable = ruleRows.length ? `
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="border-bottom:1px solid var(--border2)">
+        <th style="text-align:left;padding:6px 8px;color:var(--text2);font-weight:500">규칙</th>
+        <th style="text-align:right;padding:6px 8px;color:var(--text2);font-weight:500">발동</th>
+        <th style="text-align:right;padding:6px 8px;color:var(--text2);font-weight:500">예산 순변화</th>
+        <th style="text-align:right;padding:6px 8px;color:var(--text2);font-weight:500">평균 발동 ROAS</th>
+        <th style="text-align:left;padding:6px 8px;color:var(--text2);font-weight:500">판정</th>
+      </tr></thead>
+      <tbody>${ruleRows.map(m => `
+        <tr style="border-bottom:0.5px solid var(--border)">
+          <td style="padding:6px 8px;color:var(--text)">${m.manual ? '🖐 ' : ''}${m.label}${m.fails ? ` <span style="color:var(--red);font-size:10px">실패 ${m.fails}</span>` : ''}</td>
+          <td style="padding:6px 8px;text-align:right;font-weight:600">${m.cnt}</td>
+          <td style="padding:6px 8px;text-align:right;color:${m.net>=0?'var(--green)':'var(--red)'}">${_wonS(m.net)}</td>
+          <td style="padding:6px 8px;text-align:right;color:var(--text2)">${m.roasN ? Math.round(m.roasSum/m.roasN)+'%' : '—'}</td>
+          <td style="padding:6px 8px">${verdictChips(m.v) || '<span style="font-size:10px;color:var(--muted)">—</span>'}</td>
+        </tr>`).join('')}</tbody>
+    </table></div>` : '';
+
+  const badVerdicts = (verdictTotal['기회손실']||0) + (verdictTotal['과잉증액']||0) + (verdictTotal['과소감액']||0);
+  const judgedCnt = Object.values(verdictTotal).reduce((s,n)=>s+n,0) - (verdictTotal['표본부족']||0);
+  const worstRules = ruleRows
+    .map(m => ({ label:m.label, bad:(m.v['기회손실']||0)+(m.v['과잉증액']||0)+(m.v['과소감액']||0), cnt:m.cnt }))
+    .filter(x=>x.bad>0).sort((a,b)=>b.bad-a.bad).slice(0,3);
+
+  const logSection = logsErr
+    ? `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:6px">📋 규칙 실행 성과 · 최근 7일</div>
+        <div style="font-size:12px;color:var(--red)">실행 로그 조회 실패: ${logsErr}</div></div>`
+    : `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px">📋 규칙 실행 성과 · 최근 7일 <span style="font-size:11px;color:var(--muted);font-weight:400">(실제 실행 로그 ${logs.length}건 기반 · 🤖 자동 ${logs.length-manualCnt} + 🖐 수동 ${manualCnt})</span></div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:12px">7일간 예산 순변화 <b style="color:${totalNet>=0?'var(--green)':'var(--red)'}">${_wonS(totalNet)}</b>
+          ${judgedCnt ? ` · 판정 가능 ${judgedCnt}건 중 <b style="color:${badVerdicts? 'var(--amber)':'var(--green)'}">${badVerdicts}건(${Math.round(badVerdicts/judgedCnt*100)}%)</b>이 기회손실·과잉증액·과소감액` : ''}
+          ${worstRules.length ? ` — 튜닝 후보: ${worstRules.map(x=>`<b>${x.label.split(' · ')[0]}</b>(${x.bad}건)`).join(', ')}` : ''}</div>
+        ${ruleTable || '<div style="font-size:12px;color:var(--muted)">최근 7일 실행 로그가 없습니다.</div>'}
+        ${churn.length ? `
+        <div style="margin-top:14px;font-size:13px;font-weight:600">🔁 예산 왕복 감지 <span style="font-size:11px;color:var(--muted);font-weight:400">— 같은 광고가 하루에 증액↔감액 반복 (${churn.length}건)</span></div>
+        <div style="font-size:11px;color:var(--text2);margin-top:6px">${churn.slice(0,6).map(c =>
+          `<div style="padding:5px 0;border-bottom:0.5px solid var(--border)"><b style="color:var(--text)">${c.name}</b> · ${c.date} · ${c.n}회 조정 (반전 ${c.flips}회)<br><span style="color:var(--muted)">${c.seq}</span></div>`).join('')}
+          ${churn.length > 6 ? `<div style="padding:5px 0;color:var(--muted)">외 ${churn.length-6}건</div>` : ''}</div>` : ''}
+      </div>`;
+
   const bandRows = BANDS.map(b => `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
       <div style="width:78px;font-size:11px;color:var(--text2);text-align:right">${b.label}${b.dead?' ⚠':''}</div>
@@ -872,18 +971,20 @@ async function renderRuleAnalysisPage() {
         : `<div style="font-size:12px;color:var(--muted);padding:8px 0">⚠ 'Meta 광고 예산 조정' 탭에서 <b>데이터 불러오기</b>를 먼저 하면 구간별 분포가 표시됩니다.</div>`}
     </div>
 
+    ${logSection}
+
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px">
       <div style="font-size:14px;font-weight:600;margin-bottom:6px">🧠 전략 분석 & 개선 제안 <span style="font-size:11px;color:var(--muted);font-weight:400">— ROAS ${TARGET}~300% 유지 + 매출 극대화</span></div>
       <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:12px">아침 보수적 감액 → 오전 성과 확인 → 증액 구조로 ROAS ${TARGET}~300% 유지에 적합한 설계입니다. 다만 증액은 300%↑·감액은 150%↓에서만 작동해 <b style="color:var(--text)">150~300% 데드존</b>이 평균을 끌어내립니다. 아래 제안으로 데드존을 줄이면 목표 돌파가 가능합니다.</div>
       <div style="display:flex;flex-direction:column;gap:10px">
         ${[
-          ['제안','점심 데드존 트림 추가','13:00 · ROAS 150~230% → 구매전환값 ×0.8 감액. 어중간한 중위 광고 예산을 줄여 평균 ROAS를 끌어올립니다.'],
+          ['적용됨','데드존 트림 (r17로 반영)','오후 4:00 · ROAS 150~200% → 구매전환값 ×0.7 감액 규칙이 추가됐습니다. 효과는 위 \'규칙 실행 성과\'의 r17 발동·판정으로 확인하세요.'],
           ['제안','증액 문턱 완화 + 고효율 예외','구매 ≥2 + ROAS ≥250% → +15% 증액(현재 300%부터). 또한 ROAS 500%↑ 고효율은 예산>구매전환값이어도 증액 허용해 매출 볼륨 확보.'],
           ['제안','오후 감액 정밀화','오후 감액 시 ROAS 300%↑ 소재는 제외해 효율 소재는 계속 태우고, ROAS ≤200%는 16:00에도 트림 1회 추가(현 21:00만)로 부진 예산 조기 회수.'],
           ['주의','오전 8시 감액 타이밍','8시 감액(장바구니 ≤2 + ROAS ≤150%)은 당일 데이터가 부족한 시점입니다. 전날 성과 좋은 소재는 예외 처리 조건을 고려하세요.'],
           ['양호','오후 단계 감액 구조','오후 12·3·6시 단계 감액은 예산 소진 후 ROAS 하락 방어에 좋은 구조 — 현재 방향 유지 추천.'],
         ].map(([tag,t,d])=>{
-          const tc = tag==='주의'?'var(--amber)':tag==='양호'?'var(--green)':'var(--accent)';
+          const tc = tag==='주의'?'var(--amber)':(tag==='양호'||tag==='적용됨')?'var(--green)':'var(--accent)';
           return `<div style="border:1px solid var(--border);border-left:3px solid ${tc};border-radius:8px;padding:10px 12px">
             <div style="font-size:13px;font-weight:600"><span style="font-size:10px;color:${tc};border:1px solid ${tc};border-radius:4px;padding:1px 6px;margin-right:6px">${tag}</span>${t}</div>
             <div style="font-size:12px;color:var(--text2);margin-top:3px;line-height:1.6">${d}</div>
@@ -891,7 +992,7 @@ async function renderRuleAnalysisPage() {
         }).join('')}
       </div>
       <div style="margin-top:12px;font-size:11px;color:var(--muted);padding:8px 12px;background:var(--surface2);border-radius:8px">
-        📊 활성 규칙 ${totalRules}개 · 오늘 발동 완료 ${activeRules.length}개 (증액 ${upRules}개 / 감액 ${dnRules}개) · 최근 7일 이력: ${Object.keys(JSON.parse(localStorage.getItem('budget_rule_history_v2')||'{}')).length}일치 저장됨
+        📊 활성 규칙 ${totalRules}개 (증액 ${upRules}개 / 감액 ${dnRules}개 발동시각 경과) · 오늘 실제 발동 ${todayRuleCnt}개 규칙 · ${todayLogs.length}건 · 최근 7일 실행 로그 ${logs.length}건
       </div>
     </div>
 
