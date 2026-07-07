@@ -2078,20 +2078,18 @@ async function renderRoasResult() {
   document.getElementById('roas-result').innerHTML = metrics + filterBar + table;
   document.getElementById('roas-result').appendChild(historyContainer);
 
-  // Supabase에서 자동 실행 로그 조회
+  // Supabase에서 실행 로그 조회 — anon 직접 읽기가 RLS에 막혀 게이트웨이(service role) 경유.
+  // 게이트웨이 read는 전량 반환이라 최근 7일은 클라이언트에서 필터.
   try {
     const since = new Date(Date.now() - 7*24*3600*1000).toISOString();
-    const r = await fetch(`${SB_URL}/rest/v1/budget_rule_logs?select=*&executed_at=gte.${since}&order=executed_at.desc&limit=200`, { headers: sbHeaders });
-    const sbLogs = await r.json();
+    const sbLogs = (await sbGet('budget_rule_logs'))
+      .filter(l => l.executed_at && l.executed_at >= since)
+      .sort((a, b) => b.executed_at.localeCompare(a.executed_at));
 
     // 날짜별 그룹핑
     const grouped = {};
-    // 수동 실행 이력 (localStorage)
-    Object.entries(allHistoryDisplay).forEach(([date, logs]) => {
-      if (!grouped[date]) grouped[date] = [];
-      logs.forEach(l => grouped[date].push({ type: 'manual', time: l.time, label: l.label, count: l.count }));
-    });
-    // 자동 실행 이력 (Supabase)
+    // 실행 이력 (Supabase budget_rule_logs) — 자동(rule_id=r*) + 수동(rule_id=manual_*) 실제 실행 기록
+    const sbDates = new Set();
     if (Array.isArray(sbLogs)) {
       sbLogs.forEach(l => {
         const kst = new Date(new Date(l.executed_at).getTime() + 9*3600*1000);
@@ -2099,9 +2097,16 @@ async function renderRoasResult() {
         const h = kst.getUTCHours(), m = kst.getUTCMinutes();
         const timeLabel = `${h < 12 ? '오전' : '오후'} ${h > 12 ? h-12 : h}:${String(m).padStart(2,'0')}`;
         if (!grouped[date]) grouped[date] = [];
-        grouped[date].push({ type: 'auto', time: timeLabel, adName: l.ad_name, ruleLabel: l.rule_label, oldBudget: l.old_budget, newBudget: l.new_budget, success: l.success });
+        sbDates.add(date);
+        grouped[date].push({ type: 'auto', isManual: String(l.rule_id||'').startsWith('manual'), time: timeLabel, adName: l.ad_name, ruleLabel: l.rule_label, oldBudget: l.old_budget, newBudget: l.new_budget, success: l.success });
       });
     }
+    // 발동 감지 이력 (localStorage, 브라우저별) — 서버 실행 기록이 없는 날짜만 표시 (레거시/보조)
+    Object.entries(allHistoryDisplay).forEach(([date, logs]) => {
+      if (sbDates.has(date)) return;
+      if (!grouped[date]) grouped[date] = [];
+      logs.forEach(l => grouped[date].push({ type: 'manual', time: l.time, label: l.label, count: l.count }));
+    });
 
     const dates = Object.keys(grouped).sort().reverse();
     if (!dates.length) { historyContainer.innerHTML = `<div class="sl">📋 광고비 조정 이력</div><div style="font-size:12px;color:var(--muted);padding:8px 0">이력 없음</div>`; return; }
@@ -2118,9 +2123,9 @@ async function renderRoasResult() {
           ${dayLogs.map(l => l.type === 'auto'
             ? `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border);font-size:12px">
                 <div style="min-width:52px;font-weight:600;color:var(--muted)">${l.time}</div>
-                <div style="min-width:16px">🤖</div>
+                <div style="min-width:16px">${l.isManual ? '🖐' : '🤖'}</div>
                 <div style="flex:1">
-                  <div style="color:var(--text)">${l.adName}</div>
+                  <div style="color:var(--text)">${l.adName}${l.success === false ? ' <span style="color:var(--red);font-size:10px">실패</span>' : ''}</div>
                   <div style="color:var(--muted);font-size:11px">${l.ruleLabel}</div>
                 </div>
                 <div style="text-align:right;font-size:11px">
@@ -2150,6 +2155,20 @@ async function runAll() {
   btn.disabled = true;
   let ok = 0, fail = 0;
   const updatedAdsets = new Set(); // 중복 adset 호출 방지
+  const execLogs = []; // 실행 로그 → budget_rule_logs (브라우저 무관 영속 이력)
+  const logExec = (r, newBudget, success) => execLogs.push({
+    rule_id: 'manual_' + (r.appliedRule?.id || r.action),   // manual_ 접두어: auto-adjust 당일 dedup 키와 충돌 방지
+    adset_id: String(r.adsetId || r.id),
+    ad_name: r.name,
+    rule_label: r.appliedRule?.label || (r.action === 'off' ? (r.isPresale ? '예약판매 OFF' : '품절 OFF') : '수동 조정'),
+    old_budget: r.budget || 0,
+    new_budget: newBudget,
+    success,
+    executed_at: new Date().toISOString(),   // 컬럼 기본값 미보장 — NULL이면 7일 조회에서 누락되므로 명시
+    roas_at_trigger: r.roas ?? null,
+    value_at_trigger: r.purchaseValue ?? null,
+    spend_at_trigger: r.spend ?? null,
+  });
   const toRun = state.metaAds.filter(r =>
     !state._selectedAds || state._selectedAds.has(r.id)
   );
@@ -2159,6 +2178,7 @@ async function runAll() {
         await authedFetch(`${PROXY}/api/meta?action=toggle_ad`,
           { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:r.id, status:'PAUSED'}) });
         ok++;
+        logExec(r, 0, true);
       } else if (['up','dn'].includes(r.action)) {
         const targetId = r.adsetId || r.id;
         if (updatedAdsets.has(targetId)) { console.log(`⏭ 중복 스킵: ${r.name} adsetId=${targetId}`); continue; }
@@ -2167,9 +2187,14 @@ async function runAll() {
           { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ad_id:targetId, daily_budget:r.nb}) });
         const respData = await resp.json();
         console.log(`예산 변경 [${r.name}] adsetId=${targetId} budget=${r.nb}`, respData);
-        if (respData.error) { console.error('❌ 실패:', respData.error); fail++; } else ok++;
+        if (respData.error) { console.error('❌ 실패:', respData.error); fail++; logExec(r, r.nb, false); }
+        else { ok++; logExec(r, r.nb, true); }
       }
-    } catch { fail++; }
+    } catch { fail++; logExec(r, r.action === 'off' ? 0 : r.nb, false); }
+  }
+  // 실행 로그 영속 저장 — localStorage와 달리 어느 브라우저에서 실행해도 이력이 남음
+  if (execLogs.length) {
+    sbUpsert('budget_rule_logs', execLogs).catch(e => console.log('실행 로그 저장 실패:', e));
   }
   btn.innerHTML = '▶ 광고비 조정 실행';
   btn.disabled = false;
