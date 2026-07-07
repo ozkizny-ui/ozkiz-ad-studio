@@ -895,6 +895,10 @@ async function renderRuleAnalysisPage() {
   const todayLogs = logs.filter(l=>_kstDate(l.executed_at)===_todayK);
   const todayRuleCnt = new Set(todayLogs.map(l=>l.rule_id)).size;
 
+  // Claude 규칙 수정안 생성용 컨텍스트 보관 (버튼 클릭 시 사용)
+  state._ruleLogs7d = logs;
+  state._ruleCtx = { avgRoas, TARGET, deadPct };
+
   const verdictChips = v => Object.entries(v).sort((a,b)=>b[1]-a[1]).map(([k,n]) =>
     `<span style="font-size:10px;color:${VERDICT_STYLE[k]||'var(--muted)'};border:1px solid currentColor;border-radius:4px;padding:0 5px;margin-right:3px;white-space:nowrap">${k} ${n}</span>`).join('');
 
@@ -916,6 +920,22 @@ async function renderRuleAnalysisPage() {
           <td style="padding:6px 8px">${verdictChips(m.v) || '<span style="font-size:10px;color:var(--muted)">—</span>'}</td>
         </tr>`).join('')}</tbody>
     </table></div>` : '';
+
+  // ── 전략분석&개선제안: 실행 로그 판정 결과에서 자동 생성 ──
+  const insights = [];
+  ruleRows.forEach(m => {
+    const short = m.label.split(' · ')[0];
+    const opp = m.v['기회손실']||0, over = m.v['과잉증액']||0, under = m.v['과소감액']||0;
+    if (opp >= 5) insights.push(['제안', `${short} 규칙 — 기회손실 ${opp}건`, `「${m.label}」: 목표 ROAS를 초과한 광고를 감액/유지하고 있습니다. 계산 배수 상향 또는 고효율(ROAS 400%↑) 예외 조건을 검토하세요.`]);
+    if (over >= 3) insights.push(['주의', `${short} 규칙 — 과잉증액 ${over}건`, `「${m.label}」: 목표 미만 ROAS에서 증액됐습니다. 발동 문턱(ROAS·구매 건수) 강화를 검토하세요.`]);
+    if (under >= 3) insights.push(['제안', `${short} 규칙 — 과소감액 ${under}건`, `「${m.label}」: ROAS 150% 미만인데 감액 폭이 작습니다. 감액 강도를 높이는 것을 검토하세요.`]);
+    if (m.fails >= 5 && m.fails >= m.cnt / 2) insights.push(['주의', `${short} 규칙 — 실패 ${m.fails}건`, `「${m.label}」: 발동의 절반 이상이 실패했습니다. 대상 광고 구조(캠페인 예산 관리 CBO 등)를 확인하세요.`]);
+  });
+  if (churn.length >= 10) insights.push(['주의', `예산 왕복 ${churn.length}건`, `같은 광고가 하루에 증액↔감액을 반복했습니다. 증액 직후 광고를 당일 감액 규칙에서 제외하는 가드, 또는 규칙 발동 시간 재배치를 검토하세요.`]);
+  if (deadPct != null && deadPct >= 40) insights.push(['제안', `데드존(150~300%) 예산 ${deadPct}%`, `증액(300%↑)·감액(150%↓) 사이 구간에 예산이 고여 있습니다. 데드존 트림 규칙(r17 오후4시 등)의 강도·시간대 확대를 검토하세요.`]);
+  if (avgRoas && avgRoas < TARGET) insights.push(['주의', `7일 평균 ROAS ${avgRoas}% — 목표 ${TARGET}% 미달`, `위 항목 중 기회손실·데드존 개선이 평균 ROAS를 끌어올리는 데 가장 효과적입니다.`]);
+  if (logsErr) insights.unshift(['주의', '실행 로그 조회 실패 — 로그 기반 제안 생성 불가', `조회 오류: ${logsErr}`]);
+  else if (!insights.length) insights.push(['양호', '특이 문제 없음', '최근 7일 실행 로그 기준으로 규칙이 의도대로 작동하고 있습니다.']);
 
   const badVerdicts = (verdictTotal['기회손실']||0) + (verdictTotal['과잉증액']||0) + (verdictTotal['과소감액']||0);
   const judgedCnt = Object.values(verdictTotal).reduce((s,n)=>s+n,0) - (verdictTotal['표본부족']||0);
@@ -974,16 +994,10 @@ async function renderRuleAnalysisPage() {
     ${logSection}
 
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px">🧠 전략 분석 & 개선 제안 <span style="font-size:11px;color:var(--muted);font-weight:400">— ROAS ${TARGET}~300% 유지 + 매출 극대화</span></div>
-      <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:12px">아침 보수적 감액 → 오전 성과 확인 → 증액 구조로 ROAS ${TARGET}~300% 유지에 적합한 설계입니다. 다만 증액은 300%↑·감액은 150%↓에서만 작동해 <b style="color:var(--text)">150~300% 데드존</b>이 평균을 끌어내립니다. 아래 제안으로 데드존을 줄이면 목표 돌파가 가능합니다.</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px">🧠 전략 분석 & 개선 제안 <span style="font-size:11px;color:var(--muted);font-weight:400">— 최근 7일 실행 로그·판정 결과에서 자동 생성</span></div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:12px">위 '규칙 실행 성과'의 판정(기회손실·과잉증액·과소감액)·실패·왕복 데이터를 기준으로 매번 새로 계산됩니다. 규칙 로직 변경은 코드로만 가능합니다.</div>
       <div style="display:flex;flex-direction:column;gap:10px">
-        ${[
-          ['적용됨','데드존 트림 (r17로 반영)','오후 4:00 · ROAS 150~200% → 구매전환값 ×0.7 감액 규칙이 추가됐습니다. 효과는 위 \'규칙 실행 성과\'의 r17 발동·판정으로 확인하세요.'],
-          ['제안','증액 문턱 완화 + 고효율 예외','구매 ≥2 + ROAS ≥250% → +15% 증액(현재 300%부터). 또한 ROAS 500%↑ 고효율은 예산>구매전환값이어도 증액 허용해 매출 볼륨 확보.'],
-          ['제안','오후 감액 정밀화','오후 감액 시 ROAS 300%↑ 소재는 제외해 효율 소재는 계속 태우고, ROAS ≤200%는 16:00에도 트림 1회 추가(현 21:00만)로 부진 예산 조기 회수.'],
-          ['주의','오전 8시 감액 타이밍','8시 감액(장바구니 ≤2 + ROAS ≤150%)은 당일 데이터가 부족한 시점입니다. 전날 성과 좋은 소재는 예외 처리 조건을 고려하세요.'],
-          ['양호','오후 단계 감액 구조','오후 12·3·6시 단계 감액은 예산 소진 후 ROAS 하락 방어에 좋은 구조 — 현재 방향 유지 추천.'],
-        ].map(([tag,t,d])=>{
+        ${insights.slice(0, 8).map(([tag,t,d])=>{
           const tc = tag==='주의'?'var(--amber)':(tag==='양호'||tag==='적용됨')?'var(--green)':'var(--accent)';
           return `<div style="border:1px solid var(--border);border-left:3px solid ${tc};border-radius:8px;padding:10px 12px">
             <div style="font-size:13px;font-weight:600"><span style="font-size:10px;color:${tc};border:1px solid ${tc};border-radius:4px;padding:1px 6px;margin-right:6px">${tag}</span>${t}</div>
@@ -991,12 +1005,151 @@ async function renderRuleAnalysisPage() {
           </div>`;
         }).join('')}
       </div>
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:600">✨ Claude 규칙 수정안 <span style="font-size:11px;color:var(--muted);font-weight:400">— 최근 3일 로그로 "어떻게 바꿀지" 구체안 생성 · 버튼 클릭 시에만 Claude 호출(유료)</span></div>
+          <button id="rule-llm-btn" onclick="generateRuleProposals()" style="font-size:11px;color:var(--text2);background:transparent;border:1px solid var(--border);border-radius:5px;cursor:pointer;padding:5px 10px;font-weight:500">✨ 수정안 생성</button>
+        </div>
+        <div id="rule-llm-result" style="margin-top:10px"></div>
+      </div>
+
       <div style="margin-top:12px;font-size:11px;color:var(--muted);padding:8px 12px;background:var(--surface2);border-radius:8px">
         📊 활성 규칙 ${totalRules}개 (증액 ${upRules}개 / 감액 ${dnRules}개 발동시각 경과) · 오늘 실제 발동 ${todayRuleCnt}개 규칙 · ${todayLogs.length}건 · 최근 7일 실행 로그 ${logs.length}건
       </div>
     </div>
 
 `;
+  renderRuleProposalCache();
+}
+
+// ── Claude 규칙 수정안: 최근 3일 로그 집계 → 구체적 규칙 변경안 (버튼식 · localStorage 캐시) ──
+const RULE_LLM_CACHE_KEY = 'rule_llm_proposals_v1';
+
+function renderRuleProposalCache() {
+  const box = document.getElementById('rule-llm-result');
+  if (!box) return;
+  try {
+    const c = JSON.parse(localStorage.getItem(RULE_LLM_CACHE_KEY) || 'null');
+    if (!c) { box.innerHTML = ''; return; }
+    renderRuleProposals(c);
+    const btn = document.getElementById('rule-llm-btn');
+    if (btn) btn.textContent = '🔄 다시 생성';
+  } catch(e) { box.innerHTML = ''; }
+}
+
+function renderRuleProposals(c) {
+  const box = document.getElementById('rule-llm-result');
+  if (!box) return;
+  const TAG_COL = { '수정':'var(--accent)', '추가':'var(--green)', '삭제':'var(--red)', '가드':'var(--amber)' };
+  const when = new Date(c.ts).toLocaleString('ko-KR', { month:'numeric', day:'numeric', hour:'numeric', minute:'2-digit' });
+  if (!Array.isArray(c.items)) {
+    box.innerHTML = `<div style="font-size:12px;color:var(--text2);white-space:pre-wrap;line-height:1.6">${c.raw || ''}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px">${when} 생성 · Claude</div>`;
+    return;
+  }
+  box.innerHTML = c.items.map(p => {
+    const tc = TAG_COL[p.action] || 'var(--accent)';
+    return `<div style="border:1px solid var(--border);border-left:3px solid ${tc};border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-size:13px;font-weight:600"><span style="font-size:10px;color:${tc};border:1px solid ${tc};border-radius:4px;padding:1px 6px;margin-right:6px">${p.action||'제안'}${p.target ? ' '+p.target : ''}</span>${p.title||''}</div>
+      ${p.change ? `<div style="font-size:12px;color:var(--text);margin-top:4px">${p.change}</div>` : ''}
+      ${p.rationale ? `<div style="font-size:11px;color:var(--text2);margin-top:3px;line-height:1.6">근거: ${p.rationale}</div>` : ''}
+      ${p.risk ? `<div style="font-size:11px;color:var(--amber);margin-top:3px">주의: ${p.risk}</div>` : ''}
+    </div>`;
+  }).join('') + `<div style="font-size:10px;color:var(--muted)">${when} 생성 · Claude (최근 3일 로그 기반) · 규칙 적용은 코드 수정으로만 반영됩니다</div>`;
+}
+
+let _ruleLlmBusy = false;
+async function generateRuleProposals() {
+  if (_ruleLlmBusy) return;
+  const box = document.getElementById('rule-llm-result');
+  const btn = document.getElementById('rule-llm-btn');
+  const logs7 = state._ruleLogs7d || [];
+  if (!logs7.length) { if (box) box.innerHTML = '<div style="font-size:12px;color:var(--red)">실행 로그가 없어 생성할 수 없습니다.</div>'; return; }
+  _ruleLlmBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 생성 중…'; }
+  if (box) box.innerHTML = '<div style="font-size:12px;color:var(--muted)">⏳ 최근 3일 로그 집계 → Claude 분석 중… (10~20초)</div>';
+  try {
+    // ── 최근 3일 집계 (원시 로그 대신 요약만 전송 — 토큰 절약) ──
+    const kd = iso => new Date(new Date(iso).getTime() + 9*3600*1000).toISOString().slice(0,10);
+    const since3 = new Date(Date.now() - 3*24*3600*1000).toISOString();
+    const logs = logs7.filter(l => l.executed_at >= since3);
+    const rm = {};
+    logs.forEach(l => {
+      const m = rm[l.rule_id] || (rm[l.rule_id] = { label: l.rule_label, cnt:0, fail:0, net:0, roasS:0, roasN:0, v:{} });
+      m.cnt++;
+      if (l.success === false) m.fail++;
+      else m.net += (l.new_budget||0) - (l.old_budget||0);
+      if (l.roas_at_trigger != null) { m.roasS += Number(l.roas_at_trigger); m.roasN++; }
+      if (l.verdict) m.v[l.verdict] = (m.v[l.verdict]||0)+1;
+    });
+    const ruleStats = Object.entries(rm).map(([id, m]) =>
+      `${id} 「${m.label}」: 발동${m.cnt} 실패${m.fail} 순변화${m.net>=0?'+':''}${Math.round(m.net/1000)}천원 평균발동ROAS${m.roasN?Math.round(m.roasS/m.roasN)+'%':'-'} 판정{${Object.entries(m.v).map(([k,n])=>k+':'+n).join(', ')}}`
+    ).join('\n');
+    const byAD = {};
+    logs.filter(l => l.success !== false && l.adset_id).forEach(l => {
+      const k = l.adset_id + '|' + kd(l.executed_at);
+      (byAD[k] = byAD[k] || []).push(l);
+    });
+    const churn3 = [];
+    Object.values(byAD).forEach(arr => {
+      if (arr.length < 2) return;
+      arr.sort((a,b)=>a.executed_at.localeCompare(b.executed_at));
+      let flips = 0;
+      for (let i=1;i<arr.length;i++) if (((arr[i-1].new_budget||0)-(arr[i-1].old_budget||0)) * ((arr[i].new_budget||0)-(arr[i].old_budget||0)) < 0) flips++;
+      if (flips >= 1) churn3.push({ name: arr[0].ad_name, rules: arr.map(x=>x.rule_id+'('+((x.new_budget||0)-(x.old_budget||0)>=0?'+':'-')+')').join('→'), seq: [arr[0].old_budget, ...arr.map(x=>x.new_budget)].map(v=>Math.round((v||0)/1000)+'천').join('→'), flips });
+    });
+    churn3.sort((a,b)=>b.flips-a.flips);
+    const rules = (typeof BUDGET_RULES !== 'undefined' ? BUDGET_RULES : []).filter(r=>!r.disabled).map(r=>`${r.id}(${r.dir==='up'?'증액':'감액'}) ${r.label}`).join('\n');
+    const ctx = state._ruleCtx || {};
+
+    const prompt = `Meta 광고 예산 자동조정 규칙 시스템의 최근 3일 실행 데이터입니다. 규칙을 "어떻게 바꿀지" 구체적인 수정안을 제안하세요.
+
+## 목표
+- 목표 ROAS ${ctx.TARGET||250}~300% 유지 + 매출 극대화. 최근 7일 평균 ROAS ${ctx.avgRoas||'-'}%${ctx.deadPct!=null?` · 데드존(150~300%) 예산 비중 ${ctx.deadPct}%`:''}
+- 판정 의미: 기회손실=목표 초과인데 감액/유지, 과잉증액=목표 미만인데 증액, 과소감액=150%미만인데 감액 부족, 표본부족=구매 2건 미만이라 판정 보류
+
+## 현재 규칙 (id, 방향, 발동시각·조건·계산식)
+${rules}
+
+## 최근 3일 규칙별 실행 집계
+${ruleStats}
+
+## 예산 왕복 사례 (같은 광고 하루 내 증액↔감액, 상위 ${Math.min(churn3.length,5)}건/총 ${churn3.length}건)
+${churn3.slice(0,5).map(c=>`${c.name}: ${c.rules} 예산 ${c.seq}`).join('\n') || '없음'}
+
+## 요구사항
+- 데이터 근거가 있는 것만 3~6개 제안. 각 제안은 구체적 수치(문턱·배수·시각)를 현재값→제안값으로 명시.
+- 왕복이 많으면 원인이 되는 규칙 조합을 짚고 가드(예: 당일 증액된 광고는 감액 제외)를 제안.
+- 아래 JSON 배열만 출력 (다른 텍스트 금지):
+[{"action":"수정|추가|삭제|가드","target":"규칙id 또는 null","title":"한 줄 요약","change":"현재 → 제안 (구체 수치)","rationale":"데이터 근거","risk":"주의점(없으면 생략)"}]`;
+
+    const r = await fetch(`${PROXY}/api/claude`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, model: 'sonnet', max_tokens: 4000,
+        system: '당신은 Meta 광고 예산 자동조정 규칙을 튜닝하는 퍼포먼스 마케팅 엔지니어입니다. 데이터에 근거한 보수적이고 구체적인 제안만 합니다.' }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    // JSON 추출 — max_tokens로 끝이 잘린 경우 마지막 완전한 객체까지 복구
+    let items = null;
+    const rawText = (d.text||'').replace(/```json|```/g, '');
+    const m = rawText.match(/\[[\s\S]*\]/) || rawText.match(/\[[\s\S]*/);
+    if (m) {
+      try { items = JSON.parse(m[0]); }
+      catch(e) {
+        const cut = m[0].lastIndexOf('}');
+        if (cut > 0) { try { items = JSON.parse(m[0].slice(0, cut + 1) + ']'); } catch(e2) {} }
+      }
+    }
+    const cache = { ts: Date.now(), items: Array.isArray(items) ? items : null, raw: Array.isArray(items) ? null : (d.text||'') };
+    try { localStorage.setItem(RULE_LLM_CACHE_KEY, JSON.stringify(cache)); } catch(e) {}
+    renderRuleProposals(cache);
+  } catch(e) {
+    if (box) box.innerHTML = `<div style="font-size:12px;color:var(--red)">생성 실패: ${e.message}</div>`;
+  } finally {
+    _ruleLlmBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 다시 생성'; }
+  }
 }
 
 // ── Supabase 데이터 로드 ─────────────────────────────────────────
