@@ -4329,7 +4329,8 @@ function computeStockData() {
   // 카페24 상품코드(P코드) 컬럼 — SERA 매칭 키 (루프 밖에서 1회 탐색)
   const repCodeKey = findRepCodeKey(data);
 
-  // P코드(카페24 상품코드) 기준으로 그룹핑 — 없으면 상품명 fallback (대시보드 다음주광고계획과 동일한 단위)
+  // 그룹핑: 1차 P코드 + 2차 상품명 — 같은 P코드에 본품/파츠/필동·세트 구성품이 함께 묶여
+  // 재고 0인 구성품 행이 '품절 옵션'으로 오인되는 것 방지 (예: 가방-트윙클드림 419개가 품절 판정)
   const grouped = {};
   data.forEach(row => {
     const name   = String(row[nameKey]||'').trim();
@@ -4338,7 +4339,7 @@ function computeStockData() {
     // 제외 키워드 포함된 상품 숨김
     if (EXCLUDE_KEYWORDS.some(kw => name.includes(kw))) return;
     const repCode = repCodeKey ? String(row[repCodeKey]||'').trim() : '';
-    const key = repCode || ('__name__' + name);   // P코드로 묶고, 없으면 상품명
+    const key = repCode ? repCode + '::' + name : ('__name__' + name);
     if (!grouped[key]) grouped[key] = { name, repCode, skus: [] };
     if (repCode && !grouped[key].repCode) grouped[key].repCode = repCode;
     grouped[key].skus.push({
