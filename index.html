@@ -3009,7 +3009,8 @@ function renderPaBulkPreview(rows, post) {
 function renderAdSettingForm(adType) {
   const container = document.getElementById('adsetting-result');
   state._adSettingType = adType;
-  state._descSel = { type: null, creator: null };   // 탭 전환 시 토글 잔존 상태 초기화
+  // 탭 전환 시 토글 잔존 상태 초기화. fmt: 이미지/영상 탭은 고정, 슬라이드는 기본 이미지(칩으로 변경 가능)
+  state._descSel = { type: null, creator: null, fmt: adType === 'VIDEO' ? 'vid' : 'img' };
   if (container) {
     container.oninput = refreshAdSetReady; container.onchange = refreshAdSetReady;
     setTimeout(() => {
@@ -3293,6 +3294,9 @@ function renderAdSettingForm(adType) {
           <div id="as-desc-builder" style="border:1px solid var(--border);border-radius:6px;background:var(--surface2);padding:10px 12px">
             <div style="font-size:11px;color:var(--text2);margin-bottom:5px">소재 유형 <span style="color:#E24B4A">*</span> <span style="color:var(--muted)">— 대시보드 소재 분류 기준</span></div>
             <div id="as-type-chips" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px"></div>
+            ${adType === 'CAROUSEL' ? `
+            <div style="font-size:11px;color:var(--text2);margin-bottom:5px">카드 소재 형태 <span style="color:var(--muted)">— 유형 키워드의 이미지/영상 결정</span></div>
+            <div id="as-fmt-chips" style="display:flex;gap:5px;margin-bottom:10px"></div>` : ''}
             <div style="font-size:11px;color:var(--text2);margin-bottom:5px">설명 (후킹·컨셉 등 자유입력)</div>
             <input type="text" id="as-desc-free" class="as-input" placeholder="여름신상모음" oninput="updateDescFromBuilder()" style="margin-bottom:10px">
             <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
@@ -3644,17 +3648,17 @@ async function fetchLandingUrl(productName) {
 //  자유설명에 다른 키워드가 섞여도 '먼저 나오는 키워드 우선' 규칙에 의해 오분류 없음.
 //  이미지/슬라이드 탭 → 이미지 키워드, 영상 탭 → 영상 키워드.
 const DESC_TYPE_KW = {
-  '오즈맘·후기':    { img: '오즈맘',         vid: '오즈맘' },
+  '오즈맘·후기':    { img: '오즈맘이미지',   vid: '오즈맘영상' },     // 대시보드 유형은 '오즈맘' 유지 — 이미지/영상 구분만 추가
   'AI-모델':        { img: 'ai모델이미지',   vid: 'ai모델영상' },     // AI 제작 + 모델(사람) 등장
   'AI-제품·컨셉':   { img: 'ai제품이미지',   vid: 'ai제품영상' },     // AI 제작 + 제품만 등장
   '실사-모델':      { img: '실사모델이미지', vid: '실사모델영상' },   // 직접 촬영 + 실제 사람 모델
   '실사-제품·컨셉': { img: '실사제품이미지', vid: '실사제품영상' },   // 직접 촬영 + 제품만 등장
-  '코디컷':         { img: '코디컷',         vid: '코디컷' },         // 스타일링/코디 컷 (이미지 중심)
-  '인스타-릴스':    { img: '인스타릴스',     vid: '인스타릴스' },
-  '인스타-피드':    { img: '인스타피드',     vid: '인스타피드' },
+  '코디컷':         { img: '코디컷이미지',   vid: '코디컷영상' },     // 스타일링/코디 컷 — 대시보드 유형은 '코디컷' 유지
+  '인스타-릴스':    { img: '인스타릴스',     vid: '인스타릴스' },     // 릴스=영상, 피드=이미지, 클립=영상 —
+  '인스타-피드':    { img: '인스타피드',     vid: '인스타피드' },     //   유형 자체가 형태를 담고 있어 탭 무관
   '라방숏클립':     { img: '라방숏클립',     vid: '라방숏클립' },
-  '브이캣':         { img: '브이캣',         vid: '브이캣' },
-  '기타':           { img: '',               vid: '' },
+  '브이캣':         { img: '브이캣',         vid: '브이캣' },         // 대시보드가 영상 고정 처리
+  '기타':           { img: '이미지',         vid: '영상' },           // 유형 키워드 없이 형태만 — 대시보드 분류는 '기타' 유지
 };
 const DESC_CREATORS = ['유니스', '켄', '헤이즐', '스텔라', '앤서니', '레이첼', '그외'];
 
@@ -3677,6 +3681,8 @@ function renderDescChips() {
       color:${active ? '#534AB7' : 'var(--text2)'};
       font-weight:${active ? '600' : '400'}">${label}</button>`;
   typeBox.innerHTML = Object.keys(DESC_TYPE_KW).map(t => chip(t, sel.type === t, 'toggleDescType')).join('');
+  const fmtBox = document.getElementById('as-fmt-chips');   // 슬라이드 탭 전용 — 카드가 이미지/영상 둘 다 가능
+  if (fmtBox) fmtBox.innerHTML = ['이미지', '영상'].map(f => chip(f, sel.fmt === (f === '영상' ? 'vid' : 'img'), 'toggleDescFmt')).join('');
   creatorBox.innerHTML = DESC_CREATORS.map(c => chip(c, sel.creator === c, 'toggleDescCreator')).join('')
     + (sel.creator === '그외'
       ? `<input type="text" id="as-creator-free" class="as-input" placeholder="제작자 직접 입력" value="${(sel.creatorFree || '').replace(/"/g,'&quot;')}"
@@ -3700,11 +3706,19 @@ function toggleDescCreator(name) {
   updateDescFromBuilder();
 }
 
+function toggleDescFmt(label) {   // 슬라이드 탭 전용: 카드 소재 형태 (항상 하나 선택 유지)
+  const sel = state._descSel || (state._descSel = { type: null, creator: null });
+  sel.fmt = label === '영상' ? 'vid' : 'img';
+  renderDescChips();
+  updateDescFromBuilder();
+}
+
 function updateDescFromBuilder() {
   const hidden = document.getElementById('as-desc');
   if (!hidden || !document.getElementById('as-desc-builder')) return;
   const sel = state._descSel || {};
-  const fmt = state._adSettingType === 'VIDEO' ? 'vid' : 'img';
+  // 이미지/영상 탭은 탭이 형태를 결정, 슬라이드 탭은 sel.fmt(형태 칩)로 선택
+  const fmt = sel.fmt || (state._adSettingType === 'VIDEO' ? 'vid' : 'img');
   const kw = sel.type ? DESC_TYPE_KW[sel.type][fmt] : '';
   const free = (document.getElementById('as-desc-free')?.value || '').trim();
   const creatorName = sel.creator === '그외' ? (sel.creatorFree || '').trim() : sel.creator;
@@ -4087,7 +4101,7 @@ async function submitAdSetting(adType) {
       state._caroCards = [{}, {}];
       renderCaroCards();
       ['landing-url','caption-text','as-product','as-desc','as-desc-free','as-adname'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
-      state._descSel = { type: null, creator: null };
+      state._descSel = { type: null, creator: null, fmt: 'img' };
       renderDescChips();
       updateDescFromBuilder();
       const _si = document.getElementById('as-stock-info'); if (_si) _si.style.display = 'none';
