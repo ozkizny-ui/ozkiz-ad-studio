@@ -3306,10 +3306,10 @@ function renderAdSettingForm(adType) {
               </div>
               <div>
                 <div style="font-size:11px;color:var(--text2);margin-bottom:5px">날짜 (자동)</div>
-                <span id="as-desc-date" style="display:inline-block;font-family:monospace;font-size:12px;color:var(--text);padding:4px 10px;background:var(--bg);border:0.5px solid var(--border);border-radius:14px"></span>
+                <span id="as-desc-date" style="display:inline-block;font-size:12px;color:var(--text);padding:4px 10px;background:var(--bg);border:0.5px solid var(--border);border-radius:14px"></span>
               </div>
             </div>
-            <div id="as-desc-preview" style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-family:monospace;font-size:12px;color:var(--text)"></div>
+            <div id="as-desc-preview" style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px;color:var(--text)"></div>
           </div>
         </div>
       </div>
@@ -3657,7 +3657,7 @@ const DESC_TYPE_KW = {
   '인스타-릴스':    { img: '인스타릴스',     vid: '인스타릴스' },     // 릴스=영상, 피드=이미지, 클립=영상 —
   '인스타-피드':    { img: '인스타피드',     vid: '인스타피드' },     //   유형 자체가 형태를 담고 있어 탭 무관
   '라방숏클립':     { img: '라방숏클립',     vid: '라방숏클립' },
-  '브이캣':         { img: '브이캣',         vid: '브이캣' },         // 대시보드가 영상 고정 처리
+  '브이캣':         { img: '브이캣이미지',   vid: '브이캣영상' },     // 대시보드 유형은 '브이캣' 유지 — 이미지/영상 구분만 추가
   '기타':           { img: '이미지',         vid: '영상' },           // 유형 키워드 없이 형태만 — 대시보드 분류는 '기타' 유지
 };
 const DESC_CREATORS = ['유니스', '켄', '헤이즐', '스텔라', '앤서니', '레이첼', '그외'];
