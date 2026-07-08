@@ -2143,16 +2143,20 @@ function renderRulesEditor() {
   if (!el) return;
 
   let rowsHtml = '';
-  BUDGET_RULES.forEach(rule => {
+  // 표시는 발동 시각순 (배열 순서는 우선순위라 그대로 두고 정렬만) — 같은 시각이면 id순
+  [...BUDGET_RULES].sort((a, b) => a.triggerMin - b.triggerMin || a.id.localeCompare(b.id, 'ko', { numeric: true })).forEach(rule => {
     const disabled = rule.disabled || false;
     const h = String(Math.floor(rule.triggerMin/60)).padStart(2,'0');
     const m = String(rule.triggerMin%60).padStart(2,'0');
+    const dirTag = rule.dir === 'up' ? '<span class="tag green" style="font-size:10px;white-space:nowrap;display:inline-block">▲ 증액</span>'
+      : rule.dir === 'off' ? '<span class="tag red" style="font-size:10px;white-space:nowrap;display:inline-block">⏸ OFF</span>'
+      : '<span class="tag red" style="font-size:10px;white-space:nowrap;display:inline-block">▼ 감액</span>';
     rowsHtml += `<tr style="border-bottom:0.5px solid var(--border);${disabled?'opacity:.45':''}">
       <td style="padding:8px 12px;text-align:center;font-size:11px">${disabled?'<span style="color:var(--muted)">OFF</span>':'<span style="color:var(--green);font-weight:600">ON</span>'}</td>
       <td style="padding:8px 12px;text-align:center;font-family:monospace;font-size:11px;font-weight:600;color:var(--accent)">${rule.id}</td>
       <td style="padding:8px 12px;color:var(--text)">${rule.label}</td>
       <td style="padding:8px 12px;text-align:center;color:var(--text2);white-space:nowrap">${h}:${m}</td>
-      <td style="padding:8px 12px;text-align:center"><span class="tag ${rule.dir==='up'?'green':'red'}" style="font-size:10px;white-space:nowrap;display:inline-block">${rule.dir==='up'?'▲ 증액':'▼ 감액'}</span></td>
+      <td style="padding:8px 12px;text-align:center">${dirTag}</td>
     </tr>`;
   });
 
