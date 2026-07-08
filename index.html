@@ -2118,7 +2118,7 @@ async function loadRuleHistory() {
   const items = RULE_CHANGELOG.map(c => ({ when: c.date + ' 00:00', who: c.by, kind: '규칙변경', text: c.text }));
   try {
     const runs = await sbGet('budget_rule_edits') || [];
-    runs.forEach(r => {
+    runs.filter(r => r.editor !== '_scheduler_trace').forEach(r => {   // 스케줄러 정체 추적(2026-07-08, 1회성 진단) 기록은 이력에서 숨김
       const p = n => String(n).padStart(2,'0');
       let when = '';
       if (r.created_at) { const d = new Date(new Date(r.created_at).getTime()+9*3600*1000); when = `${String(d.getUTCFullYear()).slice(2)}/${p(d.getUTCMonth()+1)}/${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`; }
