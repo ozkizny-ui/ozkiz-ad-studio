@@ -1583,8 +1583,8 @@ const BUDGET_RULES = [
     calc:  (ad) => ad.budget > 20000 ? 20000 : ad.budget,
   },
   {
-    id: 'r2', triggerMin: 8*60, dir: 'up',
-    label: '오전 8:00 · 장바구니 ≥5 → ₩30,000',
+    id: 'r2', triggerMin: 7*60, dir: 'up',
+    label: '오전 7:00 · 장바구니 ≥5 → ₩30,000',
     check: (ad) => ad.cart >= 5 && ad.budget < 30000 && ad.roas <= 200,
     calc:  (ad) => 30000,
   },
@@ -1712,17 +1712,17 @@ const BUDGET_RULES = [
   },
   {
     // 심야 브레이크 1차 (자동 전용 — 심야엔 수동 실행 없음. 방향 가드 내장: 트림 전용)
-    id: 'r19', triggerMin: 1*60, dir: 'dn', nightOnly: true,
-    label: '새벽 1:00 · 오늘 소진 ≥₩30,000 + ROAS ≤100% → 구매전환값의 60% (최소 ₩10,000)',
-    check: (ad) => ad.spend >= 30000 && ad.roas <= 100 && ad.budget > Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
-    calc:  (ad) => Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+    id: 'r19', triggerMin: 2*60, dir: 'dn', nightOnly: true,
+    label: '새벽 2:00 · 예산 ≥₩200,000 + 오늘 소진 ≥₩40,000 + ROAS ≤100% → 구매전환값의 100% (최소 ₩10,000)',
+    check: (ad) => ad.budget >= 200000 && ad.spend >= 40000 && ad.roas <= 100 && ad.budget > Math.max(Math.round(ad.purchaseValue / 1000) * 1000, 10000),
+    calc:  (ad) => Math.max(Math.round(ad.purchaseValue / 1000) * 1000, 10000),
   },
   {
-    // 심야 브레이크 2차
+    // 심야 브레이크 2차 (ROAS ≥200% 제외 = 구매 1건 고액 소재 보호)
     id: 'r20', triggerMin: 4*60, dir: 'dn', nightOnly: true,
-    label: '새벽 4:00 · 오늘 소진 ≥₩50,000 + ROAS ≤100% → 구매전환값의 60% (최소 ₩10,000)',
-    check: (ad) => ad.spend >= 50000 && ad.roas <= 100 && ad.budget > Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
-    calc:  (ad) => Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+    label: '새벽 4:00 · 예산 ≥₩200,000 + 오늘 소진 ≥₩60,000 + 구매 2건 미만 → 기존 예산의 50% (ROAS ≥200% 제외)',
+    check: (ad) => ad.budget >= 200000 && ad.spend >= 60000 && ad.purchases < 2 && ad.roas < 200,
+    calc:  (ad) => Math.round(ad.budget * 0.5 / 1000) * 1000,
   },
   {
     id: 'r17', triggerMin: 16*60, dir: 'dn',
@@ -2119,7 +2119,8 @@ function editorLogout() { try { localStorage.removeItem('ad_editor_email'); } ca
 
 // 규칙 로직 변경 이력 — 규칙은 코드로만 바뀌므로 코드에 직접 기록(최신이 위)
 const RULE_CHANGELOG = [
-  { date: '2026-07-09', by: 'Claude Code', text: 'r19·r20 추가(심야 브레이크) — 새벽 1:00/4:00 · 오늘 소진 ≥₩3만/₩5만 + ROAS ≤100% → 구매전환값의 60%(최소 ₩1만) 캡. 저녁 수동 대폭 증액 후 새벽 과소진 사고(7/8: 2.1배 증액 → 새벽 62만 소진·ROAS 80%) 방지. 운영시간 가드에 심야 슬롯(01:00~02:30, 04:00~05:30) 개방 — cron-job.org 심야 호출 필요.' },
+  { date: '2026-07-09', by: 'Claude Code', text: 'r2 발동 시각 오전 8:00 → 7:00 (운영시간 시작도 07:00으로 확장 — 07~08시엔 r2만 발동).' },
+  { date: '2026-07-09', by: 'Claude Code', text: 'r19·r20 추가(심야 브레이크) — r19 새벽 2:00 · 예산 ≥20만 + 소진 ≥4만 + ROAS ≤100% → 구매전환값의 100%(최소 1만) / r20 새벽 4:00 · 예산 ≥20만 + 소진 ≥6만 + 구매 2건 미만 → 예산의 50%(ROAS ≥200% 제외). 저녁 수동 대폭 증액 후 새벽 과소진 사고(7/8: 2.1배 증액 → 새벽 62만 소진·ROAS 80%) 방지. 심야 슬롯 02:00~03:30, 04:00~05:30 개방. 게이트 근거: 정상 새벽 페이스 = 예산의 ~13%(2시)/~17%(4시), 실측 8시 소진 = 예산의 20~35%.' },
   { date: '2026-07-08', by: 'Claude Code', text: 'r18 추가 — 오전 8:00 · 최근 3일(전일까지) 소진 ≥₩25,000 + 구매 0 → 광고 OFF. 현재 예산 ₩20,000 이상이면 제외(성과 광고 보호). 자동 전용(수동 실행은 3일 데이터 없음), OFF가 예산 조정보다 우선. 시각은 운영시간 시작=가장 이른 발동 가능 시각(심야는 운영시간 가드로 불가).' },
   { date: '2026-07-08', by: 'Claude Code', text: '수동 실행이 disabled(꺼진) 규칙도 발동시키던 버그 수정 — 자동과 동일하게 disabled 존중.' },
   { date: '2026-07-08', by: 'Claude Code', text: '전역 가드 — 증감 폭 13% 미만이면 모든 규칙 발동 스킵(미세 조정은 머신러닝 재학습 위험만 만들고 실익 없음 · 최근 2주 조정의 ~6% 해당). 자동·수동 동일 적용.' },
