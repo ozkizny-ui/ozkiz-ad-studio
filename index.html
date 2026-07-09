@@ -2566,7 +2566,51 @@ async function loadPaData() {
 // Claude로 캡션 생성 (proxy /api/claude — 키는 서버측 ANTHROPIC_API_KEY, 브라우저 미노출)
 async function generateCaption(landingUrl, productName) {
   try {
-    // 카페24 상품페이지 텍스트 가져오기 (기존 동작 유지)
+    // ── 카테고리 광고 분기: 상세페이지·리뷰가 없으므로 카테고리 상품 목록 기반 '기획전 캡션' 생성 ──
+    const catM = String(landingUrl).match(/cate_no=(\d+)/);
+    if (catM || productName.includes('카테고리')) {
+      const catName = productName.replace(/카테고리|\(\d+\)/g, '').trim() || productName; // '세일카테고리(105)' → '세일'
+      let itemLines = [];
+      if (catM) {
+        try {
+          // display=T&selling=T: 진열·판매중만. 상품명에 '품절' 표기가 남은 것도 캡션 재료에서 제외
+          const cr = await fetch(`${PROXY}/api/cafe24?path=admin/products&category=${catM[1]}&display=T&selling=T&limit=20`);
+          const cd = await cr.json();
+          itemLines = (cd.products || [])
+            .filter(p => !(p.product_name || '').includes('품절'))
+            .map(p => `- ${p.product_name}${p.price ? ` (${Math.round(parseFloat(p.price)).toLocaleString()}원)` : ''}`)
+            .slice(0, 10);
+        } catch(e) {}
+      }
+      const hook = document.getElementById('as-desc')?.value?.trim() || '';
+      const catPrompt = `오즈키즈(영유아 의류/신발 브랜드)의 '${catName}' 기획전(카테고리 랜딩) 메타 광고 캡션을 서로 다른 톤으로 2개 작성하세요.
+${itemLines.length ? `[기획전에 포함된 대표 상품들]\n${itemLines.join('\n')}\n` : ''}${hook ? `[소재 컨셉/후킹] ${hook}\n` : ''}
+각 캡션 요구:
+- 2~3문장, 이모지 1~3개, 해시태그 없음.
+- 단일 상품이 아니라 "골라 담는 기획전" 느낌 — 엄마들이 아이 옷을 한 번에 둘러보고 싶어지는 톤.${itemLines.length ? ' 위 상품 목록에서 1~2개를 자연스럽게 언급해도 좋지만, 목록에 없는 상품·가격·할인율은 지어내지 마세요.' : ' 구체적 상품명·가격·할인율은 지어내지 마세요.'}
+- 링크/URL/"이 링크 클릭" 같은 표현 금지.
+아래 형식 그대로만 출력(다른 말·제목·마크다운·따옴표 금지):
+1.
+(첫 번째 캡션)
+
+2.
+(두 번째 캡션)`;
+      const cres = await fetch(`${PROXY}/api/claude`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: catPrompt,
+          system: '당신은 오즈키즈(영유아 의류/신발 브랜드) 광고 카피라이터입니다. 요청한 형식대로 서로 다른 톤의 메타 광고 캡션 2개만 출력합니다. 마크다운·해시태그·제목·따옴표·부연설명·URL/링크 표현을 쓰지 않고, 주어진 정보에만 근거하며 없는 사실을 지어내지 않습니다.',
+          max_tokens: 700,
+          model: 'sonnet',
+        }),
+      });
+      const cdat = await cres.json();
+      if (cdat.error) return '캡션 생성 실패: ' + cdat.error;
+      return (cdat.text || '').trim() || '캡션 생성 실패';
+    }
+
+    // ── 일반 상품 광고: 상품 검색 + 리뷰 기반 (기존 동작 유지) ──
     const proxyUrl = `${PROXY}/api/cafe24?path=/api/v2/products&params=search_query=${encodeURIComponent(productName.split('-')[1]||productName)}&limit=1`;
     let productInfo = productName;
     try {
