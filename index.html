@@ -2610,16 +2610,19 @@ ${itemLines.length ? `[기획전에 포함된 대표 상품들]\n${itemLines.joi
       return (cdat.text || '').trim() || '캡션 생성 실패';
     }
 
-    // ── 일반 상품 광고: 상품 검색 + 리뷰 기반 (기존 동작 유지) ──
-    const proxyUrl = `${PROXY}/api/cafe24?path=/api/v2/products&params=search_query=${encodeURIComponent(productName.split('-')[1]||productName)}&limit=1`;
+    // ── 일반 상품 광고: 상품 정보 + 리뷰 기반 ──
+    // 상품 정보는 랜딩 URL의 product_no로 직접 조회 (2026-07-09 수정 — 기존 상품명 검색은
+    // 잘못된 path 형식이라 항상 404로 조용히 실패, 설명 없이 생성되고 있었음)
     let productInfo = productName;
-    try {
-      const pr = await fetch(proxyUrl);
-      const pd = await pr.json();
-      if (pd.products && pd.products[0]) {
-        productInfo = `${pd.products[0].product_name}: ${pd.products[0].simple_description||''}`;
-      }
-    } catch(e) {}
+    const pnoM = String(landingUrl).match(/product_no=(\d+)/);
+    if (pnoM) {
+      try {
+        const pr = await fetch(`${PROXY}/api/cafe24?path=admin/products/${pnoM[1]}`);
+        const pd = await pr.json();
+        const p = pd.product;
+        if (p?.product_name) productInfo = `${p.product_name}: ${(p.simple_description || p.summary_description || '').trim()}`;
+      } catch(e) {}
+    }
 
     // 리뷰 1페이지(최대 10개) 가져오기 — 랜딩URL의 product_no 기준.
     // 실패/빈 결과면 폴백: 리뷰 없이 상품 설명만으로 생성 (기존 동작).
