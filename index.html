@@ -2138,6 +2138,36 @@ async function loadRuleHistory() {
   </tbody></table></div>`;
 }
 
+// 규칙별 숨은 조건 — 라벨에 안 담긴 check/calc의 세부 조건 (auto-adjust.js와 동일 로직 기준).
+// ⚠️ 규칙 조건을 바꾸면 이 표도 같이 갱신할 것.
+const RULE_HIDDEN = {
+  r18: '오늘 구매도 0이어야 발동(아침에 막 구매 발생 시 보류) · 3일 = 전일까지의 완결 3일 · 예산이 아니라 광고 자체를 끔 · 우선순위 최상단',
+  r19: '계산값(구매전환값, 최소 ₩1만)이 현재 예산보다 작을 때만 발동(트림 전용)',
+  r20: '구매 2건 미만 = 0건 또는 1건 · 컷은 1,000원 단위 반올림',
+  r1:  'ROAS가 0%보다는 커야 함(0%는 r7c·r13 담당) · 예산이 ₩20,000 초과일 때만 의미(이하면 변경 없음)',
+  r2:  '예산 <₩30,000 + ROAS ≤200%일 때만 (13% 가드로 실질 예산 ~₩26,500 이하에서 발동)',
+  r3:  '구매전환값 >0 + 현재 예산 ≤ 구매전환값일 때만(이미 과지출 상태면 미발동)',
+  r3b: '구매전환값 >0 + 현재 예산 ≤ 구매전환값일 때만',
+  r4a: 'ROAS 300~500% 구간 전용(500%↑는 r4b가, 700%↑는 r4c가 담당)',
+  r4b: 'ROAS 500~700% 구간 전용',
+  r4c: 'ROAS 700% 이상',
+  r5:  '구매 정확히 1건일 때만(2건↑는 r3b·r4 계열 담당) + 구매전환값 >0',
+  r6:  '장바구니 정확히 0 + ROAS >0% · 예산이 ₩15,000 초과일 때만 의미',
+  r7:  'ROAS 0%는 제외(0 < ROAS ≤100%) + 구매전환값 >0',
+  r7b: 'ROAS 100~150% 구간 전용(100% 이하는 r7 담당) + 구매전환값 >0',
+  r7c: '예산이 ₩10,000 초과일 때만 발동',
+  r8:  '구매전환값 >0 + 현재 예산 ≤ 구매전환값일 때만',
+  r9:  '예산 ≤₩5,000 + 구매전환값 >0',
+  r10: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지)',
+  r11: '구매전환값 >0 + 현재 예산 ≤ 구매전환값일 때만',
+  r12: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지)',
+  r13: 'ROAS 정확히 0%만 · 예산이 ₩10,000 초과일 때만 의미 (r7c와 기능 중복 지적됨)',
+  r14: '⚠ 증액 표기지만 예산 ≤ 전환값 가드가 의도적으로 없어, 예산이 전환값×0.6보다 크면 실제로는 감액됨(과지출 조임 목적)',
+  r15: '⚠ 증액 표기지만 예산 ≤ 전환값 가드가 의도적으로 없어, 예산이 전환값×0.5보다 크면 실제로는 감액됨 — 기회손실 다발 규칙(분석탭 참고)',
+  r16: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지)',
+  r17: '방향 가드 내장: 계산값(전환값×0.7)이 현재 예산보다 작을 때만',
+};
+
 function renderRulesEditor() {
   const el = document.getElementById('rules-editor');
   if (!el) return;
@@ -2154,7 +2184,7 @@ function renderRulesEditor() {
     rowsHtml += `<tr style="border-bottom:0.5px solid var(--border);${disabled?'opacity:.45':''}">
       <td style="padding:8px 12px;text-align:center;font-size:11px">${disabled?'<span style="color:var(--muted)">OFF</span>':'<span style="color:var(--green);font-weight:600">ON</span>'}</td>
       <td style="padding:8px 12px;text-align:center;font-family:monospace;font-size:11px;font-weight:600;color:var(--accent)">${rule.id}</td>
-      <td style="padding:8px 12px;color:var(--text)">${rule.label}</td>
+      <td style="padding:8px 12px;color:var(--text)">${rule.label}${RULE_HIDDEN[rule.id] ? `<div style="font-size:10.5px;color:var(--muted);margin-top:3px;line-height:1.5">└ ${RULE_HIDDEN[rule.id]}</div>` : ''}</td>
       <td style="padding:8px 12px;text-align:center;color:var(--text2);white-space:nowrap">${h}:${m}</td>
       <td style="padding:8px 12px;text-align:center">${dirTag}</td>
     </tr>`;
@@ -2162,6 +2192,19 @@ function renderRulesEditor() {
 
   el.innerHTML = `
   <div style="margin-bottom:12px;font-size:12px;color:var(--muted)">규칙 로직(ROAS 조건·배수)은 코드로만 변경됩니다. 아래는 <b>현재 적용 중인 규칙(읽기 전용)</b>이고, 변경·실행 내역은 하단 이력에 쌓입니다. · 전략 분석은 <b>예산규칙 분석</b> 탭.</div>
+  <div style="border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:14px;background:var(--surface2)">
+    <div style="font-size:12px;font-weight:600;margin-bottom:8px">⚙️ 모든 규칙에 공통 적용되는 전역 조건</div>
+    <div style="font-size:11px;color:var(--text2);line-height:1.9">
+      · <b>운영시간</b>: 07:00~21:30 + 심야 슬롯 02:00~03:30 / 04:00~05:30 — 그 외 시각엔 전면 미발동<br>
+      · <b>따라잡기 창</b>: 발동 시각을 지나도 감액 150분 / 증액 75분 안이면 늦게라도 실행, 창을 지나면 그날은 포기 (호출은 15분 간격)<br>
+      · <b>미세 조정 스킵</b>: 계산값의 증감 폭이 현재 예산 대비 13% 미만이면 발동 안 함 (머신러닝 재학습 방지) · 계산값 최소 ₩1,000<br>
+      · <b>예산 0(CBO)</b>: 캠페인 예산 관리 광고세트는 개별 예산이 없어 모든 규칙에서 제외<br>
+      · <b>하루 1회</b>: 같은 규칙 × 같은 광고세트는 하루 한 번만 — 실패해도 당일 재시도 없음<br>
+      · <b>광고당 규칙 1개</b>: 한 호출에서 여러 규칙이 동시에 걸리면 우선순위(OFF·심야 브레이크 → 나머지 정의 순) 첫 번째만 적용<br>
+      · <b>ROAS 기준</b>: 당일 데이터 · 클릭 1일 · 픽셀 웹구매 — Meta 대시보드 기본 열(통합 구매·7일 클릭)과 수치가 다를 수 있음<br>
+      · <b>수동 실행</b>: 같은 규칙을 쓰되 심야 브레이크(r19·r20) 제외 · 품절 OFF는 수동 전용이며 카테고리·(아트웍) 광고와 예약판매(입고일 있음)는 제외
+    </div>
+  </div>
   <table style="width:100%;border-collapse:collapse;font-size:12px">
     <thead><tr style="background:var(--surface2);border-bottom:1px solid var(--border2)">
       <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:48px">활성</th>
