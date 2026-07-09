@@ -1592,8 +1592,8 @@ const BUDGET_RULES = [
     calc:  (ad) => 30000,
   },
   {
-    id: 'r3', triggerMin: 8*60+10, dir: 'up',
-    label: '오전 8:10 · ROAS ≥300% → 구매전환값의 100%',
+    id: 'r3', triggerMin: 7*60+10, dir: 'up',
+    label: '오전 7:10 · ROAS ≥300% → 구매전환값의 100%',
     check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
     calc:  (ad) => Math.round(ad.purchaseValue * 1.0 / 1000) * 1000,
   },
@@ -2101,6 +2101,7 @@ function editorLogout() { try { localStorage.removeItem('ad_editor_email'); } ca
 
 // 규칙 로직 변경 이력 — 규칙은 코드로만 바뀌므로 코드에 직접 기록(최신이 위)
 const RULE_CHANGELOG = [
+  { date: '2026-07-09', by: 'Claude Code', text: 'r3 발동 시각 오전 8:10 → 7:10 (아침 고효율 증액 앞당김).' },
   { date: '2026-07-09', by: 'Claude Code', text: '규칙 오버라이드 잔재 제거 — 옛 편집 기능의 localStorage 스냅샷이 코드 규칙(label·발동시각·on/off)을 덮어써 변경을 무력화하던 문제(r2가 화면에서 8:00으로 보이던 원인). 서버 오버라이드 테이블(budget_rules)은 빈 것 확인. 규칙의 단일 원천 = 코드.' },
   { date: '2026-07-09', by: 'Claude Code', text: 'r2 발동 시각 오전 8:00 → 7:00 (운영시간 시작도 07:00으로 확장 — 07~08시엔 r2만 발동).' },
   { date: '2026-07-09', by: 'Claude Code', text: 'r19·r20 추가(심야 브레이크) — r19 새벽 2:00 · 예산 ≥20만 + 소진 ≥4만 + ROAS ≤100% → 구매전환값의 100%(최소 1만) / r20 새벽 4:00 · 예산 ≥20만 + 소진 ≥6만 + 구매 2건 미만 → 예산의 50%(ROAS ≥200% 제외). 저녁 수동 대폭 증액 후 새벽 과소진 사고(7/8: 2.1배 증액 → 새벽 62만 소진·ROAS 80%) 방지. 심야 슬롯 02:00~03:30, 04:00~05:30 개방. 게이트 근거: 정상 새벽 페이스 = 예산의 ~13%(2시)/~17%(4시), 실측 8시 소진 = 예산의 20~35%.' },
