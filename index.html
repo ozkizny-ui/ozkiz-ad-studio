@@ -3460,8 +3460,13 @@ function renderAdSettingForm(adType) {
       <div class="as-row">
         <label class="as-label">캡션</label>
         <div class="as-val">
-          <textarea id="caption-text" placeholder="캐러셀 전체 공통 캡션 (선택)"
+          <textarea id="caption-text" placeholder="캐러셀 전체 공통 캡션 (선택) — 직접 입력하거나, 아래 버튼으로 Claude 캡션 2개를 생성하세요..."
             style="width:100%;height:80px;padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);resize:vertical;box-sizing:border-box"></textarea>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+            <span id="caption-status" style="font-size:11px;color:var(--text2)"></span>
+            <button onclick="regenCaption()" style="font-size:11px;color:var(--text2);background:transparent;border:1px solid var(--border);border-radius:5px;cursor:pointer;padding:5px 10px;font-weight:500">✨ Claude로 캡션 생성</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">공통 랜딩 URL(아래)을 먼저 입력하면 그 상품 정보·리뷰 기반으로 생성됩니다.</div>
         </div>
       </div>
       <div class="as-row">
