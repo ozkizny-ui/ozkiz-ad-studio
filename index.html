@@ -2113,27 +2113,19 @@ const RULE_CHANGELOG = [
 ];
 
 // 규칙 변경(코드) + 수동 실행(budget_rule_edits) 이력 병합 표시
-async function loadRuleHistory() {
+// 규칙 변경 이력 (RULE_CHANGELOG 전용)
+// 2026-07-09 단순화: '수동실행'(budget_rule_edits) 병합·구분 컬럼 제거 — 실기록 0건이었고,
+// 수동 실행은 예산조정 탭 '조정 이력'에 광고별(🖐)로 훨씬 상세히 남는다.
+function loadRuleHistory() {
   const box = document.getElementById('rule-history');
   if (!box) return;
-  const items = RULE_CHANGELOG.map(c => ({ when: c.date + ' 00:00', who: c.by, kind: '규칙변경', text: c.text }));
-  try {
-    const runs = await sbGet('budget_rule_edits') || [];
-    runs.filter(r => r.editor !== '_scheduler_trace').forEach(r => {   // 스케줄러 정체 추적(2026-07-08, 1회성 진단) 기록은 이력에서 숨김
-      const p = n => String(n).padStart(2,'0');
-      let when = '';
-      if (r.created_at) { const d = new Date(new Date(r.created_at).getTime()+9*3600*1000); when = `${String(d.getUTCFullYear()).slice(2)}/${p(d.getUTCMonth()+1)}/${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`; }
-      items.push({ when, who: (r.editor||'').split('@')[0], kind: '수동실행', text: r.memo || r.after_val || '예산 수동 조정' });
-    });
-  } catch(e) {}
-  items.sort((a,b) => (a.when < b.when ? 1 : -1));
+  const items = RULE_CHANGELOG.map(c => ({ when: c.date, who: c.by, text: c.text }));
   if (!items.length) { box.innerHTML = '<span style="color:var(--muted)">기록 없음</span>'; return; }
   box.innerHTML = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:520px">
-    <thead><tr style="color:var(--muted);text-align:left"><th style="padding:6px 8px;font-weight:600">시각</th><th style="padding:6px 8px;font-weight:600">구분</th><th style="padding:6px 8px;font-weight:600">담당</th><th style="padding:6px 8px;font-weight:600">내용</th></tr></thead><tbody>
+    <thead><tr style="color:var(--muted);text-align:left"><th style="padding:6px 8px;font-weight:600;width:96px">날짜</th><th style="padding:6px 8px;font-weight:600;width:100px">담당</th><th style="padding:6px 8px;font-weight:600">내용</th></tr></thead><tbody>
     ${items.map(it => `<tr style="border-top:0.5px solid var(--border)">
       <td style="padding:6px 8px;color:var(--text2);white-space:nowrap">${it.when}</td>
-      <td style="padding:6px 8px"><span class="tag ${it.kind==='규칙변경'?'green':'gray'}" style="font-size:10px">${it.kind}</span></td>
-      <td style="padding:6px 8px">${it.who}</td>
+      <td style="padding:6px 8px;white-space:nowrap">${it.who}</td>
       <td style="padding:6px 8px;color:var(--text)">${it.text}</td>
     </tr>`).join('')}
   </tbody></table></div>`;
@@ -2215,7 +2207,7 @@ function renderRulesEditor() {
       <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--muted);font-size:11px;width:84px">방향</th>
     </tr></thead><tbody>${rowsHtml}</tbody>
   </table>
-  <div style="margin-top:22px;font-size:14px;font-weight:600;margin-bottom:8px">🗂 규칙 변경 · 실행 이력</div>
+  <div style="margin-top:22px;font-size:14px;font-weight:600;margin-bottom:8px">🗂 규칙 변경 이력 <span style="font-size:11px;color:var(--muted);font-weight:400">— 수동 실행 기록은 'Meta 광고 예산 조정' 탭의 조정 이력(🖐)에서</span></div>
   <div id="rule-history" style="font-size:12px;color:var(--muted)">불러오는 중…</div>`;
 
   loadRuleHistory();
