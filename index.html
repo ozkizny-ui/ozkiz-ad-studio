@@ -1711,6 +1711,20 @@ const BUDGET_RULES = [
     calc:  () => 0,
   },
   {
+    // 심야 브레이크 1차 (자동 전용 — 심야엔 수동 실행 없음. 방향 가드 내장: 트림 전용)
+    id: 'r19', triggerMin: 1*60, dir: 'dn', nightOnly: true,
+    label: '새벽 1:00 · 오늘 소진 ≥₩30,000 + ROAS ≤100% → 구매전환값의 60% (최소 ₩10,000)',
+    check: (ad) => ad.spend >= 30000 && ad.roas <= 100 && ad.budget > Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+    calc:  (ad) => Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+  },
+  {
+    // 심야 브레이크 2차
+    id: 'r20', triggerMin: 4*60, dir: 'dn', nightOnly: true,
+    label: '새벽 4:00 · 오늘 소진 ≥₩50,000 + ROAS ≤100% → 구매전환값의 60% (최소 ₩10,000)',
+    check: (ad) => ad.spend >= 50000 && ad.roas <= 100 && ad.budget > Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+    calc:  (ad) => Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+  },
+  {
     id: 'r17', triggerMin: 16*60, dir: 'dn',
     label: '오후 4:00 · ROAS 150~200% → 구매전환값의 70%',
     // 방향 가드 내장: 계산값(구매전환값×0.7)이 현재 예산보다 작을 때만 발동(트림 전용)
@@ -1721,9 +1735,10 @@ const BUDGET_RULES = [
 
 // 현재 시각 기준 적용할 규칙들 (가장 최근 발동 시각까지)
 // disabled 필터: 꺼진 규칙은 수동 실행에서도 미발동 (자동 auto-adjust와 동일 — 2026-07-08 수정)
+// nightOnly 제외: 심야 브레이크(r19·r20)는 자동 전용 — 수동 실행은 낮에 이뤄지므로 심야 페이스 판정이 무의미
 function getActiveRules() {
   const now = kstMinutes();
-  return BUDGET_RULES.filter(r => !r.disabled && r.triggerMin <= now);
+  return BUDGET_RULES.filter(r => !r.disabled && !r.nightOnly && r.triggerMin <= now);
 }
 
 // 재고 많음 판단: 옵션당 평균 ≥30 AND 가용재고 ≤3 옵션 없음
@@ -1991,7 +2006,7 @@ async function fetchMetaAds() {
 
       // 다음에 발동 예정인 규칙 (현재 시각 이후)
       const now = kstMinutes();
-      const upcomingRule = BUDGET_RULES.find(r => !r.disabled && r.triggerMin > now && r.check(adData));
+      const upcomingRule = BUDGET_RULES.find(r => !r.disabled && !r.nightOnly && r.triggerMin > now && r.check(adData));
 
       return {
         id: ad.id, adsetId: ad.adset?.id, name: productName, nameRaw: ad.name, status: ad.status,
@@ -2104,6 +2119,7 @@ function editorLogout() { try { localStorage.removeItem('ad_editor_email'); } ca
 
 // 규칙 로직 변경 이력 — 규칙은 코드로만 바뀌므로 코드에 직접 기록(최신이 위)
 const RULE_CHANGELOG = [
+  { date: '2026-07-09', by: 'Claude Code', text: 'r19·r20 추가(심야 브레이크) — 새벽 1:00/4:00 · 오늘 소진 ≥₩3만/₩5만 + ROAS ≤100% → 구매전환값의 60%(최소 ₩1만) 캡. 저녁 수동 대폭 증액 후 새벽 과소진 사고(7/8: 2.1배 증액 → 새벽 62만 소진·ROAS 80%) 방지. 운영시간 가드에 심야 슬롯(01:00~02:30, 04:00~05:30) 개방 — cron-job.org 심야 호출 필요.' },
   { date: '2026-07-08', by: 'Claude Code', text: 'r18 추가 — 오전 8:00 · 최근 3일(전일까지) 소진 ≥₩25,000 + 구매 0 → 광고 OFF. 현재 예산 ₩20,000 이상이면 제외(성과 광고 보호). 자동 전용(수동 실행은 3일 데이터 없음), OFF가 예산 조정보다 우선. 시각은 운영시간 시작=가장 이른 발동 가능 시각(심야는 운영시간 가드로 불가).' },
   { date: '2026-07-08', by: 'Claude Code', text: '수동 실행이 disabled(꺼진) 규칙도 발동시키던 버그 수정 — 자동과 동일하게 disabled 존중.' },
   { date: '2026-07-08', by: 'Claude Code', text: '전역 가드 — 증감 폭 13% 미만이면 모든 규칙 발동 스킵(미세 조정은 머신러닝 재학습 위험만 만들고 실익 없음 · 최근 2주 조정의 ~6% 해당). 자동·수동 동일 적용.' },
