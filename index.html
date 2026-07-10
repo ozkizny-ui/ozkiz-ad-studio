@@ -2430,7 +2430,7 @@ async function renderRoasResult() {
     const bodyHtml = dates.map(date => {
         const isToday = date === todayKey;
         const dayLogs = grouped[date] || [];
-        return `<div style="margin-bottom:12px">
+        return `<div style="margin-bottom:12px" data-histdate="${date}">
           <div style="font-size:11px;font-weight:600;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--border2);margin-bottom:4px">
             ${date} ${isToday ? '<span style="color:var(--accent);margin-left:4px">오늘</span>' : ''}
           </div>
@@ -2456,16 +2456,34 @@ async function renderRoasResult() {
           ).join('')}
         </div>`;
       }).join('');
+    // 날짜 필터 칩: 전체 + 날짜별(건수). 클릭 시 해당 날짜 그룹만 표시 (data-histdate 토글)
+    const filterHtml = `<div id="hist-date-filter" style="display:flex;gap:6px;flex-wrap:wrap;padding:10px 2px 6px">
+      <button data-hd="all" onclick="filterHistDate('all')" style="padding:4px 12px;border-radius:100px;font-size:11px;border:0.5px solid var(--border2);background:var(--accent);color:#fff;cursor:pointer">전체 ${totalCnt}</button>
+      ${dates.map(d => `<button data-hd="${d}" onclick="filterHistDate('${d}')" style="padding:4px 12px;border-radius:100px;font-size:11px;border:0.5px solid var(--border2);background:var(--surface);color:var(--text);cursor:pointer;white-space:nowrap">${d.slice(5)}${d === todayKey ? ' 오늘' : ''} · ${(grouped[d]||[]).length}</button>`).join('')}
+    </div>`;
     historyContainer.innerHTML = `<details ${wasOpen ? 'open' : ''} ontoggle="try{localStorage.setItem('budget_history_open', this.open ? '1' : '0')}catch(e){}">
       <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">
         <span style="font-size:12px;font-weight:600;color:var(--text)">📋 광고비 조정 이력 · 최근 7일 <span style="font-weight:400;color:var(--muted)">(🤖 자동실행 + 🖐 수동실행) — ${totalCnt}건</span></span>
         <span style="font-size:11px;color:var(--muted);white-space:nowrap">▼ 펼치기 / 접기</span>
       </summary>
-      <div style="padding:6px 2px 0">${bodyHtml}</div>
+      ${filterHtml}
+      <div style="padding:0 2px">${bodyHtml}</div>
     </details>`;
   } catch(e) {
     historyContainer.innerHTML = `<div class="sl">📋 광고비 조정 이력</div><div style="font-size:12px;color:var(--muted)">로드 실패: ${e.message}</div>`;
   }
+}
+
+// 조정 이력 날짜 필터: 선택한 날짜 그룹만 표시 ('all'=전체)
+function filterHistDate(date) {
+  document.querySelectorAll('[data-histdate]').forEach(el => {
+    el.style.display = (date === 'all' || el.dataset.histdate === date) ? '' : 'none';
+  });
+  document.querySelectorAll('#hist-date-filter button').forEach(b => {
+    const on = b.dataset.hd === date;
+    b.style.background = on ? 'var(--accent)' : 'var(--surface)';
+    b.style.color = on ? '#fff' : 'var(--text)';
+  });
 }
 
 // ── RUN ALL ──────────────────────────────────────────────────────
