@@ -1665,8 +1665,8 @@ const BUDGET_RULES = [
   },
   {
     id: 'r10', triggerMin: 15*60, dir: 'dn',
-    label: '오후 3:00 · ROAS ≤100% → 구매전환값의 50%',
-    check: (ad) => ad.roas <= 100 && ad.roas > 0 && ad.purchaseValue > 0,
+    label: '오후 3:00 · ROAS ≤200% → 구매전환값의 50%',
+    check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
     calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
   },
   {
@@ -1677,9 +1677,9 @@ const BUDGET_RULES = [
   },
   {
     id: 'r12', triggerMin: 18*60, dir: 'dn',
-    label: '오후 6:00 · ROAS ≤100% → 구매전환값의 50%',
-    check: (ad) => ad.roas <= 100 && ad.roas > 0 && ad.purchaseValue > 0,
-    calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
+    label: '오후 6:00 · ROAS ≤200% → 구매전환값의 30%',
+    check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.3 / 1000) * 1000,
   },
   {
     id: 'r13', triggerMin: 18*60, dir: 'dn',
@@ -1690,13 +1690,15 @@ const BUDGET_RULES = [
   {
     id: 'r14', triggerMin: 18*60+5, dir: 'up',
     label: '오후 6:05 · ROAS ≥400% → 구매전환값의 60%',
-    check: (ad) => ad.roas >= 400 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    // budget≤pv 가드 제거(서버 6/11 변경 동기화): 과지출 상태에서도 발동해 예산을 조임
+    check: (ad) => ad.roas >= 400 && ad.purchaseValue > 0,
     calc:  (ad) => Math.round(ad.purchaseValue * 0.6 / 1000) * 1000,
   },
   {
     id: 'r15', triggerMin: 18*60+10, dir: 'up',
     label: '오후 6:10 · ROAS ≥300% → 구매전환값의 50%',
-    check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    // budget≤pv 가드 제거(서버 6/11 변경 동기화): 과지출 상태에서도 발동해 예산을 조임
+    check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0,
     calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
   },
   {
@@ -1729,10 +1731,10 @@ const BUDGET_RULES = [
   },
   {
     id: 'r17', triggerMin: 16*60, dir: 'dn',
-    label: '오후 4:00 · ROAS 150~200% → 구매전환값의 70%',
-    // 방향 가드 내장: 계산값(구매전환값×0.7)이 현재 예산보다 작을 때만 발동(트림 전용)
-    check: (ad) => ad.roas >= 150 && ad.roas < 200 && ad.purchaseValue > 0 && ad.budget > Math.round(ad.purchaseValue * 0.7 / 1000) * 1000,
-    calc:  (ad) => Math.round(ad.purchaseValue * 0.7 / 1000) * 1000,
+    label: '오후 4:00 · ROAS 150~200% → 구매전환값의 40%',
+    // 방향 가드 내장: 계산값(구매전환값×0.4)이 현재 예산보다 작을 때만 발동(트림 전용)
+    check: (ad) => ad.roas >= 150 && ad.roas < 200 && ad.purchaseValue > 0 && ad.budget > Math.round(ad.purchaseValue * 0.4 / 1000) * 1000,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.4 / 1000) * 1000,
   },
 ];
 
@@ -2101,6 +2103,8 @@ function editorLogout() { try { localStorage.removeItem('ad_editor_email'); } ca
 
 // 규칙 로직 변경 이력 — 규칙은 코드로만 바뀌므로 코드에 직접 기록(최신이 위)
 const RULE_CHANGELOG = [
+  { date: '2026-07-10', by: 'Claude Code', text: 'r17 감액 강화(구매전환값의 70% → 40%) · r12 감액 강화(50% → 30%) — 데드존·저효율 트림 심화.' },
+  { date: '2026-07-10', by: 'Claude Code', text: '수동 실행 규칙을 서버와 동기화 — r10·r12 조건 ROAS ≤100% → ≤200% 확대, r14·r15의 예산≤전환값 가드 제거(6/11~12 서버 변경분이 프론트에 미반영돼 수동 실행만 옛 로직으로 돌던 불일치 해소).' },
   { date: '2026-07-09', by: 'Claude Code', text: 'r3 발동 시각 오전 8:10 → 7:10 (아침 고효율 증액 앞당김).' },
   { date: '2026-07-09', by: 'Claude Code', text: '규칙 오버라이드 잔재 제거 — 옛 편집 기능의 localStorage 스냅샷이 코드 규칙(label·발동시각·on/off)을 덮어써 변경을 무력화하던 문제(r2가 화면에서 8:00으로 보이던 원인). 서버 오버라이드 테이블(budget_rules)은 빈 것 확인. 규칙의 단일 원천 = 코드.' },
   { date: '2026-07-09', by: 'Claude Code', text: 'r2 발동 시각 오전 8:00 → 7:00 (운영시간 시작도 07:00으로 확장 — 07~08시엔 r2만 발동).' },
@@ -2158,7 +2162,7 @@ const RULE_HIDDEN = {
   r14: '⚠ 증액 표기지만 예산 ≤ 전환값 가드가 의도적으로 없어, 예산이 전환값×0.6보다 크면 실제로는 감액됨(과지출 조임 목적)',
   r15: '⚠ 증액 표기지만 예산 ≤ 전환값 가드가 의도적으로 없어, 예산이 전환값×0.5보다 크면 실제로는 감액됨 — 기회손실 다발 규칙(분석탭 참고)',
   r16: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지)',
-  r17: '방향 가드 내장: 계산값(전환값×0.7)이 현재 예산보다 작을 때만',
+  r17: '방향 가드 내장: 계산값(전환값×0.4)이 현재 예산보다 작을 때만',
 };
 
 function renderRulesEditor() {
