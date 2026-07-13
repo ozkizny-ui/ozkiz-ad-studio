@@ -1593,8 +1593,8 @@ const BUDGET_RULES = [
   },
   {
     id: 'r3', triggerMin: 7*60+10, dir: 'up',
-    label: '오전 7:10 · ROAS ≥300% → 구매전환값의 100%',
-    check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    label: '오전 7:10 · 구매 ≥2 + ROAS ≥300% → 구매전환값의 100%',
+    check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
     calc:  (ad) => Math.round(ad.purchaseValue * 1.0 / 1000) * 1000,
   },
   {
@@ -1623,8 +1623,8 @@ const BUDGET_RULES = [
   },
   {
     id: 'r5', triggerMin: 10*60, dir: 'up',
-    label: '오전 10:00 · 구매 1건 + ROAS ≥300% → 구매전환값의 100%',
-    check: (ad) => ad.purchases >= 1 && ad.purchases < 2 && ad.roas >= 300 && ad.purchaseValue > 0,
+    label: '오전 10:00 · 구매 ≥2 + ROAS ≥300% → 구매전환값의 100%',
+    check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.purchaseValue > 0,
     calc:  (ad) => Math.round(ad.purchaseValue / 1000) * 1000,
   },
   {
@@ -1653,8 +1653,8 @@ const BUDGET_RULES = [
   },
   {
     id: 'r8', triggerMin: 12*60+10, dir: 'up',
-    label: '오후 12:10 · ROAS ≥300% → 구매전환값의 120%',
-    check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    label: '오후 12:10 · 구매 ≥2 + ROAS ≥300% → 구매전환값의 120%',
+    check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
     calc:  (ad) => Math.round(ad.purchaseValue * 1.2 / 1000) * 1000,
   },
   {
@@ -1671,9 +1671,9 @@ const BUDGET_RULES = [
   },
   {
     id: 'r11', triggerMin: 15*60+10, dir: 'up',
-    label: '오후 3:10 · ROAS ≥300% → 구매전환값의 100%',
-    check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
-    calc:  (ad) => Math.round(ad.purchaseValue / 1000) * 1000,
+    label: '오후 3:10 · 구매 ≥2 + ROAS ≥300% → 구매전환값의 50%',
+    check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
   },
   {
     id: 'r12', triggerMin: 18*60, dir: 'dn',
@@ -1689,10 +1689,10 @@ const BUDGET_RULES = [
   },
   {
     id: 'r14', triggerMin: 18*60+5, dir: 'up',
-    label: '오후 6:05 · ROAS ≥400% → 구매전환값의 60%',
+    label: '오후 6:05 · ROAS ≥400% → 구매전환값의 70%',
     // budget≤pv 가드 제거(서버 6/11 변경 동기화): 과지출 상태에서도 발동해 예산을 조임
     check: (ad) => ad.roas >= 400 && ad.purchaseValue > 0,
-    calc:  (ad) => Math.round(ad.purchaseValue * 0.6 / 1000) * 1000,
+    calc:  (ad) => Math.round(ad.purchaseValue * 0.7 / 1000) * 1000,
   },
   {
     id: 'r15', triggerMin: 18*60+10, dir: 'up',
@@ -1728,6 +1728,20 @@ const BUDGET_RULES = [
     label: '새벽 4:00 · 예산 ≥₩200,000 + 오늘 소진 ≥₩60,000 + 구매 2건 미만 → 기존 예산의 50% (ROAS ≥200% 제외)',
     check: (ad) => ad.budget >= 200000 && ad.spend >= 60000 && ad.purchases < 2 && ad.roas < 200,
     calc:  (ad) => Math.round(ad.budget * 0.5 / 1000) * 1000,
+  },
+  {
+    // 자동 전용 — 어제 인사이트(spendY/pvY)는 서버만 조회. 수동 실행에선 항상 미발동(안전)
+    id: 'r21', triggerMin: 7*60+30, dir: 'dn',
+    label: '오전 7:30 · 어제 ROAS ≤140% + 어제 소진 ≥₩30,000 → 어제 구매전환값의 40% (최소 ₩10,000)',
+    check: (ad) => ad.spendY >= 30000 && ad.pvY <= ad.spendY * 1.4 && ad.budget > Math.max(Math.round(ad.pvY * 0.4 / 1000) * 1000, 10000),
+    calc:  (ad) => Math.max(Math.round(ad.pvY * 0.4 / 1000) * 1000, 10000),
+  },
+  {
+    // 자동 전용 — 좀비 조기 캡 (r7c의 5시간 선행판)
+    id: 'r22', triggerMin: 9*60+30, dir: 'dn',
+    label: '오전 9:30 · 어제·오늘 구매전환값 0 (어제 소진 ≥₩5,000) + 오늘 소진 ≥₩5,000 → ₩10,000',
+    check: (ad) => ad.pvY === 0 && ad.spendY >= 5000 && ad.purchaseValue === 0 && ad.spend >= 5000 && ad.budget > 10000,
+    calc:  () => 10000,
   },
   {
     id: 'r17', triggerMin: 16*60, dir: 'dn',
@@ -2103,6 +2117,7 @@ function editorLogout() { try { localStorage.removeItem('ad_editor_email'); } ca
 
 // 규칙 로직 변경 이력 — 규칙은 코드로만 바뀌므로 코드에 직접 기록(최신이 위)
 const RULE_CHANGELOG = [
+  { date: '2026-07-13', by: 'Claude Code', text: 'ROAS 개선 패키지 — ①증액 표본 강화: r3·r5·r8·r11에 구매 ≥2 조건(구매 1건 스파이크에 최대 30배 증액되던 표본부족 증액 +530만/2주 차단) ②r11 전환값 100%→50%, r14 60%→70% 완화(고효율 소진 보존) ③신규 r21 오전 7:30 · 어제 ROAS ≤140%+소진 ≥3만 → 어제 전환값의 40% 캡(오전 저효율 소진 일 25.6만 선제 회수) ④신규 r22 오전 9:30 · 이틀 연속 전환 0 → ₩1만 캡(좀비 소진 일 13.7만, r7c 5시간 선행).' },
   { date: '2026-07-10', by: 'Claude Code', text: 'r17 감액 강화(구매전환값의 70% → 40%) · r12 감액 강화(50% → 30%) — 데드존·저효율 트림 심화.' },
   { date: '2026-07-10', by: 'Claude Code', text: '수동 실행 규칙을 서버와 동기화 — r10·r12 조건 ROAS ≤100% → ≤200% 확대, r14·r15의 예산≤전환값 가드 제거(6/11~12 서버 변경분이 프론트에 미반영돼 수동 실행만 옛 로직으로 돌던 불일치 해소).' },
   { date: '2026-07-09', by: 'Claude Code', text: 'r3 발동 시각 오전 8:10 → 7:10 (아침 고효율 증액 앞당김).' },
@@ -2148,7 +2163,7 @@ const RULE_HIDDEN = {
   r4a: 'ROAS 300~500% 구간 전용(500%↑는 r4b가, 700%↑는 r4c가 담당)',
   r4b: 'ROAS 500~700% 구간 전용',
   r4c: 'ROAS 700% 이상',
-  r5:  '구매 정확히 1건일 때만(2건↑는 r3b·r4 계열 담당) + 구매전환값 >0',
+  r5:  '구매전환값 >0 · r3(7:10)과 같은 조건의 10시 2차 기회(예산≤전환값 가드는 없음)',
   r6:  '장바구니 정확히 0 + ROAS >0% · 예산이 ₩15,000 초과일 때만 의미',
   r7:  'ROAS 0%는 제외(0 < ROAS ≤100%) + 구매전환값 >0',
   r7b: 'ROAS 100~150% 구간 전용(100% 이하는 r7 담당) + 구매전환값 >0',
@@ -2159,8 +2174,10 @@ const RULE_HIDDEN = {
   r11: '구매전환값 >0 + 현재 예산 ≤ 구매전환값일 때만',
   r12: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지)',
   r13: 'ROAS 정확히 0%만 · 예산이 ₩10,000 초과일 때만 의미 (r7c와 기능 중복 지적됨)',
-  r14: '⚠ 증액 표기지만 예산 ≤ 전환값 가드가 의도적으로 없어, 예산이 전환값×0.6보다 크면 실제로는 감액됨(과지출 조임 목적)',
+  r14: '⚠ 증액 표기지만 예산 ≤ 전환값 가드가 의도적으로 없어, 예산이 전환값×0.7보다 크면 실제로는 감액됨(과지출 조임 목적)',
   r15: '⚠ 증액 표기지만 예산 ≤ 전환값 가드가 의도적으로 없어, 예산이 전환값×0.5보다 크면 실제로는 감액됨 — 기회손실 다발 규칙(분석탭 참고)',
+  r21: '자동 전용(어제 인사이트는 서버만 조회, 수동 실행 미발동) · 방향 가드 내장(트림 전용) · 어제 데이터 조회 실패 시 미발동 · 오늘 성과가 좋아지면 낮 증액 규칙이 되올림',
+  r22: '어제 소진 ≥₩5,000 = 어제 실제로 돌았던 광고만(오늘 켠 신규 광고의 학습 보호) · 자동 전용 · 예산 ₩10,000 초과일 때만',
   r16: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지)',
   r17: '방향 가드 내장: 계산값(전환값×0.4)이 현재 예산보다 작을 때만',
 };
