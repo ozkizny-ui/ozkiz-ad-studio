@@ -12,6 +12,9 @@
   const won = (n) => (n == null ? '-' : Number(n).toLocaleString('ko-KR') + '원');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const isRunning = (x) => x && x.status === 'ELIGIBLE';        // 운영중(노출가능)
+  const statusDot = (x) => isRunning(x) ? '🟢' : '⚪';           // 운영중/정지 표시
+  const runningFirst = (a, b) => (isRunning(b) - isRunning(a)) || String(a.name).localeCompare(String(b.name), 'ko');
 
   // ── API 클라이언트 ────────────────────────────────────────────
   async function api(action, { params, body } = {}) {
@@ -77,14 +80,15 @@
     body.innerHTML = loading('쇼핑검색 캠페인 불러오는 중…');
     try {
       const camps = await api('get_campaigns');
-      const shopping = camps.filter(c => c.campaignTp === 'SHOPPING');
+      const shopping = camps.filter(c => c.campaignTp === 'SHOPPING').sort(runningFirst);
       const pl = camps.filter(c => c.campaignTp === 'WEB_SITE');
+      const runN = shopping.filter(isRunning).length;
       body.innerHTML = `
         <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-          <div style="font-weight:600">쇼핑검색 ${shopping.length} · 파워링크 ${pl.length}</div>
+          <div style="font-weight:600">쇼핑검색 ${shopping.length} <span style="color:var(--green)">(🟢 운영중 ${runN})</span> · 파워링크 ${pl.length}</div>
           <select id="nv-camp" style="padding:6px;border-radius:8px;background:var(--surface);color:inherit;border:1px solid var(--border,#333);min-width:260px">
             <option value="">— 쇼핑검색 캠페인 선택 —</option>
-            ${shopping.map(c => `<option value="${c.nccCampaignId}">${esc(c.name)}</option>`).join('')}
+            ${shopping.map(c => `<option value="${c.nccCampaignId}">${statusDot(c)} ${esc(c.name)}</option>`).join('')}
           </select>
           <select id="nv-group" style="padding:6px;border-radius:8px;background:var(--surface);color:inherit;border:1px solid var(--border,#333);min-width:220px" disabled>
             <option value="">— 광고그룹 —</option>
@@ -96,9 +100,9 @@
         groupSel.innerHTML = '<option value="">— 광고그룹 —</option>'; groupSel.disabled = true; adsEl.innerHTML = '';
         if (!campSel.value) return;
         adsEl.innerHTML = loading('광고그룹 불러오는 중…');
-        const groups = await api('get_adgroups', { params: { nccCampaignId: campSel.value } });
+        const groups = (await api('get_adgroups', { params: { nccCampaignId: campSel.value } })).sort(runningFirst);
         groupSel.innerHTML = '<option value="">— 광고그룹 선택 —</option>' +
-          groups.map(g => `<option value="${g.nccAdgroupId}">${esc(g.name)}</option>`).join('');
+          groups.map(g => `<option value="${g.nccAdgroupId}">${statusDot(g)} ${esc(g.name)}</option>`).join('');
         groupSel.disabled = false; adsEl.innerHTML = '<div style="color:var(--muted,#888);padding:16px">광고그룹을 선택하면 상품별 입찰가가 표시됩니다.</div>';
       };
       groupSel.onchange = async () => {
@@ -346,13 +350,13 @@
   function mockApi(action, p) {
     const D = {
       get_campaigns: [
-        { nccCampaignId: 'cmp-s1', name: 'ONS_쇼검_의류', campaignTp: 'SHOPPING' },
-        { nccCampaignId: 'cmp-s2', name: 'ONS_쇼검_슈즈', campaignTp: 'SHOPPING' },
-        { nccCampaignId: 'cmp-p1', name: 'ONS_파링_브랜드', campaignTp: 'WEB_SITE' },
+        { nccCampaignId: 'cmp-s1', name: 'ONS_쇼검_의류', campaignTp: 'SHOPPING', status: 'ELIGIBLE' },
+        { nccCampaignId: 'cmp-s2', name: 'ONS_쇼검_슈즈', campaignTp: 'SHOPPING', status: 'PAUSED' },
+        { nccCampaignId: 'cmp-p1', name: 'ONS_파링_브랜드', campaignTp: 'WEB_SITE', status: 'ELIGIBLE' },
       ],
       get_adgroups: [
-        { nccAdgroupId: 'grp-1', name: '유아레깅스', nccCampaignId: 'cmp-s1' },
-        { nccAdgroupId: 'grp-2', name: '원피스_메인', nccCampaignId: 'cmp-s1' },
+        { nccAdgroupId: 'grp-1', name: '유아레깅스', nccCampaignId: 'cmp-s1', status: 'ELIGIBLE' },
+        { nccAdgroupId: 'grp-2', name: '원피스_메인', nccCampaignId: 'cmp-s1', status: 'PAUSED' },
       ],
       get_ads: [
         { nccAdId: 'nad-1', userLock: false, adAttr: { bidAmt: 660, useGroupBidAmt: false }, referenceData: { productTitle: '오즈키즈 여아 치랭스 레깅스', lowPrice: '16900' } },
