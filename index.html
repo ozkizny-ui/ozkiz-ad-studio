@@ -313,9 +313,15 @@ input,select,textarea{font-family:var(--font-body)}
   </div>
   <div class="sb-divider"></div>
 
+  <!-- 플랫폼 세그먼트 토글: 메타 / 네이버 (naver.js 배선) -->
+  <div id="platform-toggle" style="display:flex;gap:4px;padding:4px;margin:0 8px 10px;background:var(--card,#151515);border-radius:10px">
+    <button id="pf-meta" style="flex:1;padding:7px 0;border-radius:7px;border:none;background:var(--accent,#4a7);color:#fff;cursor:pointer;font-weight:700;font-size:13px">메타</button>
+    <button id="pf-naver" style="flex:1;padding:7px 0;border-radius:7px;border:none;background:transparent;color:inherit;cursor:pointer;font-weight:700;font-size:13px">네이버</button>
+  </div>
+
   <button class="nav-item active" data-page="roas">
     <span class="nav-icon">🪄</span>
-    <span class="nav-label">Meta 광고 예산 조정</span>
+    <span class="nav-label">광고 예산 조정</span>
     <span class="nav-badge hidden" id="badge-roas">0</span>
   </button>
   <button class="nav-item" data-page="rules">
@@ -343,6 +349,12 @@ input,select,textarea{font-family:var(--font-body)}
   <button class="nav-item" data-page="adsetting">
     <span class="nav-icon">🎯</span>
     <span class="nav-label">광고 세팅</span>
+  </button>
+
+  <!-- 네이버 전용 내비 (기본 숨김, 네이버 모드에서만 표시) -->
+  <button class="nav-item nv-navitem" id="nav-naver-bid" style="display:none">
+    <span class="nav-icon">💰</span>
+    <span class="nav-label">광고 예산 조정</span>
   </button>
 
   <div class="sb-divider" style="margin-top:auto"></div>
@@ -375,6 +387,9 @@ input,select,textarea{font-family:var(--font-body)}
 
 <!-- ── MAIN ──────────────────────────────────────────────────────── -->
 <main class="main">
+
+<!-- 네이버 탭 컨텐츠 (naver.js 렌더). 기본 숨김 -->
+<div id="naver-root" style="display:none"></div>
 
 <!-- PAGE: ROAS -->
 <div class="page active" id="page-roas">
@@ -5739,5 +5754,6 @@ function downloadJSON(jsonStr) {
   a.click();
 }
 </script>
+<script src="naver.js"></script>
 </body>
 </html>
