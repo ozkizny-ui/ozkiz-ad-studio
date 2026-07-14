@@ -54,10 +54,10 @@
   }
   function setPlatform(naver) {
     const mBtn = $('#pf-meta'), nBtn = $('#pf-naver');
-    if (mBtn && nBtn) {
-      mBtn.style.background = naver ? 'transparent' : 'var(--accent,#4a7)';
-      nBtn.style.background = naver ? 'var(--accent,#4a7)' : 'transparent';
-    }
+    if (!mBtn || !nBtn) return;
+    // 배경은 항상 투명, 선택된 쪽만 실선(accent) 테두리+글자로 표시
+    const sel = (b, on) => { b.style.background = 'transparent'; b.style.borderColor = on ? 'var(--accent)' : 'var(--border2)'; b.style.color = on ? 'var(--accent)' : 'var(--muted)'; };
+    sel(mBtn, !naver); sel(nBtn, naver);
   }
 
   // 네이버는 '광고 예산 조정'(입찰 대시보드)만. (제외키워드 renderNeg는 코드 유지·추후 내비 추가)
@@ -82,15 +82,15 @@
       body.innerHTML = `
         <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
           <div style="font-weight:600">쇼핑검색 ${shopping.length} · 파워링크 ${pl.length}</div>
-          <select id="nv-camp" style="padding:6px;border-radius:8px;background:var(--card,#1a1a1a);color:inherit;border:1px solid var(--border,#333);min-width:260px">
+          <select id="nv-camp" style="padding:6px;border-radius:8px;background:var(--surface);color:inherit;border:1px solid var(--border,#333);min-width:260px">
             <option value="">— 쇼핑검색 캠페인 선택 —</option>
             ${shopping.map(c => `<option value="${c.nccCampaignId}">${esc(c.name)}</option>`).join('')}
           </select>
-          <select id="nv-group" style="padding:6px;border-radius:8px;background:var(--card,#1a1a1a);color:inherit;border:1px solid var(--border,#333);min-width:220px" disabled>
+          <select id="nv-group" style="padding:6px;border-radius:8px;background:var(--surface);color:inherit;border:1px solid var(--border,#333);min-width:220px" disabled>
             <option value="">— 광고그룹 —</option>
           </select>
         </div>
-        <div id="nv-ads"></div>`;
+        <div id="nv-ads"><div style="color:var(--muted);padding:16px">쇼핑검색 캠페인 → 광고그룹을 선택하면 상품별 입찰가와 규칙 미리보기가 표시됩니다.</div></div>`;
       const campSel = $('#nv-camp'), groupSel = $('#nv-group'), adsEl = $('#nv-ads');
       campSel.onchange = async () => {
         groupSel.innerHTML = '<option value="">— 광고그룹 —</option>'; groupSel.disabled = true; adsEl.innerHTML = '';
@@ -218,7 +218,7 @@
       try { await api('update_ad_bid', { body: { nccAdId: r.a.nccAdId, bidAmt: r.nb } }); ok++; }
       catch (e) { fail++; errs.push(esc((r.a.referenceData || {}).productTitle || r.a.nccAdId) + ': ' + esc(e.message)); }
     }
-    out.innerHTML = `<div style="padding:8px;border-radius:8px;background:var(--card,#1a1a1a)">반영 완료 — 성공 ${ok} / 실패 ${fail}${errs.length ? '<br><span style="color:var(--red,#c33);font-size:12px">' + errs.join('<br>') + '</span>' : ''}</div>`;
+    out.innerHTML = `<div style="padding:8px;border-radius:8px;background:var(--surface)">반영 완료 — 성공 ${ok} / 실패 ${fail}${errs.length ? '<br><span style="color:var(--red,#c33);font-size:12px">' + errs.join('<br>') + '</span>' : ''}</div>`;
   }
 
   // ── 제외키워드 제안 ───────────────────────────────────────────
