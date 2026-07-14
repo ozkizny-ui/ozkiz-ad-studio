@@ -10,6 +10,7 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const el = (html) => { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild; };
   const won = (n) => (n == null ? '-' : Number(n).toLocaleString('ko-KR') + '원');
+  const cnt = (n) => Number(n || 0).toLocaleString('ko-KR');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const isRunning = (x) => x && x.status === 'ELIGIBLE';        // 운영중(노출가능)
@@ -114,32 +115,104 @@
     } catch (e) { body.innerHTML = errBox(e); }
   }
 
+  const pBtn = 'padding:6px 14px;border-radius:8px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:600;font-size:13px';
   function renderAdsTable(container, ads) {
-    if (!ads.length) { container.innerHTML = '<div style="color:var(--muted,#888);padding:16px">이 그룹에 상품(소재)이 없어요.</div>'; return; }
-    const rows = ads.map(a => {
-      const rd = a.referenceData || {};
-      const paused = a.userLock === true;
-      return `<tr style="border-bottom:1px solid var(--border,#2a2a2a)">
-        <td style="padding:8px">${esc(rd.productTitle || a.nccAdId)}</td>
-        <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${won(a.adAttr && a.adAttr.bidAmt)}</td>
-        <td style="padding:8px;text-align:right;color:var(--muted,#888)">${rd.lowPrice ? won(rd.lowPrice) : '-'}</td>
-        <td style="padding:8px;text-align:center">${paused ? '<span style="color:var(--muted,#888)">일시정지</span>' : '<span style="color:var(--green,#4a7)">노출중</span>'}</td>
-      </tr>`;
-    }).join('');
+    if (!ads.length) { container.innerHTML = '<div style="color:var(--muted);padding:16px">이 그룹에 상품(소재)이 없어요.</div>'; return; }
     container.innerHTML = `
-      <table style="width:100%;border-collapse:collapse;font-size:14px">
-        <thead><tr style="text-align:left;color:var(--muted,#888);border-bottom:1px solid var(--border,#333)">
-          <th style="padding:8px">상품(소재)</th><th style="padding:8px;text-align:right">현재 입찰가</th>
-          <th style="padding:8px;text-align:right">최저가</th><th style="padding:8px;text-align:center">상태</th>
-        </tr></thead><tbody>${rows}</tbody>
-      </table>
-      <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button id="nv-preview" style="padding:6px 14px;border-radius:8px;border:1px solid var(--border,#333);background:var(--accent,#4a7);color:inherit;cursor:pointer;font-weight:600">🔮 규칙 미리보기</button>
-        <span style="color:var(--muted,#888);font-size:12px">목표 ROAS 300% · 금토일 −10% · 공휴일 −15% · 최근 30일 ROAS 기준</span>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <button id="nv-perf-btn" style="${pBtn}">📊 최근 7일 성과 불러오기</button>
+        <button id="nv-preview" style="${pBtn};background:transparent;color:var(--accent);border:1.5px solid var(--accent)">🔮 입찰 규칙 미리보기</button>
+        <span style="color:var(--muted);font-size:12px">구매전환 = 장바구니 제외(순수 구매) · 목표 ROAS 300%</span>
       </div>
+      <div id="nv-perf">${baseTable(ads)}</div>
       <div id="nv-preview-out" style="margin-top:12px"></div>`;
-    const pv = container.querySelector('#nv-preview');
-    if (pv) pv.onclick = () => previewBids(ads);
+    container.querySelector('#nv-perf-btn').onclick = () => loadPerf(ads);
+    container.querySelector('#nv-preview').onclick = () => previewBids(ads);
+  }
+  function baseTable(ads) {
+    const rows = ads.map(a => { const rd = a.referenceData || {}; const paused = a.userLock === true;
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 8px">${esc(rd.productTitle || a.nccAdId)}</td>
+        <td style="padding:6px 8px;text-align:center">${a.nccQi ? ('Q' + a.nccQi.qiGrade) : '-'}</td>
+        <td style="padding:6px 8px;text-align:right">${won(a.adAttr && a.adAttr.bidAmt)}</td>
+        <td style="padding:6px 8px;text-align:center">${paused ? '<span style="color:var(--muted)">정지</span>' : '<span style="color:var(--green)">노출중</span>'}</td></tr>`;
+    }).join('');
+    return `<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">
+      <th style="padding:6px 8px">상품(소재)</th><th style="padding:6px 8px;text-align:center">품질</th><th style="padding:6px 8px;text-align:right">입찰가</th><th style="padding:6px 8px;text-align:center">상태</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div style="color:var(--muted);font-size:12px;margin-top:6px">"📊 최근 7일 성과 불러오기"를 누르면 노출·클릭·CPC·구매전환·ROAS가 채워집니다.</div>`;
+  }
+
+  // 최근 7일 구매전환(장바구니 제외) — AD_CONVERSION 일별 보고서 합산, 계정단위 1회 수집 후 캐시
+  let purchaseCache = null;
+  async function loadPurchase7d(setMsg) {
+    if (purchaseCache) return purchaseCache;
+    if (MOCK) { purchaseCache = { 'nad-1': { cnt: 3, val: 210000 }, 'nad-2': { cnt: 1, val: 33000 } }; return purchaseCache; }
+    const map = {};
+    for (let d = 1; d <= 7; d++) {
+      if (setMsg) setMsg(`구매전환 보고서 수집 ${d}/7…`);
+      try {
+        const job = await api('report_create', { body: { reportTp: 'AD_CONVERSION', statDt: isoAgo(d) } });
+        const id = job.reportJobId || job.id; let url = null;
+        for (let i = 0; i < 12; i++) { await sleep(1800); const st = await api('report_status', { params: { id } }); if (st.status === 'BUILT' || st.status === 'DONE') { url = st.downloadUrl; break; } if (st.status === 'NONE' || st.status === 'DELETED') break; }
+        if (url) { const dl = await api('report_download', { params: { url } });
+          (dl.tsv || '').split(/\r?\n/).forEach(ln => { const c = ln.split('\t'); if (c[10] === 'purchase') { const m = (map[c[5]] ||= { cnt: 0, val: 0 }); m.cnt += Number(c[11]) || 0; m.val += Number(c[12]) || 0; } });
+        }
+        api('report_delete', { params: { id } }).catch(() => {});
+      } catch {}
+    }
+    purchaseCache = map; return map;
+  }
+  // 소재 기본지표(최근 7일): /stats 라벨값 합산
+  async function adBase(nad) {
+    try {
+      const r = await api('stats', { params: { id: nad, fields: JSON.stringify(['impCnt', 'clkCnt', 'salesAmt', 'avgRnk']), timeRange: JSON.stringify({ since: isoAgo(7), until: isoAgo(1) }) } });
+      const rows = Array.isArray(r) ? r : (Array.isArray(r.data) ? r.data : []);
+      let imp = 0, clk = 0, cost = 0, rw = 0;
+      rows.forEach(x => { imp += +x.impCnt || 0; clk += +x.clkCnt || 0; cost += +x.salesAmt || 0; rw += (+x.avgRnk || 0) * (+x.impCnt || 0); });
+      return { imp, clk, cost, rank: imp ? rw / imp : 0 };
+    } catch { return null; }
+  }
+  async function loadPerf(ads) {
+    const perf = $('#nv-perf');
+    perf.innerHTML = '<div class="nv-load" style="color:var(--muted);padding:20px;text-align:center">⏳ 준비 중…</div>';
+    const setMsg = (m) => { const el = perf.querySelector('.nv-load'); if (el) el.textContent = '⏳ ' + m; };
+    try {
+      const purchase = await loadPurchase7d(setMsg);
+      setMsg('소재 지표 계산 중…');
+      const bases = await Promise.all(ads.map(a => adBase(a.nccAdId)));
+      const rows = ads.map((a, i) => { const b = bases[i] || { imp: 0, clk: 0, cost: 0, rank: 0 }; const pc = purchase[a.nccAdId] || { cnt: 0, val: 0 };
+        return { a, b, pc, ctr: b.imp ? b.clk / b.imp * 100 : 0, cpc: b.clk ? b.cost / b.clk : 0, roas: b.cost ? pc.val / b.cost * 100 : 0 }; });
+      perf.innerHTML = richTable(rows);
+    } catch (e) { perf.innerHTML = errBox(e); }
+  }
+  function richTable(rows) {
+    const trs = rows.map(r => { const rd = r.a.referenceData || {}; const paused = r.a.userLock === true;
+      const rc = r.roas >= 300 ? 'var(--green)' : r.roas > 0 ? 'var(--red)' : 'var(--muted)';
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(rd.productTitle || r.a.nccAdId)}</td>
+        <td style="padding:6px 8px;text-align:center">${r.b.rank ? r.b.rank.toFixed(1) : '-'}</td>
+        <td style="padding:6px 8px;text-align:center">${r.a.nccQi ? ('Q' + r.a.nccQi.qiGrade) : '-'}</td>
+        <td style="padding:6px 8px;text-align:right">${cnt(r.b.imp)}</td>
+        <td style="padding:6px 8px;text-align:right">${cnt(r.b.clk)}</td>
+        <td style="padding:6px 8px;text-align:right">${r.ctr.toFixed(2)}%</td>
+        <td style="padding:6px 8px;text-align:right">${won(Math.round(r.cpc))}</td>
+        <td style="padding:6px 8px;text-align:right">${won(r.b.cost)}</td>
+        <td style="padding:6px 8px;text-align:right">${r.pc.cnt}</td>
+        <td style="padding:6px 8px;text-align:right">${won(r.pc.val)}</td>
+        <td style="padding:6px 8px;text-align:right;color:${rc};font-weight:700">${r.b.cost ? Math.round(r.roas) + '%' : '-'}</td>
+        <td style="padding:6px 8px;text-align:right">${won(r.a.adAttr && r.a.adAttr.bidAmt)}</td>
+        <td style="padding:6px 8px;text-align:center">${paused ? '<span style="color:var(--muted)">정지</span>' : '<span style="color:var(--green)">노출중</span>'}</td></tr>`;
+    }).join('');
+    return `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:920px"><thead>
+      <tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border);white-space:nowrap">
+        <th style="padding:6px 8px">상품(소재)</th><th style="padding:6px 8px;text-align:center">순위</th><th style="padding:6px 8px;text-align:center">품질</th>
+        <th style="padding:6px 8px;text-align:right">노출</th><th style="padding:6px 8px;text-align:right">클릭</th><th style="padding:6px 8px;text-align:right">CTR</th>
+        <th style="padding:6px 8px;text-align:right">CPC</th><th style="padding:6px 8px;text-align:right">총비용</th>
+        <th style="padding:6px 8px;text-align:right">구매수</th><th style="padding:6px 8px;text-align:right">구매액</th><th style="padding:6px 8px;text-align:right">구매ROAS</th>
+        <th style="padding:6px 8px;text-align:right">입찰가</th><th style="padding:6px 8px;text-align:center">상태</th>
+      </tr></thead><tbody>${trs}</tbody></table></div>
+      <div style="color:var(--muted);font-size:11px;margin-top:6px">최근 7일 · 구매전환은 장바구니 제외(순수 구매) · 순위=노출가중 평균 · ROAS 300% 미만은 빨강</div>`;
   }
 
   // ── 입찰 규칙 엔진 (목표 ROAS 300, 데드존 밴드, 요일·공휴일 보정) ──
@@ -359,18 +432,18 @@
         { nccAdgroupId: 'grp-2', name: '원피스_메인', nccCampaignId: 'cmp-s1', status: 'PAUSED' },
       ],
       get_ads: [
-        { nccAdId: 'nad-1', userLock: false, adAttr: { bidAmt: 660, useGroupBidAmt: false }, referenceData: { productTitle: '오즈키즈 여아 치랭스 레깅스', lowPrice: '16900' } },
-        { nccAdId: 'nad-2', userLock: false, adAttr: { bidAmt: 510, useGroupBidAmt: false }, referenceData: { productTitle: '오즈키즈 유아 사계절 레깅스', lowPrice: '13900' } },
-        { nccAdId: 'nad-3', userLock: true, adAttr: { bidAmt: 300, useGroupBidAmt: false }, referenceData: { productTitle: '오즈키즈 아기 짜임 레깅스', lowPrice: '11900' } },
+        { nccAdId: 'nad-1', userLock: false, adAttr: { bidAmt: 660, useGroupBidAmt: false }, nccQi: { qiGrade: 5 }, referenceData: { productTitle: '오즈키즈 여아 치랭스 레깅스', lowPrice: '16900' } },
+        { nccAdId: 'nad-2', userLock: false, adAttr: { bidAmt: 510, useGroupBidAmt: false }, nccQi: { qiGrade: 3 }, referenceData: { productTitle: '오즈키즈 유아 사계절 레깅스', lowPrice: '13900' } },
+        { nccAdId: 'nad-3', userLock: true, adAttr: { bidAmt: 300, useGroupBidAmt: false }, nccQi: { qiGrade: 4 }, referenceData: { productTitle: '오즈키즈 아기 짜임 레깅스', lowPrice: '11900' } },
       ],
     };
     if (action === 'stats') {
-      // 소재별 최근 성과 목데이터 (salesAmt=광고비, convAmt=전환매출). ROAS 밴드 다양화.
+      // 소재별 최근 성과 목데이터. impCnt/clkCnt/salesAmt/avgRnk(기본지표) + convAmt(총전환, 규칙미리보기용).
       const M = {
-        'nad-1': { salesAmt: 100000, convAmt: 680000 }, // 680% → +20%
-        'nad-2': { salesAmt: 100000, convAmt: 330000 }, // 330% → 유지
+        'nad-1': { impCnt: 5000, clkCnt: 70, salesAmt: 100000, avgRnk: 4.2, convAmt: 680000 }, // 680% → +20%
+        'nad-2': { impCnt: 900, clkCnt: 8, salesAmt: 100000, avgRnk: 6.1, convAmt: 330000 },   // 330% → 유지
       };
-      return Promise.resolve({ data: [M[p && p.id] || { salesAmt: 100000, convAmt: 200000 }] }); // 기본 200% → 하향
+      return Promise.resolve({ data: [M[p && p.id] || { impCnt: 200, clkCnt: 2, salesAmt: 100000, avgRnk: 8, convAmt: 200000 }] });
     }
     if (action === 'update_ad_bid') return Promise.resolve({ ok: true });
     if (action === 'report_create') return Promise.resolve({ reportJobId: 'mock1', status: 'REGIST' });
