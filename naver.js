@@ -71,15 +71,27 @@
     sel(mBtn, !naver); sel(nBtn, naver);
   }
 
-  // 네이버는 '광고 예산 조정'(입찰 대시보드)만. (제외키워드 renderNeg는 코드 유지·추후 내비 추가)
+  // 네이버 · 광고 예산 조정 — 하위탭 3개
+  let sub = 'shopbid';
+  const SUBTABS = [
+    { k: 'shopbid', label: '쇼핑검색 입찰가 조정' },
+    { k: 'shopneg', label: '쇼핑검색 제외키워드' },
+    { k: 'powerlink', label: '파워링크' },
+  ];
   function render() {
     root.innerHTML = `
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
         <div style="font-size:18px;font-weight:700">네이버 · 광고 예산 조정</div>
-        ${MOCK ? '<span style="color:var(--muted,#888);font-size:12px">🧪 목데이터 모드</span>' : ''}
+        ${MOCK ? '<span style="color:var(--muted);font-size:12px">🧪 목데이터 모드</span>' : ''}
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border)">
+        ${SUBTABS.map(t => `<button class="nv-tab" data-sub="${t.k}" style="padding:8px 16px;border:none;background:transparent;color:${t.k === sub ? 'var(--accent)' : 'var(--muted)'};border-bottom:2px solid ${t.k === sub ? 'var(--accent)' : 'transparent'};cursor:pointer;font-weight:600;font-size:14px;margin-bottom:-1px">${t.label}</button>`).join('')}
       </div>
       <div id="nv-body"></div>`;
-    renderBid();
+    root.querySelectorAll('.nv-tab').forEach(b => b.onclick = () => { sub = b.dataset.sub; render(); });
+    if (sub === 'shopbid') renderBid();
+    else if (sub === 'shopneg') renderShopNeg();
+    else renderPowerlink();
   }
 
   // ── 입찰 대시보드 (읽기) ──────────────────────────────────────
@@ -314,72 +326,82 @@
 
   // ── 제외키워드 제안 ───────────────────────────────────────────
   const btnCss = 'padding:6px 14px;border-radius:8px;border:1px solid var(--border,#333);background:var(--accent,#4a7);color:inherit;cursor:pointer;font-weight:600';
-  function renderNeg() {
+  // ── 탭2: 쇼핑검색 제외키워드 (CSV 업로드 제안) ──
+  function renderShopNeg() {
     $('#nv-body').innerHTML = `
-      <div style="display:grid;gap:22px;max-width:820px">
-        <section>
-          <div style="font-weight:600;margin-bottom:6px">🔍 파워링크 검색어 자동 분석 (EXPKEYWORD)</div>
-          <div style="color:var(--muted,#888);font-size:12px;margin-bottom:8px">검색어 보고서를 자동 수집해 낭비 검색어를 찾고, 파워링크 광고그룹에 <b>원클릭 제외</b>합니다.</div>
-          <button id="nv-plkw" style="${btnCss}">최근 검색어 불러오기</button>
-          <div id="nv-plkw-out" style="margin-top:12px"></div>
-        </section>
-        <section style="border-top:1px solid var(--border,#333);padding-top:18px">
-          <div style="font-weight:600;margin-bottom:6px">📄 쇼핑검색 제외검색어 제안 (CSV 업로드)</div>
-          <div style="color:var(--muted,#888);font-size:12px;margin-bottom:8px">쇼핑 검색어는 네이버 API 미제공 → 광고관리에서 받은 <b>"랭킹 키워드_쇼핑검색" CSV</b>를 올리면 낭비 검색어를 분석해 제외 후보를 제안합니다. (반영은 대시보드에서 수동)</div>
-          <input type="file" id="nv-csv" accept=".csv,text/csv">
-          <div id="nv-csv-out" style="margin-top:12px"></div>
-        </section>
+      <div style="max-width:880px">
+        <div style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.7">
+          쇼핑 검색어는 네이버가 API를 제공하지 않아, 광고관리에서 받은 <b>"랭킹 키워드_쇼핑검색" CSV</b>를 올리면
+          <b>비용은 쓰는데 구매(판매) 0인 검색어</b>를 자동 분석해 제외 후보를 제안합니다.<br>
+          <span style="font-size:12px">※ 제외 반영은 네이버 대시보드에서 붙여넣기 (쇼핑 제외검색어는 API 쓰기 미지원)</span>
+        </div>
+        <input type="file" id="nv-csv" accept=".csv,text/csv">
+        <div id="nv-csv-out" style="margin-top:12px"></div>
       </div>`;
-    $('#nv-plkw').onclick = analyzePowerlink;
     $('#nv-csv').onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) f.text().then(parseShoppingCsv).catch(err => { $('#nv-csv-out').innerHTML = errBox(err); }); };
   }
 
-  // 파워링크: EXPKEYWORD 보고서 → 낭비 검색어 → 원클릭 제외
-  async function analyzePowerlink() {
-    const out = $('#nv-plkw-out'); out.innerHTML = loading('EXPKEYWORD 보고서 생성·다운로드 중… (수십 초 걸릴 수 있어요)');
+  // ── 탭3: 파워링크 (EXPKEYWORD 낭비 검색어 자동 제안) ──
+  function renderPowerlink() {
+    $('#nv-body').innerHTML = `
+      <div style="max-width:920px">
+        <div style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.7">
+          파워링크 <b>검색어 보고서(EXPKEYWORD)</b>를 최근 7일 자동 수집해,
+          <b>비용은 쓰는데 구매전환 0인 검색어</b>를 제외 후보로 제안합니다.<br>
+          <span style="font-size:12px">※ 제외 반영은 대시보드에서 붙여넣기 (API 제외등록은 서버오류(500)로 확인 중)</span>
+        </div>
+        <button id="nv-plkw" style="${pBtn}">🔍 최근 7일 낭비 검색어 분석</button>
+        <div id="nv-plkw-out" style="margin-top:12px"></div>
+      </div>`;
+    $('#nv-plkw').onclick = () => loadPowerlinkWaste();
+  }
+  // EXPKEYWORD 7일 병렬 수집. 컬럼(확정): c4검색어 c8노출 c9클릭 c10비용 c11구매전환
+  let expkwCache = null;
+  async function loadExpKw7d(setMsg) {
+    if (expkwCache) return expkwCache;
+    if (MOCK) { expkwCache = [
+      { term: '남아수영복', adgroupId: 'grp-1', imp: 900, clk: 20, cost: 12000, conv: 0 },
+      { term: '아동레쉬가드', adgroupId: 'grp-1', imp: 400, clk: 8, cost: 5200, conv: 0 },
+      { term: '키즈아쿠아슈즈', adgroupId: 'grp-1', imp: 300, clk: 8, cost: 3400, conv: 1 },
+    ]; return expkwCache; }
+    const map = {}; let done = 0;
+    const per = await Promise.all([1, 2, 3, 4, 5, 6, 7].map(async (d) => {
+      const m = {};
+      try {
+        const job = await api('report_create', { body: { reportTp: 'EXPKEYWORD', statDt: isoAgo(d) } });
+        const id = job.reportJobId || job.id; let url = null;
+        for (let i = 0; i < 15; i++) { await sleep(1500); const st = await api('report_status', { params: { id } }); if (st.status === 'BUILT' || st.status === 'DONE') { url = st.downloadUrl; break; } if (st.status === 'NONE' || st.status === 'DELETED') break; }
+        if (url) { const dl = await api('report_download', { params: { url } });
+          (dl.tsv || '').split(/\r?\n/).forEach(ln => { const c = ln.split('\t'); if (c.length < 12) return; const key = c[4] + '|' + c[3]; const x = (m[key] ||= { term: c[4], adgroupId: c[3], imp: 0, clk: 0, cost: 0, conv: 0 }); x.imp += Number(c[8]) || 0; x.clk += Number(c[9]) || 0; x.cost += Number(c[10]) || 0; x.conv += Number(c[11]) || 0; });
+        }
+        api('report_delete', { params: { id } }).catch(() => {});
+      } catch {}
+      done++; if (setMsg) setMsg(`검색어 보고서 수집 ${done}/7…`);
+      return m;
+    }));
+    per.forEach(m => { for (const k in m) { const x = (map[k] ||= { term: m[k].term, adgroupId: m[k].adgroupId, imp: 0, clk: 0, cost: 0, conv: 0 }); x.imp += m[k].imp; x.clk += m[k].clk; x.cost += m[k].cost; x.conv += m[k].conv; } });
+    expkwCache = Object.values(map); return expkwCache;
+  }
+  async function loadPowerlinkWaste() {
+    const setOut = (h) => { const el = $('#nv-plkw-out'); if (el) el.innerHTML = h; };
+    setOut('<div class="nv-load" style="color:var(--muted);padding:20px;text-align:center">⏳ 준비 중…</div>');
+    const setMsg = (m) => { const el = $('#nv-plkw-out .nv-load'); if (el) el.textContent = '⏳ ' + m; };
     try {
-      const job = await api('report_create', { body: { reportTp: 'EXPKEYWORD', statDt: isoAgo(2) } });
-      const id = job.reportJobId || job.id;
-      let url = null;
-      for (let i = 0; i < 15; i++) { await sleep(2000); const st = await api('report_status', { params: { id } }); if (st.status === 'BUILT' || st.status === 'DONE') { url = st.downloadUrl; break; } if (st.status === 'NONE' || st.status === 'DELETED') break; }
-      if (!url) { out.innerHTML = errBox({ message: '보고서 생성 실패 또는 데이터 없음' }); return; }
-      const dl = await api('report_download', { params: { url } });
-      const rows = parseExpKw(dl.tsv || (typeof dl === 'string' ? dl : ''));
-      api('report_delete', { params: { id } }).catch(() => {});
-      renderPlkwOut(out, rows);
-    } catch (e) { out.innerHTML = errBox(e); }
-  }
-  // EXPKEYWORD TSV 파싱. 신뢰 컬럼: [3]광고그룹 [4]검색어 [8]클릭수. (비용/전환 컬럼은 배포 후 실데이터로 확정)
-  function parseExpKw(tsv) {
-    const agg = {};
-    tsv.split(/\r?\n/).filter(Boolean).forEach(ln => {
-      const c = ln.split('\t'); if (c.length < 9) return;
-      const key = c[3] + '|' + c[4];
-      const a = (agg[key] ||= { adgroupId: c[3], term: c[4], clk: 0 });
-      a.clk += Number(c[8]) || 0;
-    });
-    return Object.values(agg).sort((a, b) => b.clk - a.clk);
-  }
-  function renderPlkwOut(out, rows) {
-    if (!rows.length) { out.innerHTML = '<div style="color:var(--muted,#888)">검색어 데이터가 없어요.</div>'; return; }
-    const trs = rows.slice(0, 100).map((r, i) => `<tr style="border-bottom:1px solid var(--border,#2a2a2a)">
-      <td style="padding:6px 8px">${esc(r.term)}</td>
-      <td style="padding:6px 8px;text-align:right">${r.clk}</td>
-      <td style="padding:6px 8px;text-align:center"><button data-i="${i}" class="nv-exc" style="padding:3px 10px;border-radius:6px;border:1px solid var(--red,#c33);background:transparent;color:var(--red,#c33);cursor:pointer">제외</button></td>
-    </tr>`).join('');
-    out.innerHTML = `
-      <div style="font-size:12px;color:var(--muted,#888);margin-bottom:6px">검색어 ${rows.length}개. 낭비어를 "제외" 누르면 해당 광고그룹에 즉시 제외키워드로 등록됩니다. (비용/전환 컬럼 정렬은 배포 후 실데이터로 고도화)</div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:var(--muted,#888);border-bottom:1px solid var(--border,#333)">
-        <th style="padding:6px 8px">검색어</th><th style="padding:6px 8px;text-align:right">클릭</th><th style="padding:6px 8px;text-align:center">제외</th>
-      </tr></thead><tbody>${trs}</tbody></table>`;
-    out.querySelectorAll('.nv-exc').forEach(b => b.onclick = async () => {
-      const r = rows[+b.dataset.i];
-      if (MOCK) { b.textContent = '✓(목)'; b.disabled = true; return; }
-      if (!localStorage.getItem('sb_write_token')) { alert('쓰기 인증이 필요합니다. 좌측 "🔒 쓰기 잠김" 해제.'); return; }
-      b.textContent = '…'; b.disabled = true;
-      try { await api('add_restricted_keyword', { body: { nccAdgroupId: r.adgroupId, keyword: r.term } }); b.textContent = '✓ 제외됨'; b.style.color = 'var(--green,#4a7)'; b.style.borderColor = 'var(--green,#4a7)'; }
-      catch (e) { b.textContent = '실패'; b.disabled = false; alert('제외 실패: ' + e.message); }
-    });
+      const all = await loadExpKw7d(setMsg);
+      const waste = all.filter(x => x.cost >= 1000 && x.conv === 0).sort((a, b) => b.cost - a.cost);
+      const total = waste.reduce((s, x) => s + x.cost, 0);
+      const trs = waste.slice(0, 300).map(w => `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 8px">${esc(w.term)}</td><td style="padding:6px 8px;text-align:right">${cnt(w.imp)}</td>
+        <td style="padding:6px 8px;text-align:right">${cnt(w.clk)}</td><td style="padding:6px 8px;text-align:right">${won(w.cost)}</td>
+        <td style="padding:6px 8px;text-align:right">${w.conv}</td></tr>`).join('');
+      setOut(`
+        <div style="margin-bottom:8px"><b>낭비 검색어 ${waste.length}개</b> · 소진 비용 <b style="color:var(--red)">${won(total)}</b> <span style="color:var(--muted);font-size:12px">(최근 7일 · 비용 ≥1,000원 & 구매전환 0)</span></div>
+        ${waste.length ? `<button id="nv-plcopy" style="${pBtn};margin-bottom:8px">📋 검색어 목록 복사 (대시보드 제외검색어에 붙여넣기)</button>` : '<div style="color:var(--muted)">낭비 검색어 없음.</div>'}
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px"><thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">
+          <th style="padding:6px 8px">검색어</th><th style="padding:6px 8px;text-align:right">노출</th><th style="padding:6px 8px;text-align:right">클릭</th><th style="padding:6px 8px;text-align:right">비용</th><th style="padding:6px 8px;text-align:right">구매전환</th>
+        </tr></thead><tbody>${trs}</tbody></table></div>`);
+      const cp = $('#nv-plcopy'); if (cp) cp.onclick = () => { navigator.clipboard.writeText(waste.map(w => w.term).join('\n')).then(() => { cp.textContent = '✓ 복사됨'; }); };
+    } catch (e) { setOut(errBox(e)); }
   }
 
   // 쇼핑: CSV 업로드 → 낭비 검색어(비용 있고 판매 0) 제안 + 복사
