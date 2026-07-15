@@ -111,6 +111,7 @@
         adsEl.innerHTML = loading('상품(소재) 불러오는 중…');
         const ads = await api('get_ads', { params: { nccAdgroupId: groupSel.value } });
         renderAdsTable(adsEl, ads);
+        loadPerf(ads); // 그룹 선택 시 성과 자동 채움 (버튼은 새로고침용)
       };
     } catch (e) { body.innerHTML = errBox(e); }
   }
@@ -148,20 +149,25 @@
   async function loadPurchase7d(setMsg) {
     if (purchaseCache) return purchaseCache;
     if (MOCK) { purchaseCache = { 'nad-1': { cnt: 3, val: 210000 }, 'nad-2': { cnt: 1, val: 33000 } }; return purchaseCache; }
-    const map = {};
-    for (let d = 1; d <= 7; d++) {
-      if (setMsg) setMsg(`구매전환 보고서 수집 ${d}/7…`);
+    // 7일치 병렬 수집(네이버 동시생성 허용 확인됨) → ~5초. 각 일자 map 반환 후 병합.
+    let done = 0;
+    const per = await Promise.all([1, 2, 3, 4, 5, 6, 7].map(async (d) => {
+      const map = {};
       try {
         const job = await api('report_create', { body: { reportTp: 'AD_CONVERSION', statDt: isoAgo(d) } });
         const id = job.reportJobId || job.id; let url = null;
-        for (let i = 0; i < 12; i++) { await sleep(1800); const st = await api('report_status', { params: { id } }); if (st.status === 'BUILT' || st.status === 'DONE') { url = st.downloadUrl; break; } if (st.status === 'NONE' || st.status === 'DELETED') break; }
+        for (let i = 0; i < 15; i++) { await sleep(1500); const st = await api('report_status', { params: { id } }); if (st.status === 'BUILT' || st.status === 'DONE') { url = st.downloadUrl; break; } if (st.status === 'NONE' || st.status === 'DELETED') break; }
         if (url) { const dl = await api('report_download', { params: { url } });
           (dl.tsv || '').split(/\r?\n/).forEach(ln => { const c = ln.split('\t'); if (c[10] === 'purchase') { const m = (map[c[5]] ||= { cnt: 0, val: 0 }); m.cnt += Number(c[11]) || 0; m.val += Number(c[12]) || 0; } });
         }
         api('report_delete', { params: { id } }).catch(() => {});
       } catch {}
-    }
-    purchaseCache = map; return map;
+      done++; if (setMsg) setMsg(`구매전환 보고서 수집 ${done}/7…`);
+      return map;
+    }));
+    const merged = {};
+    per.forEach(map => { for (const nad in map) { const m = (merged[nad] ||= { cnt: 0, val: 0 }); m.cnt += map[nad].cnt; m.val += map[nad].val; } });
+    purchaseCache = merged; return merged;
   }
   // 소재 기본지표(최근 7일): /stats 라벨값 합산
   async function adBase(nad) {
@@ -174,17 +180,17 @@
     } catch { return null; }
   }
   async function loadPerf(ads) {
-    const perf = $('#nv-perf');
-    perf.innerHTML = '<div class="nv-load" style="color:var(--muted);padding:20px;text-align:center">⏳ 준비 중…</div>';
-    const setMsg = (m) => { const el = perf.querySelector('.nv-load'); if (el) el.textContent = '⏳ ' + m; };
+    const setPerf = (html) => { const el = $('#nv-perf'); if (el) el.innerHTML = html; };
+    setPerf('<div class="nv-load" style="color:var(--muted);padding:20px;text-align:center">⏳ 준비 중…</div>');
+    const setMsg = (m) => { const el = $('#nv-perf .nv-load'); if (el) el.textContent = '⏳ ' + m; };
     try {
       const purchase = await loadPurchase7d(setMsg);
       setMsg('소재 지표 계산 중…');
       const bases = await Promise.all(ads.map(a => adBase(a.nccAdId)));
       const rows = ads.map((a, i) => { const b = bases[i] || { imp: 0, clk: 0, cost: 0, rank: 0 }; const pc = purchase[a.nccAdId] || { cnt: 0, val: 0 };
         return { a, b, pc, ctr: b.imp ? b.clk / b.imp * 100 : 0, cpc: b.clk ? b.cost / b.clk : 0, roas: b.cost ? pc.val / b.cost * 100 : 0 }; });
-      perf.innerHTML = richTable(rows);
-    } catch (e) { perf.innerHTML = errBox(e); }
+      setPerf(richTable(rows));
+    } catch (e) { setPerf(errBox(e)); }
   }
   function richTable(rows) {
     const trs = rows.map(r => { const rd = r.a.referenceData || {}; const paused = r.a.userLock === true;
