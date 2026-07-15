@@ -11,6 +11,13 @@
   const el = (html) => { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild; };
   const won = (n) => (n == null ? '-' : Number(n).toLocaleString('ko-KR') + '원');
   const cnt = (n) => Number(n || 0).toLocaleString('ko-KR');
+  // 품질지수(1~7단계) → 네이버 대시보드식 7칸 막대. 높을수록 초록.
+  function qiBar(g) {
+    if (g == null || isNaN(g)) return '<span style="color:var(--muted)">-</span>';
+    let s = '';
+    for (let n = 1; n <= 7; n++) s += `<span style="display:inline-block;width:4px;height:12px;margin-right:1px;border-radius:1px;background:${n <= g ? 'var(--green)' : 'var(--surface2)'}"></span>`;
+    return `<span title="품질지수 ${g}/7" style="display:inline-flex;align-items:center">${s}</span>`;
+  }
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const isRunning = (x) => x && x.status === 'ELIGIBLE';        // 운영중(노출가능)
@@ -134,7 +141,7 @@
     const rows = ads.map(a => { const rd = a.referenceData || {}; const paused = a.userLock === true;
       return `<tr style="border-bottom:1px solid var(--border)">
         <td style="padding:6px 8px">${esc(rd.productTitle || a.nccAdId)}</td>
-        <td style="padding:6px 8px;text-align:center">${a.nccQi ? ('Q' + a.nccQi.qiGrade) : '-'}</td>
+        <td style="padding:6px 8px;text-align:center">${qiBar(a.nccQi && a.nccQi.qiGrade)}</td>
         <td style="padding:6px 8px;text-align:right">${won(a.adAttr && a.adAttr.bidAmt)}</td>
         <td style="padding:6px 8px;text-align:center">${paused ? '<span style="color:var(--muted)">정지</span>' : '<span style="color:var(--green)">노출중</span>'}</td></tr>`;
     }).join('');
@@ -198,7 +205,7 @@
       return `<tr style="border-bottom:1px solid var(--border)">
         <td style="padding:6px 8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(rd.productTitle || r.a.nccAdId)}</td>
         <td style="padding:6px 8px;text-align:center">${r.b.rank ? r.b.rank.toFixed(1) : '-'}</td>
-        <td style="padding:6px 8px;text-align:center">${r.a.nccQi ? ('Q' + r.a.nccQi.qiGrade) : '-'}</td>
+        <td style="padding:6px 8px;text-align:center">${qiBar(r.a.nccQi && r.a.nccQi.qiGrade)}</td>
         <td style="padding:6px 8px;text-align:right">${cnt(r.b.imp)}</td>
         <td style="padding:6px 8px;text-align:right">${cnt(r.b.clk)}</td>
         <td style="padding:6px 8px;text-align:right">${r.ctr.toFixed(2)}%</td>
