@@ -130,7 +130,7 @@
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
         <button id="nv-perf-btn" style="${pBtn}">📊 최근 7일 성과 불러오기</button>
         <button id="nv-preview" style="${pBtn};background:transparent;color:var(--accent);border:1.5px solid var(--accent)">🔮 입찰 규칙 미리보기</button>
-        <span style="color:var(--muted);font-size:12px">구매전환 = 장바구니 제외(순수 구매) · 목표 ROAS 300%</span>
+        <span style="color:var(--muted);font-size:12px">구매전환 = 구매완료 직접전환만 (장바구니·간접 제외) · 목표 ROAS 300%</span>
       </div>
       <div id="nv-perf">${baseTable(ads)}</div>
       <div id="nv-preview-out" style="margin-top:12px"></div>`;
@@ -165,7 +165,8 @@
         const id = job.reportJobId || job.id; let url = null;
         for (let i = 0; i < 15; i++) { await sleep(1500); const st = await api('report_status', { params: { id } }); if (st.status === 'BUILT' || st.status === 'DONE') { url = st.downloadUrl; break; } if (st.status === 'NONE' || st.status === 'DELETED') break; }
         if (url) { const dl = await api('report_download', { params: { url } });
-          (dl.tsv || '').split(/\r?\n/).forEach(ln => { const c = ln.split('\t'); if (c[10] === 'purchase') { const m = (map[c[5]] ||= { cnt: 0, val: 0 }); m.cnt += Number(c[11]) || 0; m.val += Number(c[12]) || 0; } });
+          // col[10]=전환유형(purchase=구매완료), col[9]=직접(1)/간접(2). 구매완료 "직접전환"만 집계(장바구니·간접 제외).
+          (dl.tsv || '').split(/\r?\n/).forEach(ln => { const c = ln.split('\t'); if (c[10] === 'purchase' && c[9] === '1') { const m = (map[c[5]] ||= { cnt: 0, val: 0 }); m.cnt += Number(c[11]) || 0; m.val += Number(c[12]) || 0; } });
         }
         api('report_delete', { params: { id } }).catch(() => {});
       } catch {}
@@ -225,7 +226,7 @@
         <th style="padding:6px 8px;text-align:right">구매수</th><th style="padding:6px 8px;text-align:right">구매액</th><th style="padding:6px 8px;text-align:right">구매ROAS</th>
         <th style="padding:6px 8px;text-align:right">입찰가</th><th style="padding:6px 8px;text-align:center">상태</th>
       </tr></thead><tbody>${trs}</tbody></table></div>
-      <div style="color:var(--muted);font-size:11px;margin-top:6px">최근 7일 · 구매전환은 장바구니 제외(순수 구매) · 순위=노출가중 평균 · ROAS 300% 미만은 빨강</div>`;
+      <div style="color:var(--muted);font-size:11px;margin-top:6px">최근 7일 · 구매전환 = 구매완료 직접전환만(장바구니·간접 제외) · 순위=노출가중 평균 · ROAS 300%미만 빨강</div>`;
   }
 
   // ── 입찰 규칙 엔진 (목표 ROAS 300, 데드존 밴드, 요일·공휴일 보정) ──
