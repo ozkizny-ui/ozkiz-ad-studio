@@ -427,28 +427,45 @@
     if (hi < 0) { out.innerHTML = errBox({ message: '"검색어"·"총비용" 컬럼을 못 찾았어요. 쇼핑검색 검색어 CSV가 맞는지 확인하세요.' }); return; }
     const H = lines[hi].split(',');
     const idx = (name) => H.findIndex(h => h.split('(')[0].trim().includes(name));
-    const ci = { term: idx('검색어'), imp: idx('노출'), clk: idx('클릭'), cost: idx('총비용'), sales: idx('전환매출') };
+    const ci = { grp: idx('광고그룹'), term: idx('검색어'), imp: idx('노출'), clk: idx('클릭'), cost: idx('총비용'), sales: idx('전환매출') };
     if (ci.term < 0 || ci.cost < 0) { out.innerHTML = errBox({ message: '필수 컬럼(검색어/총비용) 매핑 실패' }); return; }
-    const agg = {};
+    // 광고그룹 → 검색어 집계 (제외키워드는 그룹 단위로 세팅하므로 그룹별로 묶음)
+    const groups = {};
     for (let i = hi + 1; i < lines.length; i++) {
       const c = lines[i].split(','); if (c.length < H.length) continue;
       const term = (c[ci.term] || '').trim(); if (!term || term === '-') continue;
-      const a = (agg[term] ||= { term, imp: 0, clk: 0, cost: 0, sales: 0 });
+      const grp = (ci.grp >= 0 ? (c[ci.grp] || '').trim() : '') || '(그룹 미표기)';
+      const g = (groups[grp] ||= {});
+      const a = (g[term] ||= { term, imp: 0, clk: 0, cost: 0, sales: 0 });
       a.imp += Number(c[ci.imp]) || 0; a.clk += Number(c[ci.clk]) || 0; a.cost += Number(c[ci.cost]) || 0; a.sales += Number(c[ci.sales]) || 0;
     }
-    const waste = Object.values(agg).filter(x => x.cost >= 1000 && x.sales === 0).sort((a, b) => b.cost - a.cost);
-    const totalWasted = waste.reduce((s, x) => s + x.cost, 0);
-    const trs = waste.slice(0, 200).map(w => `<tr style="border-bottom:1px solid var(--border,#2a2a2a)">
-      <td style="padding:6px 8px">${esc(w.term)}</td><td style="padding:6px 8px;text-align:right">${w.imp}</td>
-      <td style="padding:6px 8px;text-align:right">${w.clk}</td><td style="padding:6px 8px;text-align:right">${won(w.cost)}</td>
-      <td style="padding:6px 8px;text-align:right">${won(w.sales)}</td></tr>`).join('');
+    const groupWaste = Object.entries(groups).map(([grp, terms]) => {
+      const waste = Object.values(terms).filter(x => x.cost >= 1000 && x.sales === 0).sort((a, b) => b.cost - a.cost);
+      return { grp, waste, total: waste.reduce((s, x) => s + x.cost, 0) };
+    }).filter(g => g.waste.length).sort((a, b) => b.total - a.total);
+    if (!groupWaste.length) { out.innerHTML = '<div style="color:var(--muted);padding:16px">낭비 검색어(비용 ≥1,000원 & 판매 0)가 없어요.</div>'; return; }
+    const grandCnt = groupWaste.reduce((s, g) => s + g.waste.length, 0);
+    const grandTotal = groupWaste.reduce((s, g) => s + g.total, 0);
+    const sections = groupWaste.map((g, gi) => {
+      const trs = g.waste.slice(0, 200).map(w => `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:5px 8px">${esc(w.term)}</td><td style="padding:5px 8px;text-align:right">${cnt(w.imp)}</td>
+        <td style="padding:5px 8px;text-align:right">${cnt(w.clk)}</td><td style="padding:5px 8px;text-align:right">${won(w.cost)}</td></tr>`).join('');
+      return `<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+          <b style="font-size:14px">${esc(g.grp)}</b>
+          <span style="color:var(--muted);font-size:12px">낭비 ${g.waste.length}개 · <span style="color:var(--red)">${won(g.total)}</span></span>
+          <button class="nv-gcopy" data-gi="${gi}" style="${btnCss};margin-left:auto">📋 이 그룹 검색어 복사</button>
+        </div>
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">
+          <th style="padding:5px 8px">검색어</th><th style="padding:5px 8px;text-align:right">노출</th><th style="padding:5px 8px;text-align:right">클릭</th><th style="padding:5px 8px;text-align:right">비용</th>
+        </tr></thead><tbody>${trs}</tbody></table></div>
+      </div>`;
+    }).join('');
     out.innerHTML = `
-      <div style="margin-bottom:8px"><b>낭비 검색어 ${waste.length}개</b> · 소진 비용 합계 <b style="color:var(--red,#c33)">${won(totalWasted)}</b> <span style="color:var(--muted,#888);font-size:12px">(비용 ≥1,000원 & 판매 0)</span></div>
-      ${waste.length ? `<button id="nv-copy" style="${btnCss};margin-bottom:8px">📋 검색어 목록 복사 (대시보드에 붙여넣기)</button>` : ''}
-      <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:var(--muted,#888);border-bottom:1px solid var(--border,#333)">
-        <th style="padding:6px 8px">검색어</th><th style="padding:6px 8px;text-align:right">노출</th><th style="padding:6px 8px;text-align:right">클릭</th><th style="padding:6px 8px;text-align:right">비용</th><th style="padding:6px 8px;text-align:right">판매액</th>
-      </tr></thead><tbody>${trs}</tbody></table>`;
-    const cp = $('#nv-copy'); if (cp) cp.onclick = () => { navigator.clipboard.writeText(waste.map(w => w.term).join('\n')).then(() => { cp.textContent = '✓ 복사됨'; }); };
+      <div style="margin-bottom:6px"><b>${groupWaste.length}개 광고그룹</b> · 낭비 검색어 <b>${grandCnt}개</b> · 소진 비용 <b style="color:var(--red)">${won(grandTotal)}</b> <span style="color:var(--muted);font-size:12px">(비용 ≥1,000원 & 판매 0)</span></div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:12px">그룹마다 "이 그룹 검색어 복사" → 네이버 대시보드에서 <b>해당 광고그룹</b>의 제외검색어에 붙여넣으세요.</div>
+      ${sections}`;
+    out.querySelectorAll('.nv-gcopy').forEach(b => b.onclick = () => { const g = groupWaste[+b.dataset.gi]; navigator.clipboard.writeText(g.waste.map(w => w.term).join('\n')).then(() => { b.textContent = '✓ 복사됨'; }); });
   }
 
   const loading = (m) => `<div style="color:var(--muted,#888);padding:24px;text-align:center">⏳ ${esc(m)}</div>`;
