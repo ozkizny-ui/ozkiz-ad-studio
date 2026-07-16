@@ -43,8 +43,14 @@
   }
 
   // ── 렌더 ─────────────────────────────────────────────────────
-  let root, prevActive = null;
-  function open() {
+  // 해시 라우팅(2026-07-16): 네이버 모드는 #naver-{하위탭} 해시를 가짐 → 새로고침·뒤로가기·링크 공유 동작.
+  // open/close는 index.html의 routeHash()가 해시 기준으로 호출 (멱등 — isOpen 가드).
+  let root, prevActive = null, isOpen = false;
+  function open(hash) {
+    const m = String(hash || '').match(/^naver-(\w+)$/);
+    if (m && SUBTABS.some(t => t.k === m[1])) sub = m[1];
+    if (isOpen) { setPlatform(true); render(); return; }
+    isOpen = true;
     document.querySelectorAll('main.main > .page').forEach(p => { p.style.display = 'none'; });
     document.querySelectorAll('.nav-item:not(.nv-navitem)').forEach(b => { b.style.display = 'none'; });
     document.querySelectorAll('.nv-navitem').forEach(b => { b.style.display = ''; });
@@ -56,6 +62,8 @@
     render();
   }
   function close() {
+    if (!isOpen) return;
+    isOpen = false;
     root.style.display = 'none';
     document.querySelectorAll('main.main > .page').forEach(p => { p.style.display = ''; });
     document.querySelectorAll('.nv-navitem').forEach(b => { b.style.display = 'none'; b.classList.remove('active'); });
@@ -88,7 +96,13 @@
         ${SUBTABS.map(t => `<button class="nv-tab" data-sub="${t.k}" style="padding:8px 16px;border:none;background:transparent;color:${t.k === sub ? 'var(--accent)' : 'var(--muted)'};border-bottom:2px solid ${t.k === sub ? 'var(--accent)' : 'transparent'};cursor:pointer;font-weight:600;font-size:14px;margin-bottom:-1px">${t.label}</button>`).join('')}
       </div>
       <div id="nv-body"></div>`;
-    root.querySelectorAll('.nv-tab').forEach(b => b.onclick = () => { sub = b.dataset.sub; render(); });
+    root.querySelectorAll('.nv-tab').forEach(b => b.onclick = () => {
+      sub = b.dataset.sub;
+      const target = 'naver-' + sub;
+      // 해시를 하위탭까지 반영 (같은 해시 재클릭은 hashchange가 없어 직접 렌더)
+      if ((location.hash || '').replace(/^#\/?/, '') === target) { render(); return; }
+      location.hash = target;
+    });
     if (sub === 'shopbid') renderBid();
     else if (sub === 'shopneg') renderShopNeg();
     else renderPowerlink();
@@ -440,20 +454,28 @@
   const loading = (m) => `<div style="color:var(--muted,#888);padding:24px;text-align:center">⏳ ${esc(m)}</div>`;
   const errBox = (e) => `<div style="padding:16px;border:1px solid var(--red,#c33);border-radius:8px;color:var(--red,#c33)">에러: ${esc(e.message || e)}<br><span style="color:var(--muted,#888);font-size:12px">프록시 미배포 상태면 ?navermock=1 로 UI 확인 가능</span></div>`;
 
-  // ── 초기화: 토글 배선 ─────────────────────────────────────────
+  // ── 초기화: 토글 배선 (해시 라우팅 — 전환은 해시 변경으로만, 화면 조작은 routeHash가 담당) ──
   function init() {
     root = document.getElementById('naver-root');
     if (!root) return;
     const mBtn = document.getElementById('pf-meta'), nBtn = document.getElementById('pf-naver');
-    if (nBtn) nBtn.onclick = open;
-    if (mBtn) mBtn.onclick = close;
+    if (nBtn) nBtn.onclick = () => {
+      if (((location.hash || '').replace(/^#\/?/, '')).startsWith('naver')) return;
+      location.hash = 'naver-' + sub;   // → index.html routeHash()가 open() 호출
+    };
+    if (mBtn) mBtn.onclick = () => { location.hash = window._lastMetaPage || 'roas'; };  // → routeHash()가 close()+activateTab()
     const navBid = document.getElementById('nav-naver-bid');
-    if (navBid) navBid.onclick = () => render();
-    // 메타 사이드바 탭 클릭 시 네이버 모드 해제 (네이버 전용 내비는 제외)
-    document.querySelectorAll('.nav-item:not(.nv-navitem)').forEach(b => b.addEventListener('click', close));
+    if (navBid) navBid.onclick = () => { location.hash = 'naver-' + sub; render(); };
+    // (메타 사이드바 클릭 시 close 리스너 제거 — nav 클릭이 메타 해시를 세팅하면 routeHash가 닫아줌)
+    // 최초 진입이 #naver-* 해시였다면 열기 (index.html 라우터는 이 파일 로드 전에 이미 지나감)
+    const h0 = (location.hash || '').replace(/^#\/?/, '');
+    if (/^naver(-\w+)?$/.test(h0)) open(h0);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
+
+  // index.html의 해시 라우터(routeHash)가 호출하는 공개 훅
+  window.naverPlatform = { open, close };
 
   // ── 목데이터 (UI 검증용) ──────────────────────────────────────
   function mockApi(action, p) {
