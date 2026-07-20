@@ -440,7 +440,10 @@
           <b style="font-size:14px">${statusDot(gr.group)} ${esc(gr.group.name)}</b>
           <span style="color:var(--muted);font-size:12px">${won(gr.total)} · 키워드 ${gr.items.length}개</span>
         </div>
-        <div style="margin:0 0 8px;font-size:11px;color:var(--muted)">확장소재: ${extChips(gr.exts)}</div>
+        <div style="margin:0 0 10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
+          <div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:6px">확장소재 미리보기</div>
+          ${extPreview(gr.exts)}
+        </div>
         ${gr.items.map(powerKwCard).join('')}
       </div>`).join('')).join('');
     body.innerHTML = `
@@ -546,16 +549,25 @@
     $('#nv-csv').onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) f.text().then(parseShoppingCsv).catch(err => { $('#nv-csv-out').innerHTML = errBox(err); }); };
   }
 
-  // 확장소재 라벨/칩 — 파워링크 입찰 조정 탭의 그룹별 확장소재 표시에 사용.
+  // 확장소재 라벨 + 실제 내용 미리보기 (파워링크 입찰 조정 탭). 확장이미지는 실제 썸네일, 홍보문구/네이버쇼핑/서브링크는 실제 값.
+  const EXT_IMG = 'https://searchad-phinf.pstatic.net'; // POWER_LINK_IMAGE imagePath 호스트 (검증됨)
   const EXT_LABEL = { POWER_LINK_IMAGE: '🖼️ 확장이미지', IMAGE: '🖼️ 이미지', DESCRIPTION: '💬 홍보문구', HEADLINE: '📝 추가제목', SUBLINKS: '🔗 서브링크', SUB_LINKS: '🔗 서브링크', PHONE: '📞 전화', LOCATION: '📍 위치', SHOPPING_WEB: '🛒 네이버쇼핑', CATALOG: '📖 카탈로그', PROMOTION: '🎁 프로모션', PRICE_LINK: '💲 가격링크', PRICE_TABLE: '💲 가격표', BLOG_REVIEW: '✍️ 블로그리뷰', NAVER_TV_VIDEO: '🎬 동영상', CALCULATION: '🧮 계산' };
-  function extChips(exts) {
+  const extRow = (label, inner) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:2px 0"><span style="font-size:11px;color:var(--muted);font-weight:700;min-width:66px">${label}</span>${inner}</div>`;
+  function extPreview(exts) {
     if (!exts || !exts.length) return '<span style="color:var(--muted);font-size:12px">확장소재 없음</span>';
-    const byType = {}; exts.forEach(e => { (byType[e.type] ||= []).push(e); });
-    return Object.entries(byType).map(([t, arr]) => {
-      const lab = EXT_LABEL[t] || t; const ea = arr[0].adExtension || arr[0]; let detail = arr.length > 1 ? ' ×' + arr.length : '';
-      if (t === 'DESCRIPTION' && ea.description) detail = ' · ' + esc(String(ea.description).slice(0, 24));
-      return `<span style="display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:4px 9px;font-size:12px;font-weight:600;margin:0 6px 6px 0">${lab}${detail}</span>`;
-    }).join('');
+    const by = {}; exts.forEach(e => { (by[e.type] ||= []).push(e.adExtension || {}); });
+    const parts = [];
+    const imgs = [...(by.POWER_LINK_IMAGE || []), ...(by.IMAGE || [])];
+    if (imgs.length) parts.push(extRow('🖼️ 확장이미지', imgs.map(a => a.imagePath ? `<img src="${esc(EXT_IMG + a.imagePath)}" title="확장이미지" style="width:52px;height:52px;border-radius:8px;object-fit:cover;border:1px solid var(--border)" onerror="this.style.display='none'">` : '').join('')));
+    if (by.DESCRIPTION) parts.push(extRow('💬 홍보문구', by.DESCRIPTION.map(a => `<span style="background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:3px 10px;font-size:12.5px">${esc(a.description || '')}</span>`).join('')));
+    if (by.HEADLINE) parts.push(extRow('📝 추가제목', by.HEADLINE.map(a => `<span style="font-size:12.5px">${esc(a.headline || a.description || '')}</span>`).join(' · ')));
+    const subs = [...(by.SUBLINKS || []), ...(by.SUB_LINKS || [])];
+    if (subs.length) { const items = subs.flatMap(a => Array.isArray(a.links) ? a.links : (a.sublinks || [a])).map(l => l && (l.name || l.title || l.linkName)).filter(Boolean); parts.push(extRow('🔗 서브링크', items.length ? items.map(t => `<span style="font-size:12px;background:var(--accent-l);color:var(--accent-d);border-radius:7px;padding:2px 8px">${esc(t)}</span>`).join('') : `<span style="font-size:12px;color:var(--muted)">${subs.length}개</span>`)); }
+    if (by.SHOPPING_WEB) parts.push(extRow('🛒 네이버쇼핑', by.SHOPPING_WEB.map(a => a.view ? `<a href="${esc(a.view)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent-d);text-decoration:none">${esc(a.view)} ↗</a>` : '<span style="font-size:12px;color:var(--muted)">연결됨</span>').join(' ')));
+    const known = new Set(['POWER_LINK_IMAGE', 'IMAGE', 'DESCRIPTION', 'HEADLINE', 'SUBLINKS', 'SUB_LINKS', 'SHOPPING_WEB']);
+    const others = Object.keys(by).filter(t => !known.has(t));
+    if (others.length) parts.push(extRow('기타', others.map(t => `<span style="background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:3px 9px;font-size:12px;font-weight:600">${EXT_LABEL[t] || t}${by[t].length > 1 ? ' ×' + by[t].length : ''}</span>`).join('')));
+    return `<div style="display:flex;flex-direction:column;gap:3px">${parts.join('')}</div>`;
   }
   // 쇼핑: CSV 업로드 → 낭비 검색어(비용 있고 판매 0) 제안 + 복사
   function parseShoppingCsv(text) {
@@ -709,9 +721,10 @@
         { nccKeywordId: 'nkw-3', nccAdgroupId: 'grp-1', keyword: '키즈 레깅스', bidAmt: 0, useGroupBidAmt: true, userLock: false, status: 'ELIGIBLE', nccQi: { qiGrade: 3 } },
       ],
       get_ad_extensions: [
-        { type: 'POWER_LINK_IMAGE' }, { type: 'POWER_LINK_IMAGE' },
-        { type: 'DESCRIPTION', adExtension: { description: '무료배송 무료교환반품 당일발송' } },
-        { type: 'SUBLINKS' }, { type: 'SHOPPING_WEB' },
+        { type: 'POWER_LINK_IMAGE', adExtension: { imagePath: '/MjAyNTA0MjNfMTM2/MDAxNzQ1MzcxNzAzNjkx.2cFZ2-acQgCpuPv03NPLKmFXGC1crwqs3q6oqpfw-gog.Laf2lqUNKKlJ8CzSdmZHyI8GPYarTmcm49XxStew2ZIg.JPEG/434195-68d4b235-f5ac-4a00-93b7-92213397b5f9.jpg' } },
+        { type: 'POWER_LINK_IMAGE', adExtension: { imagePath: '/MjAyNTA0MjNfMTg5/MDAxNzQ1MzcxNjY1MzA5.cMp6WGkbajRQ8GwqhXTgDmOeM1hLiK8PQSPxHCq81Xcg.fE7WGEese13ZFO4ZlNqv6sZlZZcF2DjIJqqH192H4PMg.JPEG/434195-40f3562b-6534-43ff-aaae-423be4a567c2.jpg' } },
+        { type: 'DESCRIPTION', adExtension: { description: '무료배송 무료교환반품' } },
+        { type: 'SHOPPING_WEB', adExtension: { view: 'https://smartstore.naver.com/ozkids' } },
       ],
     };
     if (action === 'stats') {
