@@ -82,9 +82,9 @@
   // 네이버 · 광고 예산 조정 — 하위탭 3개
   let sub = 'shopbid';
   const SUBTABS = [
-    { k: 'shopbid', label: '쇼핑검색 입찰가 조정' },
+    { k: 'shopbid', label: '입찰가 조정' },
     { k: 'shopneg', label: '쇼핑검색 제외키워드' },
-    { k: 'powerlink', label: '파워링크' },
+    { k: 'powerlink', label: '파워링크 OFF키워드 제안' },
   ];
   function render() {
     root.innerHTML = `
