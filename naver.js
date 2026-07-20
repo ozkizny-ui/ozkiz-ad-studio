@@ -377,9 +377,9 @@
   async function loadExpKw7d(setMsg) {
     if (expkwCache) return expkwCache;
     if (MOCK) { expkwCache = [
-      { term: '남아수영복', adgroupId: 'grp-1', imp: 900, clk: 20, cost: 12000, conv: 0 },
-      { term: '아동레쉬가드', adgroupId: 'grp-1', imp: 400, clk: 8, cost: 5200, conv: 0 },
-      { term: '키즈아쿠아슈즈', adgroupId: 'grp-1', imp: 300, clk: 8, cost: 3400, conv: 1 },
+      { term: '남아수영복', adgroupId: 'grp-1', campaignId: 'cmp-p1', imp: 900, clk: 20, cost: 12000, conv: 0 },
+      { term: '아동레쉬가드', adgroupId: 'grp-1', campaignId: 'cmp-p1', imp: 400, clk: 8, cost: 5200, conv: 0 },
+      { term: '키즈아쿠아슈즈', adgroupId: 'grp-1', campaignId: 'cmp-p1', imp: 300, clk: 8, cost: 3400, conv: 1 },
     ]; return expkwCache; }
     const map = {}; let done = 0;
     const per = await Promise.all([1, 2, 3, 4, 5, 6, 7].map(async (d) => {
@@ -389,15 +389,25 @@
         const id = job.reportJobId || job.id; let url = null;
         for (let i = 0; i < 15; i++) { await sleep(1500); const st = await api('report_status', { params: { id } }); if (st.status === 'BUILT' || st.status === 'DONE') { url = st.downloadUrl; break; } if (st.status === 'NONE' || st.status === 'DELETED') break; }
         if (url) { const dl = await api('report_download', { params: { url } });
-          (dl.tsv || '').split(/\r?\n/).forEach(ln => { const c = ln.split('\t'); if (c.length < 12) return; const key = c[4] + '|' + c[3]; const x = (m[key] ||= { term: c[4], adgroupId: c[3], imp: 0, clk: 0, cost: 0, conv: 0 }); x.imp += Number(c[8]) || 0; x.clk += Number(c[9]) || 0; x.cost += Number(c[10]) || 0; x.conv += Number(c[11]) || 0; });
+          (dl.tsv || '').split(/\r?\n/).forEach(ln => { const c = ln.split('\t'); if (c.length < 12) return; const key = c[4] + '|' + c[3]; const x = (m[key] ||= { term: c[4], adgroupId: c[3], campaignId: c[2], imp: 0, clk: 0, cost: 0, conv: 0 }); x.imp += Number(c[8]) || 0; x.clk += Number(c[9]) || 0; x.cost += Number(c[10]) || 0; x.conv += Number(c[11]) || 0; });
         }
         api('report_delete', { params: { id } }).catch(() => {});
       } catch {}
       done++; if (setMsg) setMsg(`검색어 보고서 수집 ${done}/7…`);
       return m;
     }));
-    per.forEach(m => { for (const k in m) { const x = (map[k] ||= { term: m[k].term, adgroupId: m[k].adgroupId, imp: 0, clk: 0, cost: 0, conv: 0 }); x.imp += m[k].imp; x.clk += m[k].clk; x.cost += m[k].cost; x.conv += m[k].conv; } });
+    per.forEach(m => { for (const k in m) { const x = (map[k] ||= { term: m[k].term, adgroupId: m[k].adgroupId, campaignId: m[k].campaignId, imp: 0, clk: 0, cost: 0, conv: 0 }); x.imp += m[k].imp; x.clk += m[k].clk; x.cost += m[k].cost; x.conv += m[k].conv; } });
     expkwCache = Object.values(map); return expkwCache;
+  }
+  const EXT_LABEL = { POWER_LINK_IMAGE: '🖼️ 확장이미지', IMAGE: '🖼️ 이미지', DESCRIPTION: '💬 홍보문구', HEADLINE: '📝 추가제목', SUBLINKS: '🔗 서브링크', SUB_LINKS: '🔗 서브링크', PHONE: '📞 전화', LOCATION: '📍 위치', SHOPPING_WEB: '🛒 네이버쇼핑', CATALOG: '📖 카탈로그', PROMOTION: '🎁 프로모션', PRICE_LINK: '💲 가격링크', PRICE_TABLE: '💲 가격표', BLOG_REVIEW: '✍️ 블로그리뷰', NAVER_TV_VIDEO: '🎬 동영상', CALCULATION: '🧮 계산' };
+  function extChips(exts) {
+    if (!exts || !exts.length) return '<span style="color:var(--muted);font-size:12px">확장소재 없음</span>';
+    const byType = {}; exts.forEach(e => { (byType[e.type] ||= []).push(e); });
+    return Object.entries(byType).map(([t, arr]) => {
+      const lab = EXT_LABEL[t] || t; const ea = arr[0].adExtension || arr[0]; let detail = arr.length > 1 ? ' ×' + arr.length : '';
+      if (t === 'DESCRIPTION' && ea.description) detail = ' · ' + esc(String(ea.description).slice(0, 24));
+      return `<span style="display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:4px 9px;font-size:12px;font-weight:600;margin:0 6px 6px 0">${lab}${detail}</span>`;
+    }).join('');
   }
   async function loadPowerlinkWaste() {
     const setOut = (h) => { const el = $('#nv-plkw-out'); if (el) el.innerHTML = h; };
@@ -405,19 +415,47 @@
     const setMsg = (m) => { const el = $('#nv-plkw-out .nv-load'); if (el) el.textContent = '⏳ ' + m; };
     try {
       const all = await loadExpKw7d(setMsg);
-      const waste = all.filter(x => x.cost >= 1000 && x.conv === 0).sort((a, b) => b.cost - a.cost);
-      const total = waste.reduce((s, x) => s + x.cost, 0);
-      const trs = waste.slice(0, 300).map(w => `<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:6px 8px">${esc(w.term)}</td><td style="padding:6px 8px;text-align:right">${cnt(w.imp)}</td>
-        <td style="padding:6px 8px;text-align:right">${cnt(w.clk)}</td><td style="padding:6px 8px;text-align:right">${won(w.cost)}</td>
-        <td style="padding:6px 8px;text-align:right">${w.conv}</td></tr>`).join('');
+      const waste = all.filter(x => x.cost >= 1000 && x.conv === 0);
+      if (!waste.length) { setOut('<div style="color:var(--muted);padding:16px">낭비 검색어(비용 ≥1,000원 & 구매전환 0)가 없어요.</div>'); return; }
+      setMsg('광고그룹·확장소재 정보 불러오는 중…');
+      // 광고그룹명 맵 (낭비어가 속한 캠페인들만 조회)
+      const nameMap = {}; const campName = {};
+      if (MOCK) { nameMap['grp-1'] = { name: '유아레깅스', camp: 'ONS_파링_브랜드' }; }
+      else {
+        try { (await api('get_campaigns')).forEach(c => campName[c.nccCampaignId] = c.name); } catch {}
+        const campIds = [...new Set(waste.map(w => w.campaignId).filter(Boolean))];
+        await Promise.all(campIds.map(async cid => { try { const gs = (await api('get_adgroups', { params: { nccCampaignId: cid } })) || []; gs.forEach(g => nameMap[g.nccAdgroupId] = { name: g.name, camp: campName[cid] || '' }); } catch {} }));
+      }
+      // 그룹별 묶기
+      const groups = {};
+      waste.forEach(w => { const g = (groups[w.adgroupId] ||= { adgroupId: w.adgroupId, terms: [], total: 0 }); g.terms.push(w); g.total += w.cost; });
+      const gArr = Object.values(groups).map(g => { g.terms.sort((a, b) => b.cost - a.cost); const nm = nameMap[g.adgroupId]; g.name = nm ? nm.name : g.adgroupId; g.camp = nm ? nm.camp : ''; return g; }).sort((a, b) => b.total - a.total);
+      // 확장소재 (그룹별 병렬)
+      const extMap = {};
+      if (MOCK) { extMap['grp-1'] = [{ type: 'POWER_LINK_IMAGE' }, { type: 'POWER_LINK_IMAGE' }, { type: 'DESCRIPTION', adExtension: { description: '무료배송 무료교환반품' } }, { type: 'SHOPPING_WEB' }]; }
+      else { await Promise.all(gArr.map(async g => { try { const r = await api('get_ad_extensions', { params: { ownerId: g.adgroupId } }); extMap[g.adgroupId] = Array.isArray(r) ? r : (Array.isArray(r.data) ? r.data : []); } catch { extMap[g.adgroupId] = []; } })); }
+      const grandCnt = waste.length, grandTotal = waste.reduce((s, x) => s + x.cost, 0);
+      const sections = gArr.map((g, gi) => {
+        const trs = g.terms.slice(0, 200).map(w => `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:5px 8px">${esc(w.term)}</td><td style="padding:5px 8px;text-align:right">${cnt(w.imp)}</td>
+          <td style="padding:5px 8px;text-align:right">${cnt(w.clk)}</td><td style="padding:5px 8px;text-align:right">${won(w.cost)}</td></tr>`).join('');
+        return `<div style="border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <b style="font-size:14px">${esc(g.name)}</b>
+            <span style="color:var(--muted);font-size:12px">${g.camp ? esc(g.camp) + ' · ' : ''}낭비 ${g.terms.length}개 · <span style="color:var(--red)">${won(g.total)}</span></span>
+            <button class="nv-plgcopy" data-gi="${gi}" style="${btnCss};margin-left:auto">📋 이 그룹 검색어 복사</button>
+          </div>
+          <div style="margin-bottom:8px;font-size:11px;color:var(--muted)">확장소재: ${extChips(extMap[g.adgroupId])}</div>
+          <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">
+            <th style="padding:5px 8px">검색어</th><th style="padding:5px 8px;text-align:right">노출</th><th style="padding:5px 8px;text-align:right">클릭</th><th style="padding:5px 8px;text-align:right">비용</th>
+          </tr></thead><tbody>${trs}</tbody></table></div>
+        </div>`;
+      }).join('');
       setOut(`
-        <div style="margin-bottom:8px"><b>낭비 검색어 ${waste.length}개</b> · 소진 비용 <b style="color:var(--red)">${won(total)}</b> <span style="color:var(--muted);font-size:12px">(최근 7일 · 비용 ≥1,000원 & 구매전환 0)</span></div>
-        ${waste.length ? `<button id="nv-plcopy" style="${pBtn};margin-bottom:8px">📋 검색어 목록 복사 (대시보드 제외검색어에 붙여넣기)</button>` : '<div style="color:var(--muted)">낭비 검색어 없음.</div>'}
-        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px"><thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">
-          <th style="padding:6px 8px">검색어</th><th style="padding:6px 8px;text-align:right">노출</th><th style="padding:6px 8px;text-align:right">클릭</th><th style="padding:6px 8px;text-align:right">비용</th><th style="padding:6px 8px;text-align:right">구매전환</th>
-        </tr></thead><tbody>${trs}</tbody></table></div>`);
-      const cp = $('#nv-plcopy'); if (cp) cp.onclick = () => { navigator.clipboard.writeText(waste.map(w => w.term).join('\n')).then(() => { cp.textContent = '✓ 복사됨'; }); };
+        <div style="margin-bottom:6px"><b>${gArr.length}개 광고그룹</b> · 낭비 검색어 <b>${grandCnt}개</b> · <b style="color:var(--red)">${won(grandTotal)}</b> <span style="color:var(--muted);font-size:12px">(최근 7일 · 비용 ≥1,000원 & 구매전환 0)</span></div>
+        <div style="color:var(--muted);font-size:12px;margin-bottom:12px">그룹마다 "이 그룹 검색어 복사" → 네이버 대시보드 <b>해당 광고그룹</b>의 제외검색어에 붙여넣으세요.</div>
+        ${sections}`);
+      document.querySelectorAll('.nv-plgcopy').forEach(b => b.onclick = () => { const g = gArr[+b.dataset.gi]; navigator.clipboard.writeText(g.terms.map(w => w.term).join('\n')).then(() => { b.textContent = '✓ 복사됨'; }); });
     } catch (e) { setOut(errBox(e)); }
   }
 
