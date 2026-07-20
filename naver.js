@@ -427,6 +427,12 @@
           return { kw, b, pc, ctr, cpc, roas, cur, nb, pending, grp };
         }).sort((x, y) => y.b.cost - x.b.cost);
         gr.total = gr.items.reduce((t, it) => t + it.b.cost, 0);
+        // 그룹 합계(전체 키워드 합산)
+        gr.aimp = gr.items.reduce((t, it) => t + it.b.imp, 0);
+        gr.aclk = gr.items.reduce((t, it) => t + it.b.clk, 0);
+        gr.arankw = gr.items.reduce((t, it) => t + it.b.rank * it.b.imp, 0); // 노출 가중 평균순위용
+        gr.acnt = purchase ? gr.items.reduce((t, it) => t + (it.pc ? it.pc.cnt : 0), 0) : null;
+        gr.aval = purchase ? gr.items.reduce((t, it) => t + (it.pc ? it.pc.val : 0), 0) : null;
       });
       s.groups.sort((a, b) => b.total - a.total);
       s.total = s.groups.reduce((t, g) => t + g.total, 0);
@@ -434,6 +440,20 @@
     structure.sort((a, b) => b.total - a.total);
     const gRoas = gCost ? gConvV / gCost * 100 : 0;
     const thc = 'padding:6px 8px;font-weight:600;white-space:nowrap';
+    const tf = 'padding:7px 8px;text-align:right;white-space:nowrap;font-weight:700;background:var(--surface2)';
+    const groupFoot = (gr) => `<tfoot><tr style="border-top:2px solid var(--border2)">
+      <td style="padding:7px 8px;text-align:left;font-weight:700;background:var(--surface2)">합계 · ${gr.items.length}개</td>
+      <td style="${tf}">${gr.aimp ? (gr.arankw / gr.aimp).toFixed(1) : '-'}</td>
+      <td style="${tf}"></td>
+      <td style="${tf}">${cnt(gr.aimp)}</td>
+      <td style="${tf}">${cnt(gr.aclk)}</td>
+      <td style="${tf}">${gr.aimp ? (gr.aclk / gr.aimp * 100).toFixed(2) : '0.00'}%</td>
+      <td style="${tf}">${won(gr.aclk ? Math.round(gr.total / gr.aclk) : 0)}</td>
+      <td style="${tf}">${won(gr.total)}</td>
+      <td style="${tf}">${pending ? '…' : (gr.acnt + '건·' + cnt(gr.aval))}</td>
+      <td style="${tf};color:${pending ? 'var(--muted)' : (gr.total && gr.aval / gr.total * 100 >= 300 ? 'var(--green)' : 'var(--red)')}">${pending ? '…' : (gr.total ? Math.round(gr.aval / gr.total * 100) + '%' : '-')}</td>
+      <td style="${tf}"></td><td style="${tf}"></td>
+    </tr></tfoot>`;
     const tableHead = `<thead><tr style="color:var(--muted);font-size:11px;text-align:right;border-bottom:1px solid var(--border)">
       <th style="text-align:left;${thc}">키워드</th><th style="${thc}">순위</th><th style="text-align:left;${thc}">품질</th><th style="${thc}">노출</th><th style="${thc}">클릭</th><th style="${thc}">CTR</th><th style="${thc}">CPC</th><th style="${thc}">총비용</th><th style="${thc}">구매(직접)</th><th style="${thc}">ROAS</th><th style="text-align:right;${thc}">입찰가 (현재→제안)</th><th style="${thc}">On/Off</th>
     </tr></thead>`;
@@ -449,7 +469,7 @@
           ${extPreview(gr.exts)}
         </div>
         <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
-          ${tableHead}<tbody>${gr.items.map(powerKwRow).join('')}</tbody>
+          ${tableHead}<tbody>${gr.items.map(powerKwRow).join('')}</tbody>${groupFoot(gr)}
         </table></div>
       </div>`).join('')).join('');
     body.innerHTML = `
