@@ -118,7 +118,7 @@
       const shopCamps = camps.filter(c => c.campaignTp === 'SHOPPING' && (dashPaused || isRunning(c))).sort(runningFirst);
       if (!shopCamps.length) { body.innerHTML = '<div style="color:var(--muted);padding:20px">운영중 쇼핑검색 캠페인이 없어요.</div>'; return; }
       // 구조: 캠페인 → (운영중)그룹 → (운영중)소재
-      const structure = await Promise.all(shopCamps.map(async c => {
+      let structure = await Promise.all(shopCamps.map(async c => {
         const gs = (await api('get_adgroups', { params: { nccCampaignId: c.nccCampaignId } })) || [];
         const egs = gs.filter(g => dashPaused || isRunning(g));
         const withAds = await Promise.all(egs.map(async g => {
@@ -127,27 +127,27 @@
         }));
         return { camp: c, groups: withAds.filter(x => x.ads.length) };
       }));
-      body.innerHTML = loading('최근 7일 성과(비용·구매전환) 집계 중… (처음 한 번, 수십 초)');
-      const [adRep, purchase] = await Promise.all([loadAdReport7d(), loadPurchase7d()]);
-      renderDashboard(body, structure.filter(s => s.groups.length), adRep, purchase);
+      // 기본지표+순위: /stats 배치(빠름) → 즉시 렌더. 구매전환(직접)은 뒤에서 채움(progressive)
+      structure = structure.filter(s => s.groups.length);
+      const ids = structure.flatMap(s => s.groups.flatMap(g => g.ads.map(a => a.nccAdId)));
+      const statsMap = await loadStatsBatch(ids);
+      renderDashboard(body, structure, statsMap, null);
+      loadPurchase7d().then(p => { if (sub === 'shopbid' && document.getElementById('nvc-dash')) renderDashboard(body, structure, statsMap, p); }).catch(() => {});
     } catch (e) { body.innerHTML = errBox(e); }
   }
-  // 최근 7일 소재 기본지표(노출/클릭/비용): AD 보고서 병렬 수집(계정단위 1회 캐시)
-  let adRepCache = null;
-  async function loadAdReport7d() {
-    if (adRepCache) return adRepCache;
-    if (MOCK) { adRepCache = { 'nad-1': { imp: 5000, clk: 70, cost: 100000 }, 'nad-2': { imp: 900, clk: 8, cost: 40000 }, 'nad-3': { imp: 200, clk: 2, cost: 3000 } }; return adRepCache; }
-    const map = {};
-    await Promise.all([1, 2, 3, 4, 5, 6, 7].map(async (d) => {
+  // 기본지표+순위 배치(/stats ids, 90개씩) — AD보고서 대체·빠름. per-id avgRnk/노출/클릭/비용 반환.
+  async function loadStatsBatch(ids) {
+    if (MOCK) return { 'nad-1': { imp: 5000, clk: 70, cost: 100000, rank: 4.2 }, 'nad-2': { imp: 900, clk: 8, cost: 40000, rank: 6.1 }, 'nad-3': { imp: 200, clk: 2, cost: 3000, rank: 8 } };
+    const map = {}, chunks = [];
+    for (let i = 0; i < ids.length; i += 90) chunks.push(ids.slice(i, i + 90));
+    await Promise.all(chunks.map(async ch => {
       try {
-        const job = await api('report_create', { body: { reportTp: 'AD', statDt: isoAgo(d) } });
-        const id = job.reportJobId || job.id; let url = null;
-        for (let i = 0; i < 15; i++) { await sleep(1500); const st = await api('report_status', { params: { id } }); if (st.status === 'BUILT' || st.status === 'DONE') { url = st.downloadUrl; break; } if (st.status === 'NONE' || st.status === 'DELETED') break; }
-        if (url) { const dl = await api('report_download', { params: { url } }); (dl.tsv || '').split(/\r?\n/).forEach(ln => { const c = ln.split('\t'); if (c.length < 12) return; const m = (map[c[5]] ||= { imp: 0, clk: 0, cost: 0 }); m.imp += Number(c[9]) || 0; m.clk += Number(c[10]) || 0; m.cost += Number(c[11]) || 0; }); }
-        api('report_delete', { params: { id } }).catch(() => {});
+        const r = await api('stats', { params: { ids: ch.join(','), fields: JSON.stringify(['impCnt', 'clkCnt', 'salesAmt', 'avgRnk']), timeRange: JSON.stringify({ since: isoAgo(7), until: isoAgo(1) }) } });
+        const rows = Array.isArray(r) ? r : (Array.isArray(r.data) ? r.data : []);
+        rows.forEach(x => { map[x.id] = { imp: +x.impCnt || 0, clk: +x.clkCnt || 0, cost: +x.salesAmt || 0, rank: +x.avgRnk || 0 }; });
       } catch {}
     }));
-    adRepCache = map; return map;
+    return map;
   }
 
   const pBtn = 'padding:8px 16px;border-radius:10px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:700;font-size:13px';
@@ -170,19 +170,22 @@
 .nvc-bid .cur{color:var(--muted);text-decoration:line-through} .nvc-bid .new{font-weight:800;color:var(--accent-d)}
 .nvc-d{font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:6px}`;
   function injectNvCss() { if (document.getElementById('nv-css')) return; const s = document.createElement('style'); s.id = 'nv-css'; s.textContent = NV_CSS; document.head.appendChild(s); }
-  function renderDashboard(body, structure, adRep, purchase) {
-    const mod = dayModifier();
+  function renderDashboard(body, structure, statsMap, purchase) {
+    const mod = dayModifier(), pending = !purchase;
     nvSuggestions = [];
     let gCost = 0, gConvV = 0, gConvN = 0, prodCount = 0;
     structure.forEach(s => {
       s.groups.forEach(gr => {
         gr.items = gr.ads.map(a => {
-          const b = adRep[a.nccAdId] || { imp: 0, clk: 0, cost: 0 }, pc = purchase[a.nccAdId] || { cnt: 0, val: 0 };
-          const ctr = b.imp ? b.clk / b.imp * 100 : 0, cpc = b.clk ? b.cost / b.clk : 0, roas = b.cost ? pc.val / b.cost * 100 : 0;
-          const cur = Number(a.adAttr && a.adAttr.bidAmt), nb = (a.userLock === true || !b.cost) ? cur : computeBid(cur, roas, mod.mod);
-          if (nb !== cur && a.userLock !== true) nvSuggestions.push({ a, cur, nb });
-          gCost += b.cost; gConvV += pc.val; gConvN += pc.cnt; prodCount++;
-          return { a, b, pc, ctr, cpc, roas, cur, nb };
+          const b = statsMap[a.nccAdId] || { imp: 0, clk: 0, cost: 0, rank: 0 };
+          const pc = purchase ? (purchase[a.nccAdId] || { cnt: 0, val: 0 }) : null;
+          const ctr = b.imp ? b.clk / b.imp * 100 : 0, cpc = b.clk ? b.cost / b.clk : 0;
+          const roas = (pc && b.cost) ? pc.val / b.cost * 100 : null;
+          const cur = Number(a.adAttr && a.adAttr.bidAmt);
+          const nb = (!pending && a.userLock !== true && b.cost && roas != null) ? computeBid(cur, roas, mod.mod) : cur;
+          if (!pending && nb !== cur && a.userLock !== true) nvSuggestions.push({ a, cur, nb });
+          gCost += b.cost; if (pc) { gConvV += pc.val; gConvN += pc.cnt; } prodCount++;
+          return { a, b, pc, ctr, cpc, roas, cur, nb, pending };
         }).sort((x, y) => y.b.cost - x.b.cost);
         gr.total = gr.items.reduce((t, it) => t + it.b.cost, 0);
       });
@@ -204,16 +207,16 @@
     body.innerHTML = `
       <div class="nvc-tiles">
         <div class="nvc-tile"><div class="k">총비용 (7일)</div><div class="v">${won(gCost)}</div></div>
-        <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접</span></div><div class="v" style="color:${gRoas >= 300 ? 'var(--green)' : 'var(--red)'}">${gCost ? Math.round(gRoas) + '%' : '-'}</div></div>
-        <div class="nvc-tile"><div class="k">구매 전환</div><div class="v">${gConvN}건 · ${cnt(gConvV)}원</div></div>
-        <div class="nvc-tile"><div class="k">상품 · 변경대상</div><div class="v">${prodCount} · <span style="color:var(--accent-d)">${nvSuggestions.length}</span></div></div>
+        <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접</span></div><div class="v" style="color:${pending ? 'var(--muted)' : (gRoas >= 300 ? 'var(--green)' : 'var(--red)')}">${pending ? '<span style="font-size:13px">집계 중…</span>' : (gCost ? Math.round(gRoas) + '%' : '-')}</div></div>
+        <div class="nvc-tile"><div class="k">구매 전환</div><div class="v">${pending ? '<span style="color:var(--muted);font-size:13px">집계 중…</span>' : gConvN + '건 · ' + cnt(gConvV) + '원'}</div></div>
+        <div class="nvc-tile"><div class="k">상품 · 변경대상</div><div class="v">${prodCount} · <span style="color:var(--accent-d)">${pending ? '…' : nvSuggestions.length}</span></div></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <input id="nvf-q" placeholder="🔎 상품명 검색" style="padding:7px 10px;border:1px solid var(--border2);border-radius:9px;background:var(--surface);color:var(--text);font-size:13px;min-width:180px">
         <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvf-changed"> 제안 있는 것만</label>
         <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvf-paused" ${dashPaused ? 'checked' : ''}> 정지 포함</label>
         <span style="font-size:12px;color:var(--muted)">· ${mod.label} 보정 · 비용 많은 순</span>
-        <button id="nvc-applyall" style="${pBtn};margin-left:auto" ${nvSuggestions.length ? '' : 'disabled'}>${nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음'}</button>
+        <button id="nvc-applyall" style="${pBtn};margin-left:auto" ${(!pending && nvSuggestions.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음')}</button>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${chips}</div>
       <div id="nvc-dash">${sections}</div>`;
@@ -235,12 +238,16 @@
     const btn = $('#nvc-applyall'); if (btn) btn.onclick = () => applyAll();
   }
   function fullCard(it) {
-    const a = it.a, rd = a.referenceData || {}, paused = a.userLock === true;
-    const good = it.roas >= 300, d = it.nb - it.cur, pct = it.cur ? Math.round(d / it.cur * 100) : 0;
+    const a = it.a, rd = a.referenceData || {}, paused = a.userLock === true, pend = it.pending;
+    const d = it.nb - it.cur, pct = it.cur ? Math.round(d / it.cur * 100) : 0;
     const meta = [(rd.category3Name || rd.category2Name) ? `<span class="nvc-chip">${esc(rd.category3Name || rd.category2Name)}</span>` : '', rd.scoreInfo ? `<span style="color:#E9A23B;font-weight:700">★ ${esc(rd.scoreInfo)}</span>` : '', rd.reviewCountSum ? `<span>리뷰 ${cnt(rd.reviewCountSum)}</span>` : '', rd.lowPrice ? `<span>· ${cnt(rd.lowPrice)}원</span>` : ''].join('');
-    const bidHtml = d !== 0 ? `<span class="cur">${it.cur}</span>→<span class="new">${it.nb}원</span><span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span>` : `<span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface);color:var(--muted)">유지</span>`;
-    const M = [['품질', qiBar(a.nccQi && a.nccQi.qiGrade)], ['노출', cnt(it.b.imp)], ['클릭', cnt(it.b.clk)], ['CTR', it.ctr.toFixed(2) + '%'], ['CPC', won(Math.round(it.cpc))], ['총비용', won(it.b.cost)], ['구매', it.pc.cnt + '건·' + cnt(it.pc.val)]];
-    return `<div class="nvc-card" data-title="${esc((rd.productTitle || '').toLowerCase())}" data-changed="${d !== 0 ? '1' : '0'}">
+    const bidHtml = pend
+      ? `<span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface);color:var(--muted)">…</span>`
+      : (d !== 0 ? `<span class="cur">${it.cur}</span>→<span class="new">${it.nb}원</span><span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span>` : `<span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface);color:var(--muted)">유지</span>`);
+    const M = [['순위', it.b.rank ? it.b.rank.toFixed(1) : '-'], ['품질', qiBar(a.nccQi && a.nccQi.qiGrade)], ['노출', cnt(it.b.imp)], ['클릭', cnt(it.b.clk)], ['CTR', it.ctr.toFixed(2) + '%'], ['CPC', won(Math.round(it.cpc))], ['총비용', won(it.b.cost)], ['구매', pend ? '<span style="color:var(--muted)">…</span>' : (it.pc.cnt + '건·' + cnt(it.pc.val))]];
+    const roasTxt = pend ? '<span style="color:var(--muted)">…</span>' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
+    const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= 300 ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
+    return `<div class="nvc-card" data-title="${esc((rd.productTitle || '').toLowerCase())}" data-changed="${(!pend && d !== 0) ? '1' : '0'}">
       <img class="nvc-thumb" src="${esc(rd.imageUrl || '')}" onerror="this.style.opacity=.2">
       <div style="min-width:0">
         <div class="nvc-title">${esc(rd.productTitle || a.nccAdId)}</div>
@@ -248,7 +255,7 @@
         <div class="nvc-metrics">${M.map(([k, v]) => `<div class="nvc-m"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}</div>
       </div>
       <div class="nvc-right">
-        <div class="nvc-roas" style="color:${it.b.cost ? (good ? 'var(--green)' : 'var(--red)') : 'var(--muted)'}">${it.b.cost ? Math.round(it.roas) + '%' : '-'}<small>구매 ROAS</small></div>
+        <div class="nvc-roas" style="color:${roasCol}">${roasTxt}<small>구매 ROAS</small></div>
         <div class="nvc-bid" id="nvb-${a.nccAdId}">${bidHtml}</div>
         <span style="font-size:11px;color:${paused ? 'var(--muted)' : 'var(--green)'}">${paused ? '⚪ 정지' : '🟢 노출중'}</span>
       </div>
