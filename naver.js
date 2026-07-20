@@ -433,18 +433,24 @@
     });
     structure.sort((a, b) => b.total - a.total);
     const gRoas = gCost ? gConvV / gCost * 100 : 0;
+    const thc = 'padding:6px 8px;font-weight:600;white-space:nowrap';
+    const tableHead = `<thead><tr style="color:var(--muted);font-size:11px;text-align:right;border-bottom:1px solid var(--border)">
+      <th style="text-align:left;${thc}">키워드</th><th style="${thc}">순위</th><th style="text-align:left;${thc}">품질</th><th style="${thc}">노출</th><th style="${thc}">클릭</th><th style="${thc}">CTR</th><th style="${thc}">CPC</th><th style="${thc}">총비용</th><th style="${thc}">구매(직접)</th><th style="${thc}">ROAS</th><th style="text-align:right;${thc}">입찰가 (현재→제안)</th><th style="${thc}">On/Off</th>
+    </tr></thead>`;
     const sections = structure.map(s => s.groups.map(gr => `
-      <div class="nvp-gsec" data-camp="${s.camp.nccCampaignId}">
-        <div style="display:flex;align-items:center;gap:8px;margin:16px 0 6px;flex-wrap:wrap">
+      <div class="nvp-gcard" data-camp="${s.camp.nccCampaignId}" style="border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:14px;background:var(--surface);box-shadow:0 1px 3px rgba(24,23,46,.05)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
           <span style="font-size:11px;color:var(--muted)">${esc(s.camp.name)}</span>
-          <b style="font-size:14px">${statusDot(gr.group)} ${esc(gr.group.name)}</b>
+          <b style="font-size:15px">${statusDot(gr.group)} ${esc(gr.group.name)}</b>
           <span style="color:var(--muted);font-size:12px">${won(gr.total)} · 키워드 ${gr.items.length}개</span>
         </div>
-        <div style="margin:0 0 10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
+        <div style="margin:0 0 10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">
           <div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:6px">확장소재 미리보기</div>
           ${extPreview(gr.exts)}
         </div>
-        ${gr.items.map(powerKwCard).join('')}
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          ${tableHead}<tbody>${gr.items.map(powerKwRow).join('')}</tbody>
+        </table></div>
       </div>`).join('')).join('');
     body.innerHTML = `
       <div class="nvc-tiles">
@@ -464,8 +470,8 @@
     const q = $('#nvpf-q'), ch = $('#nvpf-changed');
     const applyF = () => {
       const term = (q.value || '').toLowerCase(), onlyCh = ch.checked;
-      document.querySelectorAll('.nvp-card').forEach(c => { c.style.display = ((!term || c.dataset.kw.includes(term)) && (!onlyCh || c.dataset.changed === '1')) ? '' : 'none'; });
-      document.querySelectorAll('.nvp-gsec').forEach(sec => { const any = [...sec.querySelectorAll('.nvp-card')].some(c => c.style.display !== 'none'); sec.style.display = any ? '' : 'none'; });
+      document.querySelectorAll('.nvp-row').forEach(r => { r.style.display = ((!term || r.dataset.kw.includes(term)) && (!onlyCh || r.dataset.changed === '1')) ? '' : 'none'; });
+      document.querySelectorAll('.nvp-gcard').forEach(card => { const any = [...card.querySelectorAll('.nvp-row')].some(r => r.style.display !== 'none'); card.style.display = any ? '' : 'none'; });
     };
     if (q) q.oninput = applyF; if (ch) ch.onchange = applyF;
     const pcb = $('#nvpf-paused'); if (pcb) pcb.onchange = () => { pwrPaused = pcb.checked; renderPowerBid(); };
@@ -487,30 +493,34 @@
       b.dataset.lock = lock ? '0' : '1'; b.style.color = 'var(--muted)';
     } catch (e) { b.disabled = false; b.textContent = prev; alert('실패: ' + (e.message || e)); }
   }
-  function powerKwCard(it) {
+  function powerKwRow(it) {
     const kw = it.kw, locked = kw.userLock === true, paused = locked || !isRunning(kw), pend = it.pending, grp = it.grp;
     const d = it.nb - it.cur, pct = it.cur ? Math.round(d / it.cur * 100) : 0, changed = !pend && !grp && d !== 0;
-    const bidHtml = grp
-      ? '<span style="color:var(--muted);font-size:11px">그룹입찰 사용</span>'
+    const td = 'padding:6px 8px;text-align:right;white-space:nowrap';
+    const bidCell = grp
+      ? '<span style="color:var(--muted);font-size:11px">그룹입찰</span>'
       : pend
-        ? `<span style="color:var(--muted);font-size:10px">현재</span> <span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface2);color:var(--muted)">…</span>`
+        ? '<span style="color:var(--muted)">…</span>'
         : changed
-          ? `<span style="color:var(--muted);font-size:10px">현재</span> <span class="cur">${it.cur}</span><span style="color:var(--muted)">→</span><span style="color:var(--accent-d);font-size:10px;font-weight:700">제안</span> <span class="new">${it.nb}원</span><span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span><input type="checkbox" class="nvp-cb" data-kw="${esc(kw.nccKeywordId)}" checked title="이 제안 반영" style="margin-left:4px;width:16px;height:16px;accent-color:var(--accent);cursor:pointer;vertical-align:middle">`
-          : `<span style="color:var(--muted);font-size:10px">현재</span> <span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface2);color:var(--muted)">유지</span>`;
-    const M = [['순위', it.b.rank ? it.b.rank.toFixed(1) : '-'], ['품질', qiBar(kw.nccQi && kw.nccQi.qiGrade)], ['노출', cnt(it.b.imp)], ['클릭', cnt(it.b.clk)], ['CTR', it.ctr.toFixed(2) + '%'], ['CPC', won(Math.round(it.cpc))], ['총비용', won(it.b.cost)], ['구매', pend ? '<span style="color:var(--muted)">…</span>' : (it.pc.cnt + '건·' + cnt(it.pc.val))]];
-    const roasTxt = pend ? '<span style="color:var(--muted)">…</span>' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
+          ? `<span style="color:var(--muted);text-decoration:line-through">${it.cur}</span><span style="color:var(--muted)"> → </span><span style="font-weight:800;color:var(--accent-d)">${it.nb}원</span> <span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span> <input type="checkbox" class="nvp-cb" data-kw="${esc(kw.nccKeywordId)}" checked title="이 제안 반영" style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;vertical-align:middle">`
+          : `<span style="font-weight:700">${it.cur}원</span> <span style="color:var(--muted);font-size:11px">유지</span>`;
+    const roasTxt = pend ? '…' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
     const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= 300 ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
-    return `<div class="nvp-card" data-kw="${esc((kw.keyword || '').toLowerCase())}" data-changed="${changed ? '1' : '0'}" style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 14px;margin-bottom:8px;box-shadow:0 1px 3px rgba(24,23,46,.05)">
-      <div style="min-width:0">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-weight:700;font-size:14px">🔑 ${esc(kw.keyword || kw.nccKeywordId)}</span><span style="font-size:11px;color:${paused ? 'var(--muted)' : 'var(--green)'}">${paused ? '⚪ 정지' : '🟢 노출중'}</span></div>
-        <div class="nvc-metrics">${M.map(([k, v]) => `<div class="nvc-m"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}</div>
-      </div>
-      <div class="nvc-right" style="min-width:180px">
-        <div class="nvc-roas" style="color:${roasCol}">${roasTxt}<small>구매 ROAS</small></div>
-        <div class="nvc-bid" id="nvpb-${esc(kw.nccKeywordId)}">${bidHtml}</div>
-        <button class="nvp-off" data-kw="${esc(kw.nccKeywordId)}" data-ag="${esc(kw.nccAdgroupId)}" data-lock="${locked ? '0' : '1'}" style="margin-top:2px;font-size:11px;padding:3px 12px;border-radius:7px;border:1px solid var(--border2);background:var(--surface);color:${locked ? 'var(--green)' : 'var(--red)'};cursor:pointer;font-weight:700">${locked ? '▶ ON' : '⏸ OFF'}</button>
-      </div>
-    </div>`;
+    const buyTxt = pend ? '…' : (it.pc.cnt + '건·' + cnt(it.pc.val));
+    return `<tr class="nvp-row" data-kw="${esc((kw.keyword || '').toLowerCase())}" data-changed="${changed ? '1' : '0'}" style="border-top:1px solid var(--border)">
+      <td style="padding:6px 8px;text-align:left"><span style="font-size:11px" title="${paused ? '정지' : '노출중'}">${paused ? '⚪' : '🟢'}</span> <span style="font-weight:600">${esc(kw.keyword || kw.nccKeywordId)}</span></td>
+      <td style="${td}">${it.b.rank ? it.b.rank.toFixed(1) : '-'}</td>
+      <td style="padding:6px 8px;text-align:left">${qiBar(kw.nccQi && kw.nccQi.qiGrade)}</td>
+      <td style="${td}">${cnt(it.b.imp)}</td>
+      <td style="${td}">${cnt(it.b.clk)}</td>
+      <td style="${td}">${it.ctr.toFixed(2)}%</td>
+      <td style="${td}">${won(Math.round(it.cpc))}</td>
+      <td style="${td}">${won(it.b.cost)}</td>
+      <td style="${td}">${buyTxt}</td>
+      <td style="${td};font-weight:700;color:${roasCol}">${roasTxt}</td>
+      <td id="nvpb-${esc(kw.nccKeywordId)}" style="${td}">${bidCell}</td>
+      <td style="padding:6px 8px;text-align:center"><button class="nvp-off" data-kw="${esc(kw.nccKeywordId)}" data-ag="${esc(kw.nccAdgroupId)}" data-lock="${locked ? '0' : '1'}" style="font-size:11px;padding:2px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:${locked ? 'var(--green)' : 'var(--red)'};cursor:pointer;font-weight:700">${locked ? 'ON' : 'OFF'}</button></td>
+    </tr>`;
   }
   async function applyPowerBids() {
     if (!nvPwrSug.length) return;
@@ -525,7 +535,7 @@
     for (const s of sel) {
       try {
         await api('update_keyword_bid', { body: { nccKeywordId: s.kw.nccKeywordId, nccAdgroupId: s.kw.nccAdgroupId, bidAmt: s.nb } }); ok++;
-        const bd = $('#nvpb-' + s.kw.nccKeywordId); if (bd) bd.innerHTML = `<span class="new">${s.nb}원</span><span class="nvc-d" style="background:var(--green-l);color:var(--green)">✓ 반영</span>`;
+        const bd = $('#nvpb-' + s.kw.nccKeywordId); if (bd) bd.innerHTML = `<span style="font-weight:800;color:var(--accent-d)">${s.nb}원</span> <span class="nvc-d" style="background:var(--green-l);color:var(--green)">✓ 반영</span>`;
       } catch (e) { fail++; }
     }
     if (btn) btn.textContent = `완료 · 성공 ${ok}${fail ? ' / 실패 ' + fail : ''}`;
