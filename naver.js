@@ -367,13 +367,15 @@
         const gs = (await api('get_adgroups', { params: { nccCampaignId: c.nccCampaignId } })) || [];
         const egs = gs.filter(g => pwrPaused || isRunning(g));
         const withKw = await Promise.all(egs.map(async g => {
-          const [kws, extR] = await Promise.all([
+          const [kws, extR, adsR] = await Promise.all([
             api('get_keywords', { params: { nccAdgroupId: g.nccAdgroupId } }),
             api('get_ad_extensions', { params: { ownerId: g.nccAdgroupId } }).catch(() => []),
+            api('get_ads', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => []),
           ]);
           const kwArr = (kws || []).filter(k => pwrPaused || (isRunning(k) && k.userLock !== true));
           const exts = Array.isArray(extR) ? extR : (Array.isArray(extR.data) ? extR.data : []);
-          return { group: g, exts, kws: kwArr };
+          const ads = Array.isArray(adsR) ? adsR : (Array.isArray(adsR.data) ? adsR.data : []);
+          return { group: g, exts, kws: kwArr, ads };
         }));
         return { camp: c, groups: withKw.filter(x => x.kws.length) };
       }));
@@ -468,6 +470,10 @@
           <div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:6px">확장소재 미리보기</div>
           ${extPreview(gr.exts)}
         </div>
+        <div style="margin:0 0 10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">
+          <div style="font-size:11px;color:var(--muted);font-weight:700">소재 · 연결 URL</div>
+          ${adPreview(gr.ads)}
+        </div>
         <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
           ${tableHead}<tbody>${gr.items.map(powerKwRow).join('')}</tbody>${groupFoot(gr)}
         </table></div>
@@ -499,6 +505,7 @@
     document.querySelectorAll('.nvp-cb').forEach(cb => cb.onchange = upd);
     const btn = $('#nvp-applyall'); if (btn) { btn.onclick = () => applyPowerBids(); if (!pending && nvPwrSug.length) upd(); }
     document.querySelectorAll('.nvp-off').forEach(b => b.onclick = () => togglePowerKw(b));
+    document.querySelectorAll('.nv-urlcopy').forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.url).then(() => { const t = b.textContent; b.textContent = '✓'; setTimeout(() => b.textContent = t, 1200); }); });
   }
   // 키워드 OFF(정지)/ON(노출) — userLock 토글. 파워링크는 제외키워드 대신 낭비 키워드를 직접 끔.
   async function togglePowerKw(b) {
@@ -583,6 +590,22 @@
   const EXT_IMG = 'https://searchad-phinf.pstatic.net'; // POWER_LINK_IMAGE imagePath 호스트 (검증됨)
   const EXT_LABEL = { POWER_LINK_IMAGE: '🖼️ 확장이미지', IMAGE: '🖼️ 이미지', DESCRIPTION: '💬 홍보문구', HEADLINE: '📝 추가제목', SUBLINKS: '🔗 서브링크', SUB_LINKS: '🔗 서브링크', PHONE: '📞 전화', LOCATION: '📍 위치', SHOPPING_WEB: '🛒 네이버쇼핑', CATALOG: '📖 카탈로그', PROMOTION: '🎁 프로모션', PRICE_LINK: '💲 가격링크', PRICE_TABLE: '💲 가격표', BLOG_REVIEW: '✍️ 블로그리뷰', NAVER_TV_VIDEO: '🎬 동영상', CALCULATION: '🧮 계산' };
   const extRow = (label, inner) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:2px 0"><span style="font-size:11px;color:var(--muted);font-weight:700;min-width:66px">${label}</span>${inner}</div>`;
+  // 소재 실제 연결 URL 미리보기 (ad.pc.final = 실제 연결, ad.pc.display = 표시 URL)
+  function adPreview(ads) {
+    if (!ads || !ads.length) return '<span style="color:var(--muted);font-size:12px">소재 없음</span>';
+    return ads.map(a => {
+      const ad = a.ad || {}, pc = ad.pc || {}, mo = ad.mobile || {};
+      const final = pc.final || mo.final || '';
+      const disp = pc.display || mo.display || '';
+      const paused = a.userLock === true || !isRunning(a);
+      return `<div style="padding:6px 0;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="font-size:11px" title="${paused ? '정지' : '노출중'}">${paused ? '⚪' : '🟢'}</span>${ad.headline ? `<span style="font-size:12.5px;font-weight:600">${esc(ad.headline)}</span>` : `<span style="font-size:12px;color:var(--muted)">${esc(a.nccAdId)}</span>`}</div>
+        ${ad.description ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:3px">${esc(ad.description)}</div>` : ''}
+        ${final ? `<div style="font-size:11.5px;line-height:1.5"><span style="color:var(--muted);font-weight:700">🔗 연결 URL</span> <a href="${esc(final)}" target="_blank" rel="noopener" style="color:var(--accent-d);text-decoration:none;word-break:break-all">${esc(final)}</a> <button class="nv-urlcopy" data-url="${esc(final)}" style="font-size:10px;padding:1px 7px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);cursor:pointer">복사</button></div>` : '<div style="font-size:11.5px;color:var(--muted)">연결 URL 없음</div>'}
+        ${disp ? `<div style="font-size:11px;color:var(--muted)">표시 URL: ${esc(disp)}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
   function extPreview(exts) {
     if (!exts || !exts.length) return '<span style="color:var(--muted);font-size:12px">확장소재 없음</span>';
     const by = {}; exts.forEach(e => { (by[e.type] ||= []).push(e.adExtension || {}); });
@@ -743,7 +766,7 @@
         { nccAdgroupId: 'grp-2', name: '원피스_메인', nccCampaignId: 'cmp-s1', status: 'PAUSED' },
       ],
       get_ads: [
-        { nccAdId: 'nad-1', userLock: false, adAttr: { bidAmt: 660, useGroupBidAmt: false }, nccQi: { qiGrade: 5 }, referenceData: { productTitle: '오즈키즈 여아 치랭스 레깅스 유아 아기', lowPrice: '16900', category3Name: '레깅스', scoreInfo: '4.9', reviewCountSum: '312', imageUrl: 'https://shopping-phinf.pstatic.net/main_8686227/86862273595.1.jpg' } },
+        { nccAdId: 'nad-1', userLock: false, adAttr: { bidAmt: 660, useGroupBidAmt: false }, nccQi: { qiGrade: 5 }, ad: { headline: '오즈키즈 래쉬가드', description: '자외선 차단 UPF50+ 아기 유아 수영복', pc: { final: 'https://brand.naver.com/ozkiz/search?q=래쉬가드&st=REVIEW&dt=IMAGE&nt_source=npowerlink&nt_medium=swimsuit&nt_keyword={keyword}', display: 'https://smartstore.naver.com/ozkids' } }, referenceData: { productTitle: '오즈키즈 여아 치랭스 레깅스 유아 아기', lowPrice: '16900', category3Name: '레깅스', scoreInfo: '4.9', reviewCountSum: '312', imageUrl: 'https://shopping-phinf.pstatic.net/main_8686227/86862273595.1.jpg' } },
         { nccAdId: 'nad-2', userLock: false, adAttr: { bidAmt: 510, useGroupBidAmt: false }, nccQi: { qiGrade: 3 }, referenceData: { productTitle: '오즈키즈 유아 사계절 레깅스', lowPrice: '13900', category3Name: '레깅스', scoreInfo: '4.8', reviewCountSum: '846', imageUrl: 'https://shopping-phinf.pstatic.net/main_8466870/84668700368.20.jpg' } },
         { nccAdId: 'nad-3', userLock: true, adAttr: { bidAmt: 300, useGroupBidAmt: false }, nccQi: { qiGrade: 4 }, referenceData: { productTitle: '오즈키즈 아기 짜임 레깅스', lowPrice: '11900', category3Name: '레깅스', scoreInfo: '4.7', reviewCountSum: '120', imageUrl: 'https://shopping-phinf.pstatic.net/main_8606587/86065876027.3.jpg' } },
       ],
