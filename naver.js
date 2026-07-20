@@ -570,7 +570,7 @@
         <div style="color:var(--muted);font-size:13px;margin-bottom:12px;line-height:1.7">
           쇼핑 검색어는 네이버가 API를 제공하지 않아, 광고관리에서 받은 <b>"랭킹 키워드_쇼핑검색" CSV</b>(최근 1주일)를 올리면
           <b>비용 3,000원 이상 & 구매 0인 검색어</b>를 자동 분석해 제외 후보를 제안합니다.<br>
-          <span style="font-size:12px">· 플레이스 광고는 제외 · <b>오즈키즈/ozkiz 브랜드 검색어</b>는 (제외키워드 세팅용) 조건과 무관하게 항상 표시<br>
+          <span style="font-size:12px">· 쇼핑검색만 분석(플레이스·파워링크 제외) · <b>오즈키즈/ozkiz 브랜드 검색어</b>는 (제외키워드 세팅용) 조건과 무관하게 항상 표시<br>
           ※ 제외 반영은 네이버 대시보드에서 붙여넣기 (쇼핑 제외검색어는 API 쓰기 미지원)</span>
         </div>
         <input type="file" id="nv-csv" accept=".csv,text/csv">
@@ -608,17 +608,19 @@
     if (hi < 0) { out.innerHTML = errBox({ message: '"검색어"·"총비용" 컬럼을 못 찾았어요. 쇼핑검색 검색어 CSV가 맞는지 확인하세요.' }); return; }
     const H = lines[hi].split(',');
     const idx = (name) => H.findIndex(h => h.split('(')[0].trim().includes(name));
-    const ci = { grp: idx('광고그룹'), camp: idx('캠페인'), term: idx('검색어'), imp: idx('노출'), clk: idx('클릭'), cost: idx('총비용'), sales: idx('전환매출') };
+    const ci = { grp: idx('광고그룹'), camp: idx('캠페인'), type: idx('유형'), term: idx('검색어'), imp: idx('노출'), clk: idx('클릭'), cost: idx('총비용'), sales: idx('전환매출') };
     if (ci.term < 0 || ci.cost < 0) { out.innerHTML = errBox({ message: '필수 컬럼(검색어/총비용) 매핑 실패' }); return; }
-    // 광고그룹 → 검색어 집계 (제외키워드는 그룹 단위로 세팅하므로 그룹별로 묶음). 플레이스 광고는 제외.
+    // 광고그룹 → 검색어 집계. 쇼핑검색 전용 탭이므로 플레이스·파워링크는 제외(파워링크는 "파워링크 입찰가 조정" 탭에서 관리).
     const groups = {};
-    let placeSkipped = 0;
+    let nonShopSkipped = 0;
     for (let i = hi + 1; i < lines.length; i++) {
       const c = lines[i].split(','); if (c.length < H.length) continue;
       const term = (c[ci.term] || '').trim(); if (!term || term === '-') continue;
       const grp = (ci.grp >= 0 ? (c[ci.grp] || '').trim() : '') || '(그룹 미표기)';
       const camp = ci.camp >= 0 ? (c[ci.camp] || '').trim() : '';
-      if ((grp + camp).includes('플레이스')) { placeSkipped++; continue; } // 플레이스 광고 제외
+      const rowType = ci.type >= 0 ? (c[ci.type] || '').trim() : '';
+      // 유형 컬럼이 있으면 '쇼핑'만 통과, 없으면 이름으로 플레이스·파워링크 제외
+      if (ci.type >= 0 ? !rowType.includes('쇼핑') : /플레이스|파워링크|파링/.test(grp + camp)) { nonShopSkipped++; continue; }
       const g = (groups[grp] ||= {});
       const a = (g[term] ||= { term, imp: 0, clk: 0, cost: 0, sales: 0 });
       a.imp += Number(c[ci.imp]) || 0; a.clk += Number(c[ci.clk]) || 0; a.cost += Number(c[ci.cost]) || 0; a.sales += Number(c[ci.sales]) || 0;
@@ -629,7 +631,7 @@
       const waste = Object.values(terms).filter(x => isBrand(x.term) || (x.cost >= 3000 && x.sales === 0)).sort((a, b) => b.cost - a.cost);
       return { grp, waste, total: waste.reduce((s, x) => s + x.cost, 0) };
     }).filter(g => g.waste.length).sort((a, b) => b.total - a.total);
-    if (!groupWaste.length) { out.innerHTML = '<div style="color:var(--muted);padding:16px">해당 검색어(비용 ≥3,000원 & 구매 0, 또는 브랜드 검색어)가 없어요.' + (placeSkipped ? ` <span style="font-size:12px">(플레이스 ${placeSkipped}행 제외됨)</span>` : '') + '</div>'; return; }
+    if (!groupWaste.length) { out.innerHTML = '<div style="color:var(--muted);padding:16px">해당 검색어(비용 ≥3,000원 & 구매 0, 또는 브랜드 검색어)가 없어요.' + (nonShopSkipped ? ` <span style="font-size:12px">(쇼핑검색 외 ${nonShopSkipped}행 제외됨)</span>` : '') + '</div>'; return; }
     const grandCnt = groupWaste.reduce((s, g) => s + g.waste.length, 0);
     const grandTotal = groupWaste.reduce((s, g) => s + g.total, 0);
     const sections = groupWaste.map((g, gi) => {
@@ -648,7 +650,7 @@
       </div>`;
     }).join('');
     out.innerHTML = `
-      <div style="margin-bottom:6px"><b>${groupWaste.length}개 광고그룹</b> · 검색어 <b>${grandCnt}개</b> · 소진 비용 <b style="color:var(--red)">${won(grandTotal)}</b> <span style="color:var(--muted);font-size:12px">(비용 ≥3,000원 & 구매 0 · 브랜드 검색어 항상 포함${placeSkipped ? ` · 플레이스 ${placeSkipped}행 제외` : ''})</span></div>
+      <div style="margin-bottom:6px"><b>${groupWaste.length}개 광고그룹</b> · 검색어 <b>${grandCnt}개</b> · 소진 비용 <b style="color:var(--red)">${won(grandTotal)}</b> <span style="color:var(--muted);font-size:12px">(비용 ≥3,000원 & 구매 0 · 브랜드 검색어 항상 포함${nonShopSkipped ? ` · 쇼핑검색 외 ${nonShopSkipped}행 제외` : ''})</span></div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:12px">그룹마다 "이 그룹 검색어 복사" → 네이버 대시보드에서 <b>해당 광고그룹</b>의 제외검색어에 붙여넣으세요.</div>
       ${sections}`;
     out.querySelectorAll('.nv-gcopy').forEach(b => b.onclick = () => { const g = groupWaste[+b.dataset.gi]; navigator.clipboard.writeText(g.waste.map(w => w.term).join('\n')).then(() => { b.textContent = '✓ 복사됨'; }); });
