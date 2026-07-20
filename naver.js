@@ -235,29 +235,36 @@
     if (q) q.oninput = applyFilters; if (ch) ch.onchange = applyFilters;
     document.querySelectorAll('.nvf-camp').forEach(b => b.onclick = () => { b.classList.toggle('off'); b.style.opacity = b.classList.contains('off') ? .4 : 1; applyFilters(); });
     const pcb = $('#nvf-paused'); if (pcb) pcb.onchange = () => { dashPaused = pcb.checked; renderBid(); };
-    const btn = $('#nvc-applyall'); if (btn) btn.onclick = () => applyAll();
+    const updateApplyBtn = () => { const n = document.querySelectorAll('.nvc-cb:checked').length; const bt = $('#nvc-applyall'); if (bt) { bt.disabled = !n; bt.textContent = n ? `▶ 선택 ${n}건 입찰가 반영` : '선택된 항목 없음'; } };
+    document.querySelectorAll('.nvc-cb').forEach(cb => cb.onchange = updateApplyBtn);
+    const btn = $('#nvc-applyall'); if (btn) { btn.onclick = () => applyAll(); if (!pending && nvSuggestions.length) updateApplyBtn(); }
   }
   function fullCard(it) {
     const a = it.a, rd = a.referenceData || {}, paused = a.userLock === true, pend = it.pending;
-    const d = it.nb - it.cur, pct = it.cur ? Math.round(d / it.cur * 100) : 0;
+    const d = it.nb - it.cur, pct = it.cur ? Math.round(d / it.cur * 100) : 0, changed = !pend && d !== 0;
     const meta = [(rd.category3Name || rd.category2Name) ? `<span class="nvc-chip">${esc(rd.category3Name || rd.category2Name)}</span>` : '', rd.scoreInfo ? `<span style="color:#E9A23B;font-weight:700">★ ${esc(rd.scoreInfo)}</span>` : '', rd.reviewCountSum ? `<span>리뷰 ${cnt(rd.reviewCountSum)}</span>` : '', rd.lowPrice ? `<span>· ${cnt(rd.lowPrice)}원</span>` : ''].join('');
+    const statusPill = `<span style="flex:none;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;white-space:nowrap;background:${paused ? 'var(--surface2)' : 'var(--green-l)'};color:${paused ? 'var(--muted)' : 'var(--green)'}">${paused ? '⚪ 정지' : '🟢 노출중'}</span>`;
     const bidHtml = pend
       ? `<span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface);color:var(--muted)">…</span>`
-      : (d !== 0 ? `<span class="cur">${it.cur}</span>→<span class="new">${it.nb}원</span><span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span>` : `<span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface);color:var(--muted)">유지</span>`);
+      : (changed
+        ? `<span style="color:var(--muted);font-size:10px">현재</span> <span class="cur">${it.cur}</span> <span style="color:var(--muted)">→</span> <span style="color:var(--accent-d);font-size:10px;font-weight:700">제안</span> <span class="new">${it.nb}원</span> <span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span> <input type="checkbox" class="nvc-cb" data-ad="${a.nccAdId}" checked title="이 제안 반영" style="margin-left:4px;width:16px;height:16px;accent-color:var(--accent);cursor:pointer;vertical-align:middle">`
+        : `<span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface);color:var(--muted)">유지</span>`);
     const M = [['순위', it.b.rank ? it.b.rank.toFixed(1) : '-'], ['품질', qiBar(a.nccQi && a.nccQi.qiGrade)], ['노출', cnt(it.b.imp)], ['클릭', cnt(it.b.clk)], ['CTR', it.ctr.toFixed(2) + '%'], ['CPC', won(Math.round(it.cpc))], ['총비용', won(it.b.cost)], ['구매', pend ? '<span style="color:var(--muted)">…</span>' : (it.pc.cnt + '건·' + cnt(it.pc.val))]];
     const roasTxt = pend ? '<span style="color:var(--muted)">…</span>' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
     const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= 300 ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
-    return `<div class="nvc-card" data-title="${esc((rd.productTitle || '').toLowerCase())}" data-changed="${(!pend && d !== 0) ? '1' : '0'}">
+    return `<div class="nvc-card" data-title="${esc((rd.productTitle || '').toLowerCase())}" data-changed="${changed ? '1' : '0'}">
       <img class="nvc-thumb" src="${esc(rd.imageUrl || '')}" onerror="this.style.opacity=.2">
       <div style="min-width:0">
-        <div class="nvc-title">${esc(rd.productTitle || a.nccAdId)}</div>
-        <div class="nvc-meta">${meta}</div>
+        <div style="display:flex;align-items:flex-start;gap:8px">
+          <div class="nvc-title" style="flex:1;margin-bottom:0">${esc(rd.productTitle || a.nccAdId)}</div>
+          ${statusPill}
+        </div>
+        <div class="nvc-meta" style="margin-top:5px">${meta}</div>
         <div class="nvc-metrics">${M.map(([k, v]) => `<div class="nvc-m"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}</div>
       </div>
       <div class="nvc-right">
         <div class="nvc-roas" style="color:${roasCol}">${roasTxt}<small>구매 ROAS</small></div>
         <div class="nvc-bid" id="nvb-${a.nccAdId}">${bidHtml}</div>
-        <span style="font-size:11px;color:${paused ? 'var(--muted)' : 'var(--green)'}">${paused ? '⚪ 정지' : '🟢 노출중'}</span>
       </div>
     </div>`;
   }
@@ -327,12 +334,15 @@
   }
   async function applyAll() {
     if (!nvSuggestions.length) return;
-    if (MOCK) { alert('🧪 목모드: 실제 반영 안 함 (' + nvSuggestions.length + '건)'); return; }
+    const checkedIds = new Set([...document.querySelectorAll('.nvc-cb:checked')].map(cb => cb.dataset.ad));
+    const sel = nvSuggestions.filter(s => checkedIds.has(s.a.nccAdId));
+    if (!sel.length) { alert('반영할 제안을 선택하세요. (제안 옆 체크박스)'); return; }
+    if (MOCK) { alert('🧪 목모드: 실제 반영 안 함 (선택 ' + sel.length + '건)'); return; }
     if (!localStorage.getItem('sb_write_token')) { alert('쓰기 인증이 필요합니다. 좌측 사이드바 "🔒 쓰기 잠김"을 눌러 해제하세요.'); return; }
-    if (!confirm(nvSuggestions.length + '건의 입찰가를 실제로 변경합니다. 진행할까요?')) return;
+    if (!confirm('선택한 ' + sel.length + '건의 입찰가를 실제로 변경합니다. 진행할까요?')) return;
     const btn = $('#nvc-applyall'); if (btn) btn.disabled = true;
     let ok = 0, fail = 0;
-    for (const s of nvSuggestions) {
+    for (const s of sel) {
       try {
         await api('update_ad_bid', { body: { nccAdId: s.a.nccAdId, bidAmt: s.nb } }); ok++;
         const bd = $('#nvb-' + s.a.nccAdId); if (bd) bd.innerHTML = `<span class="new">${s.nb}원</span><span class="nvc-d" style="background:var(--green-l);color:var(--green)">✓ 반영</span>`;
