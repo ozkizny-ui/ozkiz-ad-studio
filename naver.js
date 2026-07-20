@@ -221,7 +221,8 @@
         <button id="nvc-applyall" style="${pBtn};margin-left:auto" ${(!pending && nvSuggestions.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음')}</button>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${chips}</div>
-      <div id="nvc-dash">${sections}</div>`;
+      <div id="nvc-dash">${sections}</div>
+      <div id="nvc-history" style="margin-top:18px;border-top:1px solid var(--border);padding-top:8px"></div>`;
     const q = $('#nvf-q'), ch = $('#nvf-changed');
     const applyFilters = () => {
       const term = (q.value || '').toLowerCase(), onlyCh = ch.checked;
@@ -240,6 +241,7 @@
     const updateApplyBtn = () => { const n = document.querySelectorAll('.nvc-cb:checked').length; const bt = $('#nvc-applyall'); if (bt) { bt.disabled = !n; bt.textContent = n ? `▶ 선택 ${n}건 입찰가 반영` : '선택된 항목 없음'; } };
     document.querySelectorAll('.nvc-cb').forEach(cb => cb.onchange = updateApplyBtn);
     const btn = $('#nvc-applyall'); if (btn) { btn.onclick = () => applyAll(); if (!pending && nvSuggestions.length) updateApplyBtn(); }
+    loadBidHistory('shopping', 'nvc-history');
   }
   function fullCard(it) {
     const a = it.a, rd = a.referenceData || {}, paused = a.userLock === true, pend = it.pending;
@@ -343,13 +345,15 @@
     if (!localStorage.getItem('sb_write_token')) { alert('쓰기 인증이 필요합니다. 좌측 사이드바 "🔒 쓰기 잠김"을 눌러 해제하세요.'); return; }
     if (!confirm('선택한 ' + sel.length + '건의 입찰가를 실제로 변경합니다. 진행할까요?')) return;
     const btn = $('#nvc-applyall'); if (btn) btn.disabled = true;
-    let ok = 0, fail = 0;
+    let ok = 0, fail = 0; const logged = [];
     for (const s of sel) {
       try {
         await api('update_ad_bid', { body: { nccAdId: s.a.nccAdId, bidAmt: s.nb } }); ok++;
+        logged.push({ channel: 'shopping', entity_id: s.a.nccAdId, name: (s.a.referenceData && s.a.referenceData.productTitle) || s.a.nccAdId, old_bid: s.cur, new_bid: s.nb });
         const bd = $('#nvb-' + s.a.nccAdId); if (bd) bd.innerHTML = `<span class="new">${s.nb}원</span><span class="nvc-d" style="background:var(--green-l);color:var(--green)">✓ 반영</span>`;
       } catch (e) { fail++; }
     }
+    if (logged.length) { try { await api('log_bid_change', { body: { rows: logged } }); } catch {} loadBidHistory('shopping', 'nvc-history'); }
     if (btn) btn.textContent = `완료 · 성공 ${ok}${fail ? ' / 실패 ' + fail : ''}`;
   }
 
@@ -492,7 +496,8 @@
         <span style="font-size:12px;color:var(--muted)">· ${mod.label} 보정 · 비용순 · 그룹입찰 키워드는 제외</span>
         <button id="nvp-applyall" style="${pBtn};margin-left:auto" ${(!pending && nvPwrSug.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvPwrSug.length ? `▶ ${nvPwrSug.length}건 입찰가 반영` : '변경 대상 없음')}</button>
       </div>
-      <div id="nvp-dash">${sections || '<div style="color:var(--muted);padding:20px">운영중 파워링크 키워드가 없어요.</div>'}</div>`;
+      <div id="nvp-dash">${sections || '<div style="color:var(--muted);padding:20px">운영중 파워링크 키워드가 없어요.</div>'}</div>
+      <div id="nvp-history" style="margin-top:18px;border-top:1px solid var(--border);padding-top:8px"></div>`;
     const q = $('#nvpf-q'), ch = $('#nvpf-changed');
     const applyF = () => {
       const term = (q.value || '').toLowerCase(), onlyCh = ch.checked;
@@ -506,6 +511,7 @@
     const btn = $('#nvp-applyall'); if (btn) { btn.onclick = () => applyPowerBids(); if (!pending && nvPwrSug.length) upd(); }
     document.querySelectorAll('.nvp-off').forEach(b => b.onclick = () => togglePowerKw(b));
     document.querySelectorAll('.nv-urlcopy').forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.url).then(() => { const t = b.textContent; b.textContent = '✓'; setTimeout(() => b.textContent = t, 1200); }); });
+    loadBidHistory('powerlink', 'nvp-history');
   }
   // 키워드 OFF(정지)/ON(노출) — userLock 토글. 파워링크는 제외키워드 대신 낭비 키워드를 직접 끔.
   async function togglePowerKw(b) {
@@ -558,14 +564,28 @@
     if (!localStorage.getItem('sb_write_token')) { alert('쓰기 인증이 필요합니다. 좌측 사이드바 "🔒 쓰기 잠김"을 눌러 해제하세요.'); return; }
     if (!confirm('선택한 ' + sel.length + '건의 파워링크 키워드 입찰가를 실제로 변경합니다. 진행할까요?')) return;
     const btn = $('#nvp-applyall'); if (btn) btn.disabled = true;
-    let ok = 0, fail = 0;
+    let ok = 0, fail = 0; const logged = [];
     for (const s of sel) {
       try {
         await api('update_keyword_bid', { body: { nccKeywordId: s.kw.nccKeywordId, nccAdgroupId: s.kw.nccAdgroupId, bidAmt: s.nb } }); ok++;
+        logged.push({ channel: 'powerlink', entity_id: s.kw.nccKeywordId, name: s.kw.keyword || s.kw.nccKeywordId, old_bid: s.cur, new_bid: s.nb });
         const bd = $('#nvpb-' + s.kw.nccKeywordId); if (bd) bd.innerHTML = `<span style="font-weight:800;color:var(--accent-d)">${s.nb}원</span> <span class="nvc-d" style="background:var(--green-l);color:var(--green)">✓ 반영</span>`;
       } catch (e) { fail++; }
     }
+    if (logged.length) { try { await api('log_bid_change', { body: { rows: logged } }); } catch {} loadBidHistory('powerlink', 'nvp-history'); }
     if (btn) btn.textContent = `완료 · 성공 ${ok}${fail ? ' / 실패 ' + fail : ''}`;
+  }
+  // 입찰 변경 이력 로더 — 각 탭 하단에 최근 변경(날짜·이전→새값) 표시
+  async function loadBidHistory(channel, elId) {
+    const el = document.getElementById(elId); if (!el) return;
+    try {
+      const r = await api('get_bid_changes', { params: { channel, limit: '40' } });
+      const rows = (r && r.changes) || [];
+      if (!rows.length) { el.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:6px 2px">아직 변경 이력이 없어요.</div>'; return; }
+      const fmt = (iso) => { const k = new Date(new Date(iso).getTime() + 9 * 3600000); return k.toISOString().slice(5, 16).replace('T', ' '); };
+      el.innerHTML = `<div style="font-size:11px;color:var(--muted);font-weight:700;margin:4px 2px">입찰가 변경 이력 <span style="font-weight:400">(최근 ${rows.length}건)</span></div>` +
+        rows.map(c => { const d = (c.new_bid || 0) - (c.old_bid || 0); const col = d > 0 ? 'var(--green)' : (d < 0 ? 'var(--red)' : 'var(--muted)'); return `<div style="font-size:11px;color:var(--muted);padding:2px 2px;display:flex;gap:8px"><span style="min-width:78px">${fmt(c.changed_at)}</span><span style="flex:1;color:var(--text)">${esc(c.name || c.entity_id)}</span><span>${cnt(c.old_bid)} → <b style="color:${col}">${cnt(c.new_bid)}원</b></span></div>`; }).join('');
+    } catch (e) { el.innerHTML = ''; }
   }
 
   // ── 제외키워드 제안 ───────────────────────────────────────────
@@ -797,7 +817,19 @@
       '20260712\t434195\tcmp-a001-01-1\tgrp-a001-01-1\t키즈아쿠아슈즈\t33421\tM\t0\t8\t0\t0\t0\n' +
       '20260712\t434195\tcmp-a001-01-1\tgrp-a001-01-2\t아동레쉬가드\t27758\tP\t2\t4\t0\t0\t0\n' +
       '20260712\t434195\tcmp-a001-01-1\tgrp-a001-01-1\t남아수영복\t33421\tM\t5\t1\t0\t0\t0' });
-    if (action === 'report_delete' || action === 'add_restricted_keyword') return Promise.resolve({ ok: true });
+    if (action === 'report_delete' || action === 'add_restricted_keyword' || action === 'log_bid_change') return Promise.resolve({ ok: true });
+    if (action === 'collect_status') { /* handled below */ }
+    if (action === 'get_bid_changes') {
+      const now = Date.now();
+      const ch = p && p.channel;
+      const all = [
+        { changed_at: new Date(now - 20 * 60000).toISOString(), channel: 'shopping', entity_id: 'nad-1', name: '오즈키즈 여아 치랭스 레깅스', old_bid: 660, new_bid: 540 },
+        { changed_at: new Date(now - 26 * 3600000).toISOString(), channel: 'shopping', entity_id: 'nad-2', name: '오즈키즈 유아 사계절 레깅스', old_bid: 510, new_bid: 560 },
+        { changed_at: new Date(now - 35 * 60000).toISOString(), channel: 'powerlink', entity_id: 'nkw-1', name: '유아 레깅스', old_bid: 450, new_bid: 520 },
+        { changed_at: new Date(now - 50 * 3600000).toISOString(), channel: 'powerlink', entity_id: 'nkw-2', name: '아기 레깅스', old_bid: 380, new_bid: 300 },
+      ];
+      return Promise.resolve({ changes: all.filter(c => !ch || c.channel === ch) });
+    }
     if (action === 'collect_status') {
       const now = Date.now(), day = 86400000;
       const dstr = (n) => new Date(now - n * day + 9 * 3600000).toISOString().slice(0, 10);
