@@ -41,6 +41,20 @@
     if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
     return data;
   }
+  // 읽기 재시도(네이버 rate limit 완화): 실패 시 backoff 후 재시도, 최종 실패는 throw.
+  async function apiR(action, opts, tries = 3) {
+    for (let t = 0; ; t++) {
+      try { return await api(action, opts); }
+      catch (e) { if (t >= tries - 1) throw e; await sleep(600 + t * 800); }
+    }
+  }
+  // 동시 실행 개수 제한(호출 폭증 방지). arr을 limit개씩만 병렬 처리.
+  async function mapLimit(arr, limit, fn) {
+    const ret = new Array(arr.length); let i = 0;
+    const worker = async () => { while (i < arr.length) { const idx = i++; ret[idx] = await fn(arr[idx], idx); } };
+    await Promise.all(Array.from({ length: Math.min(limit, arr.length || 1) }, worker));
+    return ret;
+  }
 
   // ── 렌더 ─────────────────────────────────────────────────────
   // 해시 라우팅(2026-07-16): 네이버 모드는 #naver-{하위탭} 해시를 가짐 → 새로고침·뒤로가기·링크 공유 동작.
@@ -116,28 +130,29 @@
     const body = $('#nv-body'); injectNvCss();
     body.innerHTML = loading('운영중 쇼핑 캠페인·상품 불러오는 중…');
     try {
-      const camps = await api('get_campaigns');
+      const camps = await apiR('get_campaigns');
       const shopCamps = camps.filter(c => c.campaignTp === 'SHOPPING' && (dashPaused || isRunning(c))).sort(runningFirst);
       if (!shopCamps.length) { body.innerHTML = '<div style="color:var(--muted);padding:20px">운영중 쇼핑검색 캠페인이 없어요.</div>'; return; }
       // 구조: 캠페인 → (운영중)그룹 → 상품형=소재 / 브랜드형(SHOPPING_BRAND)=키워드(파워링크식)
-      let structure = await Promise.all(shopCamps.map(async c => {
-        const gs = (await api('get_adgroups', { params: { nccCampaignId: c.nccCampaignId } })) || [];
+      // 동시호출 제한(캠페인 3 · 그룹 4) + 재시도로 네이버 rate limit 회피.
+      let structure = await mapLimit(shopCamps, 3, async c => {
+        const gs = (await apiR('get_adgroups', { params: { nccCampaignId: c.nccCampaignId } }).catch(() => [])) || [];
         const egs = gs.filter(g => dashPaused || isRunning(g));
-        const groups = await Promise.all(egs.map(async g => {
+        const groups = await mapLimit(egs, 4, async g => {
           if (g.adgroupType === 'SHOPPING_BRAND') { // 브랜드형쇼검 = 키워드 입찰(파워링크와 동일)
             const [kws, extR, adsR] = await Promise.all([
-              api('get_keywords', { params: { nccAdgroupId: g.nccAdgroupId } }),
-              api('get_ad_extensions', { params: { ownerId: g.nccAdgroupId } }).catch(() => []),
-              api('get_ads', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => []),
+              apiR('get_keywords', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => []),
+              apiR('get_ad_extensions', { params: { ownerId: g.nccAdgroupId } }).catch(() => []),
+              apiR('get_ads', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => []),
             ]);
             const kwArr = (kws || []).filter(k => dashPaused || (isRunning(k) && k.userLock !== true));
             return { group: g, isBrand: true, kws: kwArr, exts: Array.isArray(extR) ? extR : (extR.data || []), banner: Array.isArray(adsR) ? adsR : (adsR.data || []) };
           }
-          const ads = (await api('get_ads', { params: { nccAdgroupId: g.nccAdgroupId } })) || [];
+          const ads = (await apiR('get_ads', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => [])) || [];
           return { group: g, isBrand: false, ads: dashPaused ? ads : ads.filter(a => a.userLock !== true) };
-        }));
+        });
         return { camp: c, groups: groups.filter(x => x.isBrand ? x.kws.length : x.ads.length) };
-      }));
+      });
       // 기본지표+순위: /stats 배치(빠름) → 즉시 렌더. 구매전환(직접)은 뒤에서 채움(progressive)
       structure = structure.filter(s => s.groups.length);
       const ids = structure.flatMap(s => s.groups.flatMap(g => g.isBrand ? g.kws.map(k => k.nccKeywordId) : g.ads.map(a => a.nccAdId)));
@@ -151,13 +166,13 @@
     if (MOCK) return { 'nad-1': { imp: 5000, clk: 70, cost: 100000, rank: 4.2 }, 'nad-2': { imp: 900, clk: 8, cost: 40000, rank: 6.1 }, 'nad-3': { imp: 200, clk: 2, cost: 3000, rank: 8 }, 'nad-brand': { imp: 17946, clk: 70, cost: 23980, rank: 3.0 }, 'nkw-1': { imp: 3000, clk: 60, cost: 60000, rank: 2.1 }, 'nkw-2': { imp: 800, clk: 15, cost: 40000, rank: 4.5 }, 'nkw-3': { imp: 200, clk: 3, cost: 5000, rank: 7 } };
     const map = {}, chunks = [];
     for (let i = 0; i < ids.length; i += 90) chunks.push(ids.slice(i, i + 90));
-    await Promise.all(chunks.map(async ch => {
+    await mapLimit(chunks, 4, async ch => { // 동시 4청크로 제한(rate limit 완화)
       try {
-        const r = await api('stats', { params: { ids: ch.join(','), fields: JSON.stringify(['impCnt', 'clkCnt', 'salesAmt', 'avgRnk']), timeRange: JSON.stringify({ since: isoAgo(7), until: isoAgo(1) }) } });
+        const r = await apiR('stats', { params: { ids: ch.join(','), fields: JSON.stringify(['impCnt', 'clkCnt', 'salesAmt', 'avgRnk']), timeRange: JSON.stringify({ since: isoAgo(7), until: isoAgo(1) }) } });
         const rows = Array.isArray(r) ? r : (Array.isArray(r.data) ? r.data : []);
         rows.forEach(x => { map[x.id] = { imp: +x.impCnt || 0, clk: +x.clkCnt || 0, cost: +x.salesAmt || 0, rank: +x.avgRnk || 0 }; });
       } catch {}
-    }));
+    });
     return map;
   }
 
@@ -456,26 +471,26 @@
     const body = $('#nv-body'); injectNvCss();
     body.innerHTML = loading('운영중 파워링크 캠페인·키워드 불러오는 중…');
     try {
-      const camps = await api('get_campaigns');
+      const camps = await apiR('get_campaigns');
       const plCamps = camps.filter(c => c.campaignTp === 'WEB_SITE' && (pwrPaused || isRunning(c))).sort(runningFirst);
       if (!plCamps.length) { body.innerHTML = '<div style="color:var(--muted);padding:20px">운영중 파워링크(웹사이트) 캠페인이 없어요.</div>'; return; }
       // 구조: 캠페인 → (운영중)그룹 → {확장소재, (운영중)키워드}
-      let structure = await Promise.all(plCamps.map(async c => {
-        const gs = (await api('get_adgroups', { params: { nccCampaignId: c.nccCampaignId } })) || [];
+      let structure = await mapLimit(plCamps, 3, async c => {
+        const gs = (await apiR('get_adgroups', { params: { nccCampaignId: c.nccCampaignId } }).catch(() => [])) || [];
         const egs = gs.filter(g => pwrPaused || isRunning(g));
-        const withKw = await Promise.all(egs.map(async g => {
+        const withKw = await mapLimit(egs, 4, async g => {
           const [kws, extR, adsR] = await Promise.all([
-            api('get_keywords', { params: { nccAdgroupId: g.nccAdgroupId } }),
-            api('get_ad_extensions', { params: { ownerId: g.nccAdgroupId } }).catch(() => []),
-            api('get_ads', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => []),
+            apiR('get_keywords', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => []),
+            apiR('get_ad_extensions', { params: { ownerId: g.nccAdgroupId } }).catch(() => []),
+            apiR('get_ads', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => []),
           ]);
           const kwArr = (kws || []).filter(k => pwrPaused || (isRunning(k) && k.userLock !== true));
           const exts = Array.isArray(extR) ? extR : (Array.isArray(extR.data) ? extR.data : []);
           const ads = Array.isArray(adsR) ? adsR : (Array.isArray(adsR.data) ? adsR.data : []);
           return { group: g, exts, kws: kwArr, ads };
-        }));
+        });
         return { camp: c, groups: withKw.filter(x => x.kws.length) };
-      }));
+      });
       structure = structure.filter(s => s.groups.length);
       if (!structure.length) { body.innerHTML = '<div style="color:var(--muted);padding:20px">운영중 파워링크 키워드가 없어요.</div>'; return; }
       const ids = structure.flatMap(s => s.groups.flatMap(g => g.kws.map(k => k.nccKeywordId)));
