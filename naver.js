@@ -108,45 +108,46 @@
     else renderPowerlink();
   }
 
-  // ── 입찰 대시보드 (읽기) ──────────────────────────────────────
+  // ── 입찰가 조정 = 전체 대시보드(B): 운영중 쇼핑 상품 전부, 비용순, 드릴다운 없음 ──
+  let dashPaused = false;
   async function renderBid() {
-    const body = $('#nv-body');
-    body.innerHTML = loading('쇼핑검색 캠페인 불러오는 중…');
+    const body = $('#nv-body'); injectNvCss();
+    body.innerHTML = loading('운영중 쇼핑 캠페인·상품 불러오는 중…');
     try {
       const camps = await api('get_campaigns');
-      const shopping = camps.filter(c => c.campaignTp === 'SHOPPING').sort(runningFirst);
-      const pl = camps.filter(c => c.campaignTp === 'WEB_SITE');
-      const runN = shopping.filter(isRunning).length;
-      body.innerHTML = `
-        <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-          <div style="font-weight:600">쇼핑검색 ${shopping.length} <span style="color:var(--green)">(🟢 운영중 ${runN})</span> · 파워링크 ${pl.length}</div>
-          <select id="nv-camp" style="padding:6px;border-radius:8px;background:var(--surface);color:inherit;border:1px solid var(--border,#333);min-width:260px">
-            <option value="">— 쇼핑검색 캠페인 선택 —</option>
-            ${shopping.map(c => `<option value="${c.nccCampaignId}">${statusDot(c)} ${esc(c.name)}</option>`).join('')}
-          </select>
-          <select id="nv-group" style="padding:6px;border-radius:8px;background:var(--surface);color:inherit;border:1px solid var(--border,#333);min-width:220px" disabled>
-            <option value="">— 광고그룹 —</option>
-          </select>
-        </div>
-        <div id="nv-ads"><div style="color:var(--muted);padding:16px">쇼핑검색 캠페인 → 광고그룹을 선택하면 상품별 입찰가와 규칙 미리보기가 표시됩니다.</div></div>`;
-      const campSel = $('#nv-camp'), groupSel = $('#nv-group'), adsEl = $('#nv-ads');
-      campSel.onchange = async () => {
-        groupSel.innerHTML = '<option value="">— 광고그룹 —</option>'; groupSel.disabled = true; adsEl.innerHTML = '';
-        if (!campSel.value) return;
-        adsEl.innerHTML = loading('광고그룹 불러오는 중…');
-        const groups = (await api('get_adgroups', { params: { nccCampaignId: campSel.value } })).sort(runningFirst);
-        groupSel.innerHTML = '<option value="">— 광고그룹 선택 —</option>' +
-          groups.map(g => `<option value="${g.nccAdgroupId}">${statusDot(g)} ${esc(g.name)}</option>`).join('');
-        groupSel.disabled = false; adsEl.innerHTML = '<div style="color:var(--muted,#888);padding:16px">광고그룹을 선택하면 상품별 입찰가가 표시됩니다.</div>';
-      };
-      groupSel.onchange = async () => {
-        if (!groupSel.value) return;
-        adsEl.innerHTML = loading('상품(소재) 불러오는 중…');
-        const ads = await api('get_ads', { params: { nccAdgroupId: groupSel.value } });
-        renderCards(adsEl, ads);
-        loadCards(ads);
-      };
+      const shopCamps = camps.filter(c => c.campaignTp === 'SHOPPING' && (dashPaused || isRunning(c))).sort(runningFirst);
+      if (!shopCamps.length) { body.innerHTML = '<div style="color:var(--muted);padding:20px">운영중 쇼핑검색 캠페인이 없어요.</div>'; return; }
+      // 구조: 캠페인 → (운영중)그룹 → (운영중)소재
+      const structure = await Promise.all(shopCamps.map(async c => {
+        const gs = (await api('get_adgroups', { params: { nccCampaignId: c.nccCampaignId } })) || [];
+        const egs = gs.filter(g => dashPaused || isRunning(g));
+        const withAds = await Promise.all(egs.map(async g => {
+          const ads = (await api('get_ads', { params: { nccAdgroupId: g.nccAdgroupId } })) || [];
+          return { group: g, ads: dashPaused ? ads : ads.filter(a => a.userLock !== true) };
+        }));
+        return { camp: c, groups: withAds.filter(x => x.ads.length) };
+      }));
+      body.innerHTML = loading('최근 7일 성과(비용·구매전환) 집계 중… (처음 한 번, 수십 초)');
+      const [adRep, purchase] = await Promise.all([loadAdReport7d(), loadPurchase7d()]);
+      renderDashboard(body, structure.filter(s => s.groups.length), adRep, purchase);
     } catch (e) { body.innerHTML = errBox(e); }
+  }
+  // 최근 7일 소재 기본지표(노출/클릭/비용): AD 보고서 병렬 수집(계정단위 1회 캐시)
+  let adRepCache = null;
+  async function loadAdReport7d() {
+    if (adRepCache) return adRepCache;
+    if (MOCK) { adRepCache = { 'nad-1': { imp: 5000, clk: 70, cost: 100000 }, 'nad-2': { imp: 900, clk: 8, cost: 40000 }, 'nad-3': { imp: 200, clk: 2, cost: 3000 } }; return adRepCache; }
+    const map = {};
+    await Promise.all([1, 2, 3, 4, 5, 6, 7].map(async (d) => {
+      try {
+        const job = await api('report_create', { body: { reportTp: 'AD', statDt: isoAgo(d) } });
+        const id = job.reportJobId || job.id; let url = null;
+        for (let i = 0; i < 15; i++) { await sleep(1500); const st = await api('report_status', { params: { id } }); if (st.status === 'BUILT' || st.status === 'DONE') { url = st.downloadUrl; break; } if (st.status === 'NONE' || st.status === 'DELETED') break; }
+        if (url) { const dl = await api('report_download', { params: { url } }); (dl.tsv || '').split(/\r?\n/).forEach(ln => { const c = ln.split('\t'); if (c.length < 12) return; const m = (map[c[5]] ||= { imp: 0, clk: 0, cost: 0 }); m.imp += Number(c[9]) || 0; m.clk += Number(c[10]) || 0; m.cost += Number(c[11]) || 0; }); }
+        api('report_delete', { params: { id } }).catch(() => {});
+      } catch {}
+    }));
+    adRepCache = map; return map;
   }
 
   const pBtn = 'padding:8px 16px;border-radius:10px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:700;font-size:13px';
@@ -169,38 +170,88 @@
 .nvc-bid .cur{color:var(--muted);text-decoration:line-through} .nvc-bid .new{font-weight:800;color:var(--accent-d)}
 .nvc-d{font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:6px}`;
   function injectNvCss() { if (document.getElementById('nv-css')) return; const s = document.createElement('style'); s.id = 'nv-css'; s.textContent = NV_CSS; document.head.appendChild(s); }
-  function renderCards(container, ads) {
-    injectNvCss();
-    if (!ads.length) { container.innerHTML = '<div style="color:var(--muted);padding:16px">이 그룹에 상품(소재)이 없어요.</div>'; return; }
-    container.innerHTML = `
+  function renderDashboard(body, structure, adRep, purchase) {
+    const mod = dayModifier();
+    nvSuggestions = [];
+    let gCost = 0, gConvV = 0, gConvN = 0, prodCount = 0;
+    structure.forEach(s => {
+      s.groups.forEach(gr => {
+        gr.items = gr.ads.map(a => {
+          const b = adRep[a.nccAdId] || { imp: 0, clk: 0, cost: 0 }, pc = purchase[a.nccAdId] || { cnt: 0, val: 0 };
+          const ctr = b.imp ? b.clk / b.imp * 100 : 0, cpc = b.clk ? b.cost / b.clk : 0, roas = b.cost ? pc.val / b.cost * 100 : 0;
+          const cur = Number(a.adAttr && a.adAttr.bidAmt), nb = (a.userLock === true || !b.cost) ? cur : computeBid(cur, roas, mod.mod);
+          if (nb !== cur && a.userLock !== true) nvSuggestions.push({ a, cur, nb });
+          gCost += b.cost; gConvV += pc.val; gConvN += pc.cnt; prodCount++;
+          return { a, b, pc, ctr, cpc, roas, cur, nb };
+        }).sort((x, y) => y.b.cost - x.b.cost);
+        gr.total = gr.items.reduce((t, it) => t + it.b.cost, 0);
+      });
+      s.groups.sort((a, b) => b.total - a.total);
+      s.total = s.groups.reduce((t, g) => t + g.total, 0);
+    });
+    structure.sort((a, b) => b.total - a.total);
+    const gRoas = gCost ? gConvV / gCost * 100 : 0;
+    const chips = structure.map(s => `<button class="nvf-camp" data-camp="${s.camp.nccCampaignId}" style="cursor:pointer;padding:4px 10px;border-radius:8px;background:var(--accent-l);color:var(--accent-d);border:1px solid var(--border2);font-size:12px;font-weight:700">${esc(s.camp.name)} <span style="opacity:.65">${won(s.total)}</span></button>`).join('');
+    const sections = structure.map(s => s.groups.map(gr => `
+      <div class="nvc-gsec" data-camp="${s.camp.nccCampaignId}">
+        <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--muted)">${esc(s.camp.name)}</span>
+          <b style="font-size:14px">${statusDot(gr.group)} ${esc(gr.group.name)}</b>
+          <span style="color:var(--muted);font-size:12px">${won(gr.total)} · ${gr.items.length}개</span>
+        </div>
+        ${gr.items.map(fullCard).join('')}
+      </div>`).join('')).join('');
+    body.innerHTML = `
       <div class="nvc-tiles">
-        <div class="nvc-tile"><div class="k">그룹 총비용 (7일)</div><div class="v" id="nvt-cost">…</div></div>
-        <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접</span></div><div class="v" id="nvt-roas">…</div></div>
-        <div class="nvc-tile"><div class="k">구매 전환</div><div class="v" id="nvt-conv">…</div></div>
-        <div class="nvc-tile"><div class="k">운영 소재</div><div class="v">${ads.filter(a => a.userLock !== true).length}<span style="font-size:12px;color:var(--muted)"> / ${ads.length}</span></div></div>
+        <div class="nvc-tile"><div class="k">총비용 (7일)</div><div class="v">${won(gCost)}</div></div>
+        <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접</span></div><div class="v" style="color:${gRoas >= 300 ? 'var(--green)' : 'var(--red)'}">${gCost ? Math.round(gRoas) + '%' : '-'}</div></div>
+        <div class="nvc-tile"><div class="k">구매 전환</div><div class="v">${gConvN}건 · ${cnt(gConvV)}원</div></div>
+        <div class="nvc-tile"><div class="k">상품 · 변경대상</div><div class="v">${prodCount} · <span style="color:var(--accent-d)">${nvSuggestions.length}</span></div></div>
       </div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-        <span style="color:var(--muted);font-size:12px">최근 7일 · 구매 ROAS(직접전환) · 목표 300% · <span id="nvc-mod">…</span> 보정</span>
-        <button id="nvc-applyall" style="${pBtn};margin-left:auto" disabled>제안 계산 중…</button>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <input id="nvf-q" placeholder="🔎 상품명 검색" style="padding:7px 10px;border:1px solid var(--border2);border-radius:9px;background:var(--surface);color:var(--text);font-size:13px;min-width:180px">
+        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvf-changed"> 제안 있는 것만</label>
+        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvf-paused" ${dashPaused ? 'checked' : ''}> 정지 포함</label>
+        <span style="font-size:12px;color:var(--muted)">· ${mod.label} 보정 · 비용 많은 순</span>
+        <button id="nvc-applyall" style="${pBtn};margin-left:auto" ${nvSuggestions.length ? '' : 'disabled'}>${nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음'}</button>
       </div>
-      <div id="nvc-list">${ads.map(cardShell).join('')}</div>`;
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${chips}</div>
+      <div id="nvc-dash">${sections}</div>`;
+    const q = $('#nvf-q'), ch = $('#nvf-changed');
+    const applyFilters = () => {
+      const term = (q.value || '').toLowerCase(), onlyCh = ch.checked;
+      const offCamps = [...document.querySelectorAll('.nvf-camp.off')].map(b => b.dataset.camp);
+      document.querySelectorAll('.nvc-card[data-title]').forEach(card => {
+        card.style.display = ((!term || card.dataset.title.includes(term)) && (!onlyCh || card.dataset.changed === '1')) ? '' : 'none';
+      });
+      document.querySelectorAll('.nvc-gsec').forEach(sec => {
+        const anyVis = [...sec.querySelectorAll('.nvc-card')].some(c => c.style.display !== 'none');
+        sec.style.display = (!offCamps.includes(sec.dataset.camp) && anyVis) ? '' : 'none';
+      });
+    };
+    if (q) q.oninput = applyFilters; if (ch) ch.onchange = applyFilters;
+    document.querySelectorAll('.nvf-camp').forEach(b => b.onclick = () => { b.classList.toggle('off'); b.style.opacity = b.classList.contains('off') ? .4 : 1; applyFilters(); });
+    const pcb = $('#nvf-paused'); if (pcb) pcb.onchange = () => { dashPaused = pcb.checked; renderBid(); };
+    const btn = $('#nvc-applyall'); if (btn) btn.onclick = () => applyAll();
   }
-  function cardShell(a) {
-    const rd = a.referenceData || {}, paused = a.userLock === true;
-    const meta = [
-      (rd.category3Name || rd.category2Name) ? `<span class="nvc-chip">${esc(rd.category3Name || rd.category2Name)}</span>` : '',
-      rd.scoreInfo ? `<span style="color:#E9A23B;font-weight:700">★ ${esc(rd.scoreInfo)}</span>` : '',
-      rd.reviewCountSum ? `<span>리뷰 ${cnt(rd.reviewCountSum)}</span>` : '',
-      rd.lowPrice ? `<span>· ${cnt(rd.lowPrice)}원</span>` : '',
-    ].join('');
-    return `<div class="nvc-card">
+  function fullCard(it) {
+    const a = it.a, rd = a.referenceData || {}, paused = a.userLock === true;
+    const good = it.roas >= 300, d = it.nb - it.cur, pct = it.cur ? Math.round(d / it.cur * 100) : 0;
+    const meta = [(rd.category3Name || rd.category2Name) ? `<span class="nvc-chip">${esc(rd.category3Name || rd.category2Name)}</span>` : '', rd.scoreInfo ? `<span style="color:#E9A23B;font-weight:700">★ ${esc(rd.scoreInfo)}</span>` : '', rd.reviewCountSum ? `<span>리뷰 ${cnt(rd.reviewCountSum)}</span>` : '', rd.lowPrice ? `<span>· ${cnt(rd.lowPrice)}원</span>` : ''].join('');
+    const bidHtml = d !== 0 ? `<span class="cur">${it.cur}</span>→<span class="new">${it.nb}원</span><span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span>` : `<span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface);color:var(--muted)">유지</span>`;
+    const M = [['품질', qiBar(a.nccQi && a.nccQi.qiGrade)], ['노출', cnt(it.b.imp)], ['클릭', cnt(it.b.clk)], ['CTR', it.ctr.toFixed(2) + '%'], ['CPC', won(Math.round(it.cpc))], ['총비용', won(it.b.cost)], ['구매', it.pc.cnt + '건·' + cnt(it.pc.val)]];
+    return `<div class="nvc-card" data-title="${esc((rd.productTitle || '').toLowerCase())}" data-changed="${d !== 0 ? '1' : '0'}">
       <img class="nvc-thumb" src="${esc(rd.imageUrl || '')}" onerror="this.style.opacity=.2">
       <div style="min-width:0">
         <div class="nvc-title">${esc(rd.productTitle || a.nccAdId)}</div>
         <div class="nvc-meta">${meta}</div>
-        <div class="nvc-metrics" id="nvcm-${a.nccAdId}"><span style="color:var(--muted);font-size:12px">성과 불러오는 중…</span></div>
+        <div class="nvc-metrics">${M.map(([k, v]) => `<div class="nvc-m"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}</div>
       </div>
-      <div class="nvc-right" id="nvcr-${a.nccAdId}"><span style="font-size:11px;color:${paused ? 'var(--muted)' : 'var(--green)'}">${paused ? '⚪ 정지' : '🟢 노출중'}</span></div>
+      <div class="nvc-right">
+        <div class="nvc-roas" style="color:${it.b.cost ? (good ? 'var(--green)' : 'var(--red)') : 'var(--muted)'}">${it.b.cost ? Math.round(it.roas) + '%' : '-'}<small>구매 ROAS</small></div>
+        <div class="nvc-bid" id="nvb-${a.nccAdId}">${bidHtml}</div>
+        <span style="font-size:11px;color:${paused ? 'var(--muted)' : 'var(--green)'}">${paused ? '⚪ 정지' : '🟢 노출중'}</span>
+      </div>
     </div>`;
   }
 
@@ -241,47 +292,6 @@
     } catch { return null; }
   }
   let nvSuggestions = [];
-  async function loadCards(ads) {
-    const mod = dayModifier();
-    const modEl = $('#nvc-mod'); if (modEl) modEl.textContent = mod.label;
-    let purchase, bases;
-    try {
-      purchase = await loadPurchase7d((m) => { const b = $('#nvc-applyall'); if (b) b.textContent = '⏳ ' + m; });
-      bases = await Promise.all(ads.map(a => adBase(a.nccAdId)));
-    } catch (e) { const l = $('#nvc-list'); if (l) l.insertAdjacentHTML('afterbegin', errBox(e)); return; }
-    let gCost = 0, gConvN = 0, gConvV = 0; nvSuggestions = [];
-    ads.forEach((a, i) => {
-      const b = bases[i] || { imp: 0, clk: 0, cost: 0, rank: 0 }, pc = purchase[a.nccAdId] || { cnt: 0, val: 0 };
-      const ctr = b.imp ? b.clk / b.imp * 100 : 0, cpc = b.clk ? b.cost / b.clk : 0, roas = b.cost ? pc.val / b.cost * 100 : 0;
-      gCost += b.cost; gConvN += pc.cnt; gConvV += pc.val;
-      const cur = Number(a.adAttr && a.adAttr.bidAmt);
-      const nb = (a.userLock === true || !b.cost) ? cur : computeBid(cur, roas, mod.mod);
-      if (nb !== cur && a.userLock !== true) nvSuggestions.push({ a, cur, nb });
-      const mEl = $('#nvcm-' + a.nccAdId);
-      if (mEl) mEl.innerHTML = [
-        ['순위', b.rank ? b.rank.toFixed(1) : '-'], ['품질', qiBar(a.nccQi && a.nccQi.qiGrade)],
-        ['노출', cnt(b.imp)], ['클릭', cnt(b.clk)], ['CTR', ctr.toFixed(2) + '%'], ['CPC', won(Math.round(cpc))],
-        ['총비용', won(b.cost)], ['구매', pc.cnt + '건·' + cnt(pc.val)],
-      ].map(([k, v]) => `<div class="nvc-m"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
-      const rEl = $('#nvcr-' + a.nccAdId);
-      if (rEl) {
-        const good = roas >= 300, d = nb - cur, pct = cur ? Math.round(d / cur * 100) : 0, paused = a.userLock === true;
-        const bidHtml = d !== 0
-          ? `<span class="cur">${cur}</span>→<span class="new">${nb}원</span><span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span>`
-          : `<span class="new">${cur}원</span><span class="nvc-d" style="background:var(--surface);color:var(--muted)">유지</span>`;
-        rEl.innerHTML = `
-          <div class="nvc-roas" style="color:${b.cost ? (good ? 'var(--green)' : 'var(--red)') : 'var(--muted)'}">${b.cost ? Math.round(roas) + '%' : '-'}<small>구매 ROAS</small></div>
-          <div class="nvc-bid" id="nvb-${a.nccAdId}">${bidHtml}</div>
-          <span style="font-size:11px;color:${paused ? 'var(--muted)' : 'var(--green)'}">${paused ? '⚪ 정지' : '🟢 노출중'}</span>`;
-      }
-    });
-    const gRoas = gCost ? gConvV / gCost * 100 : 0;
-    if ($('#nvt-cost')) $('#nvt-cost').textContent = won(gCost);
-    const rt = $('#nvt-roas'); if (rt) { rt.textContent = gCost ? Math.round(gRoas) + '%' : '-'; rt.style.color = gRoas >= 300 ? 'var(--green)' : 'var(--red)'; }
-    if ($('#nvt-conv')) $('#nvt-conv').textContent = gConvN + '건 · ' + cnt(gConvV) + '원';
-    const btn = $('#nvc-applyall');
-    if (btn) { btn.disabled = !nvSuggestions.length; btn.textContent = nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음'; btn.onclick = () => applyAll(); }
-  }
 
   // ── 입찰 규칙 엔진 (목표 ROAS 300, 데드존 밴드, 요일·공휴일 보정) ──
   const KR_HOLIDAYS = new Set([ // 2026 하반기~2027 상반기 (PLAN 근거)
