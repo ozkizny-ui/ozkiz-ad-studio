@@ -237,7 +237,10 @@
       s.groups.sort((a, b) => b.total - a.total);
       s.total = s.groups.reduce((t, g) => t + g.total, 0);
     });
-    structure.sort((a, b) => b.total - a.total);
+    // 캠페인 우선순위: 묶음코드 → 브랜드형 → 인디비주엘 → 나머지(비용순)
+    const CAMP_ORDER = ['묶음코드', '브랜드형', '인디비주엘'];
+    const campRank = (nm) => { for (let i = 0; i < CAMP_ORDER.length; i++) if ((nm || '').includes(CAMP_ORDER[i])) return i; return CAMP_ORDER.length; };
+    structure.sort((a, b) => campRank(a.camp.name) - campRank(b.camp.name) || b.total - a.total);
     const gRoas = gCost ? gConvV / gCost * 100 : 0;
     const totalAll = structure.reduce((t, s) => t + s.total, 0);
     if (dashCamp && !structure.some(s => s.camp.nccCampaignId === dashCamp)) dashCamp = ''; // 사라진 캠페인 선택 방어
@@ -703,17 +706,21 @@
   const extRow = (label, inner) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:2px 0"><span style="font-size:11px;color:var(--muted);font-weight:700;min-width:66px">${label}</span>${inner}</div>`;
   // 소재 실제 연결 URL 미리보기 (ad.pc.final = 실제 연결, ad.pc.display = 표시 URL)
   function adPreview(ads) {
-    if (!ads || !ads.length) return '<span style="color:var(--muted);font-size:12px">소재 없음</span>';
-    return ads.map(a => {
+    const list = (ads || []).filter(a => isRunning(a) && a.userLock !== true); // OFF(정지) 소재는 제외
+    if (!list.length) return '<span style="color:var(--muted);font-size:12px">노출중 소재 없음</span>';
+    return list.map(a => {
       const ad = a.ad || {}, pc = ad.pc || {}, mo = ad.mobile || {};
       const final = pc.final || mo.final || ad.landingUrl || ''; // 브랜드형 배너는 ad.landingUrl
       const disp = pc.display || mo.display || '';
-      const paused = a.userLock === true || !isRunning(a);
-      return `<div style="padding:6px 0;border-top:1px solid var(--border)">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="font-size:11px" title="${paused ? '정지' : '노출중'}">${paused ? '⚪' : '🟢'}</span>${ad.headline ? `<span style="font-size:12.5px;font-weight:600">${esc(ad.headline)}</span>` : `<span style="font-size:12px;color:var(--muted)">${esc(a.nccAdId)}</span>`}</div>
-        ${ad.description ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:3px">${esc(ad.description)}</div>` : ''}
-        ${final ? `<div style="font-size:11.5px;line-height:1.5"><span style="color:var(--muted);font-weight:700">🔗 연결 URL</span> <a href="${esc(final)}" target="_blank" rel="noopener" style="color:var(--accent-d);text-decoration:none;word-break:break-all">${esc(final)}</a> <button class="nv-urlcopy" data-url="${esc(final)}" style="font-size:10px;padding:1px 7px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);cursor:pointer">복사</button></div>` : '<div style="font-size:11.5px;color:var(--muted)">연결 URL 없음</div>'}
-        ${disp ? `<div style="font-size:11px;color:var(--muted)">표시 URL: ${esc(disp)}</div>` : ''}
+      const img = ad.image ? (/^https?:/.test(ad.image) ? ad.image : EXT_IMG + ad.image) : ''; // 브랜드형 소재 이미지
+      return `<div style="display:flex;gap:10px;padding:6px 0;border-top:1px solid var(--border)">
+        ${img ? `<img src="${esc(img)}" style="width:60px;height:60px;border-radius:8px;object-fit:cover;border:1px solid var(--border);flex:none" onerror="this.style.display='none'">` : ''}
+        <div style="min-width:0">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="font-size:11px">🟢</span>${ad.headline ? `<span style="font-size:12.5px;font-weight:600">${esc(ad.headline)}</span>` : `<span style="font-size:12px;color:var(--muted)">${esc(a.nccAdId)}</span>`}</div>
+          ${ad.description ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:3px">${esc(ad.description)}</div>` : ''}
+          ${final ? `<div style="font-size:11.5px;line-height:1.5"><span style="color:var(--muted);font-weight:700">🔗 연결 URL</span> <a href="${esc(final)}" target="_blank" rel="noopener" style="color:var(--accent-d);text-decoration:none;word-break:break-all">${esc(final)}</a> <button class="nv-urlcopy" data-url="${esc(final)}" style="font-size:10px;padding:1px 7px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);cursor:pointer">복사</button></div>` : '<div style="font-size:11.5px;color:var(--muted)">연결 URL 없음</div>'}
+          ${disp ? `<div style="font-size:11px;color:var(--muted)">표시 URL: ${esc(disp)}</div>` : ''}
+        </div>
       </div>`;
     }).join('');
   }
@@ -881,7 +888,7 @@
         { nccAdId: 'nad-1', userLock: false, adAttr: { bidAmt: 660, useGroupBidAmt: false }, nccQi: { qiGrade: 5 }, ad: { headline: '오즈키즈 래쉬가드', description: '자외선 차단 UPF50+ 아기 유아 수영복', pc: { final: 'https://brand.naver.com/ozkiz/search?q=래쉬가드&st=REVIEW&dt=IMAGE&nt_source=npowerlink&nt_medium=swimsuit&nt_keyword={keyword}', display: 'https://smartstore.naver.com/ozkids' } }, referenceData: { productTitle: '오즈키즈 여아 치랭스 레깅스 유아 아기', lowPrice: '16900', category3Name: '레깅스', scoreInfo: '4.9', reviewCountSum: '312', imageUrl: 'https://shopping-phinf.pstatic.net/main_8686227/86862273595.1.jpg' } },
         { nccAdId: 'nad-2', userLock: false, adAttr: { bidAmt: 510, useGroupBidAmt: false }, nccQi: { qiGrade: 3 }, referenceData: { productTitle: '오즈키즈 유아 사계절 레깅스', lowPrice: '13900', category3Name: '레깅스', scoreInfo: '4.8', reviewCountSum: '846', imageUrl: 'https://shopping-phinf.pstatic.net/main_8466870/84668700368.20.jpg' } },
         { nccAdId: 'nad-3', userLock: true, adAttr: { bidAmt: 300, useGroupBidAmt: false }, nccQi: { qiGrade: 4 }, referenceData: { productTitle: '오즈키즈 아기 짜임 레깅스', lowPrice: '11900', category3Name: '레깅스', scoreInfo: '4.7', reviewCountSum: '120', imageUrl: 'https://shopping-phinf.pstatic.net/main_8606587/86065876027.3.jpg' } },
-        { nccAdId: 'nad-brand', type: 'SHOPPING_BRAND_IMAGE_BANNER_AD', userLock: false, ad: { headline: '층간소음방지 실내화', description: '매트 깔지 말고, 신으세요', landingUrl: 'https://brand.naver.com/ozkiz/category/d59b32ff4eb74d82bdc0648e949dc573?cp=1&nt_keyword={keyword}' } },
+        { nccAdId: 'nad-brand', type: 'SHOPPING_BRAND_IMAGE_BANNER_AD', userLock: false, status: 'ELIGIBLE', ad: { headline: '층간소음방지 실내화', description: '매트 깔지 말고, 신으세요', image: '/MjAyNTA1MjFfNzgg/MDAxNzQ3Nzk2MzQ1MTY5.Gtm20W67KhPMyL1lMVVekNIIq5Panqgh8mhzhZkv7T4g.wV8gsH9AotPVVvm_jaGu8MokOjNRe1cRgAOGw9e2WdQg.JPEG/434195-92a7d4b4-2214-40b0-b2da-2cc6b11b8dda.jpg', landingUrl: 'https://brand.naver.com/ozkiz/category/d59b32ff4eb74d82bdc0648e949dc573?cp=1&nt_keyword={keyword}' } },
       ],
       get_keywords: [
         { nccKeywordId: 'nkw-1', nccAdgroupId: 'grp-1', keyword: '유아 레깅스', bidAmt: 450, useGroupBidAmt: false, userLock: false, status: 'ELIGIBLE', nccQi: { qiGrade: 5 } },
