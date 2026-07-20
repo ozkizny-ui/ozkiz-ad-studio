@@ -85,6 +85,7 @@
     { k: 'shopbid', label: '입찰가 조정' },
     { k: 'shopneg', label: '쇼핑검색 제외키워드' },
     { k: 'powerlink', label: '파워링크 OFF키워드 제안' },
+    { k: 'monitor', label: '수집·알림 현황' },
   ];
   function render() {
     root.innerHTML = `
@@ -105,7 +106,8 @@
     });
     if (sub === 'shopbid') renderBid();
     else if (sub === 'shopneg') renderShopNeg();
-    else renderPowerlink();
+    else if (sub === 'powerlink') renderPowerlink();
+    else renderMonitor();
   }
 
   // ── 입찰가 조정 = 전체 대시보드(B): 운영중 쇼핑 상품 전부, 비용순, 드릴다운 없음 ──
@@ -546,6 +548,54 @@
   window.naverPlatform = { open, close };
 
   // ── 목데이터 (UI 검증용) ──────────────────────────────────────
+  // ── 수집·알림 현황 (nv_stat_snapshots·nv_alert_log를 collect_status로 조회) ──
+  async function renderMonitor() {
+    const body = $('#nv-body'); injectNvCss();
+    body.innerHTML = loading('수집 현황 불러오는 중…');
+    try {
+      const s = await api('collect_status');
+      const lr = s.lastRun;
+      const fmtT = (iso) => { if (!iso) return '-'; const k = new Date(new Date(iso).getTime() + 9 * 3600000); return k.toISOString().slice(5, 16).replace('T', ' '); }; // MM-DD HH:mm (KST)
+      const daily = s.daily || [], alerts = s.alerts || [], runs = s.runs || [];
+      const maxCost = Math.max(1, ...daily.map(d => d.cost));
+      const aicon = (k) => k === 'budget_spike' ? '⚠️' : (k === 'landing_error' ? '🔗' : '🔔');
+      const amsg = (a) => { const d = a.detail || {}; if (a.kind === 'budget_spike') return `예산 급증 · ${a.ref} (오늘 ${cnt(Math.round(d.today || 0))}원 · 평소의 ${d.ratio}배)`; if (a.kind === 'landing_error') return `랜딩 오류(${d.status || 'timeout'}) · ${d.ez_name || ''} ${a.ref}`; return a.kind + ' · ' + (a.ref || ''); };
+      body.innerHTML = `
+        <div class="nvc-tiles">
+          <div class="nvc-tile"><div class="k">마지막 수집</div><div class="v" style="font-size:15px">${lr ? fmtT(lr.at) : '<span style="color:var(--muted)">아직 없음</span>'}</div></div>
+          <div class="nvc-tile"><div class="k">이번 수집 소재</div><div class="v">${lr ? lr.ads + '개' : '-'}</div></div>
+          <div class="nvc-tile"><div class="k">일별 데이터</div><div class="v">${daily.length}일치</div></div>
+          <div class="nvc-tile"><div class="k">최근 알림</div><div class="v">${alerts.length}건</div></div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin:2px 0 16px">6시간마다 자동 수집(00·06·12·18시 KST). 예산 급증 알림은 데이터 3일 이상 쌓이면 자동 발동돼요.</div>
+
+        <div style="font-weight:700;font-size:14px;margin:14px 0 8px">📈 일별 성과 <span style="color:var(--muted);font-weight:400;font-size:12px">최근 ${daily.length}일 · 과거→최근 · ROAS는 직접구매 기준</span></div>
+        ${daily.length ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr style="color:var(--muted)">
+            <th style="text-align:left;padding:6px 8px">날짜</th><th style="text-align:right;padding:6px 8px">광고비</th><th style="text-align:right;padding:6px 8px">직접구매</th><th style="text-align:right;padding:6px 8px">구매액</th><th style="text-align:right;padding:6px 8px">ROAS</th><th style="width:120px"></th></tr></thead>
+          <tbody>${daily.map(d => `<tr style="border-top:1px solid var(--border)">
+            <td style="padding:6px 8px;font-weight:600">${d.stat_dt.slice(5)}</td>
+            <td style="padding:6px 8px;text-align:right">${cnt(Math.round(d.cost))}원</td>
+            <td style="padding:6px 8px;text-align:right">${d.convCnt}건</td>
+            <td style="padding:6px 8px;text-align:right">${cnt(Math.round(d.convVal))}원</td>
+            <td style="padding:6px 8px;text-align:right;font-weight:700;color:${d.roas == null ? 'var(--muted)' : (d.roas >= 300 ? 'var(--green)' : 'var(--red)')}">${d.roas == null ? '-' : d.roas + '%'}</td>
+            <td style="padding:6px 8px"><div style="height:8px;border-radius:4px;background:var(--accent);width:${Math.round(d.cost / maxCost * 100)}%;min-width:2px"></div></td>
+          </tr>`).join('')}</tbody></table></div>`
+          : `<div style="color:var(--muted);padding:14px">아직 일별 데이터가 없어요. 내일 06시 수집부터 하루씩 쌓입니다.</div>`}
+
+        <div style="font-weight:700;font-size:14px;margin:22px 0 8px">🔔 최근 알림 이력</div>
+        ${alerts.length ? alerts.map(a => `<div style="display:flex;gap:8px;align-items:baseline;padding:7px 10px;border:1px solid var(--border);border-radius:9px;margin-bottom:6px;background:var(--surface)">
+          <span>${aicon(a.kind)}</span><span style="flex:1;font-size:12.5px">${esc(amsg(a))}</span>
+          <span style="color:var(--muted);font-size:11px;white-space:nowrap">${fmtT(a.created_at)}</span></div>`).join('')
+          : `<div style="color:var(--muted);padding:14px">아직 알림이 없어요 — 정상입니다. (예산 급증·랜딩 오류가 감지되면 여기와 구글챗에 표시돼요)</div>`}
+
+        <div style="margin-top:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button id="nv-mon-refresh" style="${pBtn}">↻ 새로고침</button>
+          <span style="font-size:11px;color:var(--muted)">최근 실행: ${runs.slice(0, 6).map(r => fmtT(r.at) + `(${r.ads})`).join(' · ') || '-'}</span></div>`;
+      const rb = $('#nv-mon-refresh'); if (rb) rb.onclick = () => renderMonitor();
+    } catch (e) { body.innerHTML = errBox(e); }
+  }
+
   function mockApi(action, p) {
     const D = {
       get_campaigns: [
@@ -579,6 +629,25 @@
       '20260712\t434195\tcmp-a001-01-1\tgrp-a001-01-2\t아동레쉬가드\t27758\tP\t2\t4\t0\t0\t0\n' +
       '20260712\t434195\tcmp-a001-01-1\tgrp-a001-01-1\t남아수영복\t33421\tM\t5\t1\t0\t0\t0' });
     if (action === 'report_delete' || action === 'add_restricted_keyword') return Promise.resolve({ ok: true });
+    if (action === 'collect_status') {
+      const now = Date.now(), day = 86400000;
+      const dstr = (n) => new Date(now - n * day + 9 * 3600000).toISOString().slice(0, 10);
+      return Promise.resolve({
+        lastRun: { at: new Date(now - 40 * 60000).toISOString(), ads: 44 },
+        runs: [0, 6, 12, 18, 24].map(h => ({ at: new Date(now - h * 3600000).toISOString(), ads: 44 })),
+        daily: [
+          { stat_dt: dstr(5), cost: 512000, convCnt: 22, convVal: 2300000, roas: 449 },
+          { stat_dt: dstr(4), cost: 498000, convCnt: 18, convVal: 1560000, roas: 313 },
+          { stat_dt: dstr(3), cost: 470000, convCnt: 12, convVal: 1080000, roas: 230 },
+          { stat_dt: dstr(2), cost: 505000, convCnt: 20, convVal: 1910000, roas: 378 },
+          { stat_dt: dstr(1), cost: 488000, convCnt: 24, convVal: 2440000, roas: 500 },
+        ],
+        alerts: [
+          { created_at: new Date(now - 2 * 3600000).toISOString(), kind: 'budget_spike', ref: 'ONS_쇼검_의류', detail: { today: 182000, ratio: '3.2', hour: 12 } },
+          { created_at: new Date(now - 26 * 3600000).toISOString(), kind: 'landing_error', ref: 'https://ozkiz.com/product/detail.html?product_no=999', detail: { status: 404, ez_name: '유아 레깅스 3종' } },
+        ],
+      });
+    }
     return Promise.resolve(D[action] || []);
   }
 })();
