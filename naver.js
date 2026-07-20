@@ -82,7 +82,8 @@
   // 네이버 · 광고 예산 조정 — 하위탭 3개
   let sub = 'shopbid';
   const SUBTABS = [
-    { k: 'shopbid', label: '입찰가 조정' },
+    { k: 'shopbid', label: '쇼핑검색 입찰가 조정' },
+    { k: 'powerbid', label: '파워링크 입찰가 조정' },
     { k: 'shopneg', label: '쇼핑검색 제외키워드' },
     { k: 'powerlink', label: '파워링크 OFF키워드 제안' },
     { k: 'monitor', label: '수집·알림 현황' },
@@ -105,6 +106,7 @@
       location.hash = target;
     });
     if (sub === 'shopbid') renderBid();
+    else if (sub === 'powerbid') renderPowerBid();
     else if (sub === 'shopneg') renderShopNeg();
     else if (sub === 'powerlink') renderPowerlink();
     else renderMonitor();
@@ -139,7 +141,7 @@
   }
   // 기본지표+순위 배치(/stats ids, 90개씩) — AD보고서 대체·빠름. per-id avgRnk/노출/클릭/비용 반환.
   async function loadStatsBatch(ids) {
-    if (MOCK) return { 'nad-1': { imp: 5000, clk: 70, cost: 100000, rank: 4.2 }, 'nad-2': { imp: 900, clk: 8, cost: 40000, rank: 6.1 }, 'nad-3': { imp: 200, clk: 2, cost: 3000, rank: 8 } };
+    if (MOCK) return { 'nad-1': { imp: 5000, clk: 70, cost: 100000, rank: 4.2 }, 'nad-2': { imp: 900, clk: 8, cost: 40000, rank: 6.1 }, 'nad-3': { imp: 200, clk: 2, cost: 3000, rank: 8 }, 'nkw-1': { imp: 3000, clk: 60, cost: 60000, rank: 2.1 }, 'nkw-2': { imp: 800, clk: 15, cost: 40000, rank: 4.5 }, 'nkw-3': { imp: 200, clk: 3, cost: 5000, rank: 7 } };
     const map = {}, chunks = [];
     for (let i = 0; i < ids.length; i += 90) chunks.push(ids.slice(i, i + 90));
     await Promise.all(chunks.map(async ch => {
@@ -348,6 +350,166 @@
       try {
         await api('update_ad_bid', { body: { nccAdId: s.a.nccAdId, bidAmt: s.nb } }); ok++;
         const bd = $('#nvb-' + s.a.nccAdId); if (bd) bd.innerHTML = `<span class="new">${s.nb}원</span><span class="nvc-d" style="background:var(--green-l);color:var(--green)">✓ 반영</span>`;
+      } catch (e) { fail++; }
+    }
+    if (btn) btn.textContent = `완료 · 성공 ${ok}${fail ? ' / 실패 ' + fail : ''}`;
+  }
+
+  // ── 파워링크 입찰가 조정 = 광고그룹별·키워드별 카드(확장소재 포함). 쇼핑 대시보드와 동일 규칙엔진 ──
+  let pwrPaused = false, nvPwrSug = [], purchaseKwCache = null;
+  async function renderPowerBid() {
+    const body = $('#nv-body'); injectNvCss();
+    body.innerHTML = loading('운영중 파워링크 캠페인·키워드 불러오는 중…');
+    try {
+      const camps = await api('get_campaigns');
+      const plCamps = camps.filter(c => c.campaignTp === 'WEB_SITE' && (pwrPaused || isRunning(c))).sort(runningFirst);
+      if (!plCamps.length) { body.innerHTML = '<div style="color:var(--muted);padding:20px">운영중 파워링크(웹사이트) 캠페인이 없어요.</div>'; return; }
+      // 구조: 캠페인 → (운영중)그룹 → {확장소재, (운영중)키워드}
+      let structure = await Promise.all(plCamps.map(async c => {
+        const gs = (await api('get_adgroups', { params: { nccCampaignId: c.nccCampaignId } })) || [];
+        const egs = gs.filter(g => pwrPaused || isRunning(g));
+        const withKw = await Promise.all(egs.map(async g => {
+          const [kws, extR] = await Promise.all([
+            api('get_keywords', { params: { nccAdgroupId: g.nccAdgroupId } }),
+            api('get_ad_extensions', { params: { ownerId: g.nccAdgroupId } }).catch(() => []),
+          ]);
+          const kwArr = (kws || []).filter(k => pwrPaused || (isRunning(k) && k.userLock !== true));
+          const exts = Array.isArray(extR) ? extR : (Array.isArray(extR.data) ? extR.data : []);
+          return { group: g, exts, kws: kwArr };
+        }));
+        return { camp: c, groups: withKw.filter(x => x.kws.length) };
+      }));
+      structure = structure.filter(s => s.groups.length);
+      if (!structure.length) { body.innerHTML = '<div style="color:var(--muted);padding:20px">운영중 파워링크 키워드가 없어요.</div>'; return; }
+      const ids = structure.flatMap(s => s.groups.flatMap(g => g.kws.map(k => k.nccKeywordId)));
+      const statsMap = await loadStatsBatch(ids);
+      renderPowerDash(body, structure, statsMap, null);
+      loadPurchaseKw7d().then(p => { if (sub === 'powerbid' && document.getElementById('nvp-dash')) renderPowerDash(body, structure, statsMap, p); }).catch(() => {});
+    } catch (e) { body.innerHTML = errBox(e); }
+  }
+  // 키워드별 직접구매(구매완료·직접) 7일 — AD_CONVERSION c4(키워드) 기준. (쇼핑은 c5 소재 기준)
+  async function loadPurchaseKw7d(setMsg) {
+    if (purchaseKwCache) return purchaseKwCache;
+    if (MOCK) { purchaseKwCache = { 'nkw-1': { cnt: 4, val: 320000 }, 'nkw-2': { cnt: 1, val: 28000 } }; return purchaseKwCache; }
+    let done = 0;
+    const per = await Promise.all([1, 2, 3, 4, 5, 6, 7].map(async (d) => {
+      const map = {};
+      try {
+        const job = await api('report_create', { body: { reportTp: 'AD_CONVERSION', statDt: isoAgo(d) } });
+        const id = job.reportJobId || job.id; let url = null;
+        for (let i = 0; i < 15; i++) { await sleep(1500); const st = await api('report_status', { params: { id } }); if (st.status === 'BUILT' || st.status === 'DONE') { url = st.downloadUrl; break; } if (st.status === 'NONE' || st.status === 'DELETED') break; }
+        if (url) { const dl = await api('report_download', { params: { url } });
+          (dl.tsv || '').split(/\r?\n/).forEach(ln => { const c = ln.split('\t'); if (c[10] === 'purchase' && c[9] === '1') { const m = (map[c[4]] ||= { cnt: 0, val: 0 }); m.cnt += Number(c[11]) || 0; m.val += Number(c[12]) || 0; } });
+        }
+        api('report_delete', { params: { id } }).catch(() => {});
+      } catch {}
+      done++; if (setMsg) setMsg(`구매전환 수집 ${done}/7…`);
+      return map;
+    }));
+    const merged = {};
+    per.forEach(map => { for (const k in map) { const m = (merged[k] ||= { cnt: 0, val: 0 }); m.cnt += map[k].cnt; m.val += map[k].val; } });
+    purchaseKwCache = merged; return merged;
+  }
+  function renderPowerDash(body, structure, statsMap, purchase) {
+    const mod = dayModifier(), pending = !purchase;
+    nvPwrSug = [];
+    let gCost = 0, gConvV = 0, gConvN = 0, kwCount = 0;
+    structure.forEach(s => {
+      s.groups.forEach(gr => {
+        gr.items = gr.kws.map(kw => {
+          const b = statsMap[kw.nccKeywordId] || { imp: 0, clk: 0, cost: 0, rank: 0 };
+          const pc = purchase ? (purchase[kw.nccKeywordId] || { cnt: 0, val: 0 }) : null;
+          const ctr = b.imp ? b.clk / b.imp * 100 : 0, cpc = b.clk ? b.cost / b.clk : 0;
+          const roas = (pc && b.cost) ? pc.val / b.cost * 100 : null;
+          const grp = kw.useGroupBidAmt === true;
+          const cur = Number(kw.bidAmt) || 0;
+          const nb = (!pending && !grp && kw.userLock !== true && b.cost && roas != null) ? computeBid(cur, roas, mod.mod) : cur;
+          if (!pending && !grp && nb !== cur && kw.userLock !== true) nvPwrSug.push({ kw, cur, nb });
+          gCost += b.cost; if (pc) { gConvV += pc.val; gConvN += pc.cnt; } kwCount++;
+          return { kw, b, pc, ctr, cpc, roas, cur, nb, pending, grp };
+        }).sort((x, y) => y.b.cost - x.b.cost);
+        gr.total = gr.items.reduce((t, it) => t + it.b.cost, 0);
+      });
+      s.groups.sort((a, b) => b.total - a.total);
+      s.total = s.groups.reduce((t, g) => t + g.total, 0);
+    });
+    structure.sort((a, b) => b.total - a.total);
+    const gRoas = gCost ? gConvV / gCost * 100 : 0;
+    const sections = structure.map(s => s.groups.map(gr => `
+      <div class="nvp-gsec" data-camp="${s.camp.nccCampaignId}">
+        <div style="display:flex;align-items:center;gap:8px;margin:16px 0 6px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--muted)">${esc(s.camp.name)}</span>
+          <b style="font-size:14px">${statusDot(gr.group)} ${esc(gr.group.name)}</b>
+          <span style="color:var(--muted);font-size:12px">${won(gr.total)} · 키워드 ${gr.items.length}개</span>
+        </div>
+        <div style="margin:0 0 8px;font-size:11px;color:var(--muted)">확장소재: ${extChips(gr.exts)}</div>
+        ${gr.items.map(powerKwCard).join('')}
+      </div>`).join('')).join('');
+    body.innerHTML = `
+      <div class="nvc-tiles">
+        <div class="nvc-tile"><div class="k">총비용 (7일)</div><div class="v">${won(gCost)}</div></div>
+        <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접</span></div><div class="v" style="color:${pending ? 'var(--muted)' : (gRoas >= 300 ? 'var(--green)' : 'var(--red)')}">${pending ? '<span style="font-size:13px">집계 중…</span>' : (gCost ? Math.round(gRoas) + '%' : '-')}</div></div>
+        <div class="nvc-tile"><div class="k">구매 전환</div><div class="v">${pending ? '<span style="color:var(--muted);font-size:13px">집계 중…</span>' : gConvN + '건 · ' + cnt(gConvV) + '원'}</div></div>
+        <div class="nvc-tile"><div class="k">키워드 · 변경대상</div><div class="v">${kwCount} · <span style="color:var(--accent-d)">${pending ? '…' : nvPwrSug.length}</span></div></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <input id="nvpf-q" placeholder="🔎 키워드 검색" style="padding:7px 10px;border:1px solid var(--border2);border-radius:9px;background:var(--surface);color:var(--text);font-size:13px;min-width:160px">
+        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvpf-changed"> 제안 있는 것만</label>
+        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvpf-paused" ${pwrPaused ? 'checked' : ''}> 정지 포함</label>
+        <span style="font-size:12px;color:var(--muted)">· ${mod.label} 보정 · 비용순 · 그룹입찰 키워드는 제외</span>
+        <button id="nvp-applyall" style="${pBtn};margin-left:auto" ${(!pending && nvPwrSug.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvPwrSug.length ? `▶ ${nvPwrSug.length}건 입찰가 반영` : '변경 대상 없음')}</button>
+      </div>
+      <div id="nvp-dash">${sections || '<div style="color:var(--muted);padding:20px">운영중 파워링크 키워드가 없어요.</div>'}</div>`;
+    const q = $('#nvpf-q'), ch = $('#nvpf-changed');
+    const applyF = () => {
+      const term = (q.value || '').toLowerCase(), onlyCh = ch.checked;
+      document.querySelectorAll('.nvp-card').forEach(c => { c.style.display = ((!term || c.dataset.kw.includes(term)) && (!onlyCh || c.dataset.changed === '1')) ? '' : 'none'; });
+      document.querySelectorAll('.nvp-gsec').forEach(sec => { const any = [...sec.querySelectorAll('.nvp-card')].some(c => c.style.display !== 'none'); sec.style.display = any ? '' : 'none'; });
+    };
+    if (q) q.oninput = applyF; if (ch) ch.onchange = applyF;
+    const pcb = $('#nvpf-paused'); if (pcb) pcb.onchange = () => { pwrPaused = pcb.checked; renderPowerBid(); };
+    const upd = () => { const n = document.querySelectorAll('.nvp-cb:checked').length; const bt = $('#nvp-applyall'); if (bt) { bt.disabled = !n; bt.textContent = n ? `▶ 선택 ${n}건 입찰가 반영` : '선택된 항목 없음'; } };
+    document.querySelectorAll('.nvp-cb').forEach(cb => cb.onchange = upd);
+    const btn = $('#nvp-applyall'); if (btn) { btn.onclick = () => applyPowerBids(); if (!pending && nvPwrSug.length) upd(); }
+  }
+  function powerKwCard(it) {
+    const kw = it.kw, paused = kw.userLock === true || !isRunning(kw), pend = it.pending, grp = it.grp;
+    const d = it.nb - it.cur, pct = it.cur ? Math.round(d / it.cur * 100) : 0, changed = !pend && !grp && d !== 0;
+    const bidHtml = grp
+      ? '<span style="color:var(--muted);font-size:11px">그룹입찰 사용</span>'
+      : pend
+        ? `<span style="color:var(--muted);font-size:10px">현재</span> <span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface2);color:var(--muted)">…</span>`
+        : changed
+          ? `<span style="color:var(--muted);font-size:10px">현재</span> <span class="cur">${it.cur}</span><span style="color:var(--muted)">→</span><span style="color:var(--accent-d);font-size:10px;font-weight:700">제안</span> <span class="new">${it.nb}원</span><span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span><input type="checkbox" class="nvp-cb" data-kw="${esc(kw.nccKeywordId)}" checked title="이 제안 반영" style="margin-left:4px;width:16px;height:16px;accent-color:var(--accent);cursor:pointer;vertical-align:middle">`
+          : `<span style="color:var(--muted);font-size:10px">현재</span> <span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface2);color:var(--muted)">유지</span>`;
+    const M = [['순위', it.b.rank ? it.b.rank.toFixed(1) : '-'], ['품질', qiBar(kw.nccQi && kw.nccQi.qiGrade)], ['노출', cnt(it.b.imp)], ['클릭', cnt(it.b.clk)], ['CTR', it.ctr.toFixed(2) + '%'], ['CPC', won(Math.round(it.cpc))], ['총비용', won(it.b.cost)], ['구매', pend ? '<span style="color:var(--muted)">…</span>' : (it.pc.cnt + '건·' + cnt(it.pc.val))]];
+    const roasTxt = pend ? '<span style="color:var(--muted)">…</span>' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
+    const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= 300 ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
+    return `<div class="nvp-card" data-kw="${esc((kw.keyword || '').toLowerCase())}" data-changed="${changed ? '1' : '0'}" style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 14px;margin-bottom:8px;box-shadow:0 1px 3px rgba(24,23,46,.05)">
+      <div style="min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-weight:700;font-size:14px">🔑 ${esc(kw.keyword || kw.nccKeywordId)}</span><span style="font-size:11px;color:${paused ? 'var(--muted)' : 'var(--green)'}">${paused ? '⚪ 정지' : '🟢 노출중'}</span></div>
+        <div class="nvc-metrics">${M.map(([k, v]) => `<div class="nvc-m"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}</div>
+      </div>
+      <div class="nvc-right" style="min-width:180px">
+        <div class="nvc-roas" style="color:${roasCol}">${roasTxt}<small>구매 ROAS</small></div>
+        <div class="nvc-bid" id="nvpb-${esc(kw.nccKeywordId)}">${bidHtml}</div>
+      </div>
+    </div>`;
+  }
+  async function applyPowerBids() {
+    if (!nvPwrSug.length) return;
+    const checked = new Set([...document.querySelectorAll('.nvp-cb:checked')].map(cb => cb.dataset.kw));
+    const sel = nvPwrSug.filter(s => checked.has(s.kw.nccKeywordId));
+    if (!sel.length) { alert('반영할 제안을 선택하세요. (제안 옆 체크박스)'); return; }
+    if (MOCK) { alert('🧪 목모드: 실제 반영 안 함 (선택 ' + sel.length + '건)'); return; }
+    if (!localStorage.getItem('sb_write_token')) { alert('쓰기 인증이 필요합니다. 좌측 사이드바 "🔒 쓰기 잠김"을 눌러 해제하세요.'); return; }
+    if (!confirm('선택한 ' + sel.length + '건의 파워링크 키워드 입찰가를 실제로 변경합니다. 진행할까요?')) return;
+    const btn = $('#nvp-applyall'); if (btn) btn.disabled = true;
+    let ok = 0, fail = 0;
+    for (const s of sel) {
+      try {
+        await api('update_keyword_bid', { body: { nccKeywordId: s.kw.nccKeywordId, nccAdgroupId: s.kw.nccAdgroupId, bidAmt: s.nb } }); ok++;
+        const bd = $('#nvpb-' + s.kw.nccKeywordId); if (bd) bd.innerHTML = `<span class="new">${s.nb}원</span><span class="nvc-d" style="background:var(--green-l);color:var(--green)">✓ 반영</span>`;
       } catch (e) { fail++; }
     }
     if (btn) btn.textContent = `완료 · 성공 ${ok}${fail ? ' / 실패 ' + fail : ''}`;
@@ -611,6 +773,16 @@
         { nccAdId: 'nad-1', userLock: false, adAttr: { bidAmt: 660, useGroupBidAmt: false }, nccQi: { qiGrade: 5 }, referenceData: { productTitle: '오즈키즈 여아 치랭스 레깅스 유아 아기', lowPrice: '16900', category3Name: '레깅스', scoreInfo: '4.9', reviewCountSum: '312', imageUrl: 'https://shopping-phinf.pstatic.net/main_8686227/86862273595.1.jpg' } },
         { nccAdId: 'nad-2', userLock: false, adAttr: { bidAmt: 510, useGroupBidAmt: false }, nccQi: { qiGrade: 3 }, referenceData: { productTitle: '오즈키즈 유아 사계절 레깅스', lowPrice: '13900', category3Name: '레깅스', scoreInfo: '4.8', reviewCountSum: '846', imageUrl: 'https://shopping-phinf.pstatic.net/main_8466870/84668700368.20.jpg' } },
         { nccAdId: 'nad-3', userLock: true, adAttr: { bidAmt: 300, useGroupBidAmt: false }, nccQi: { qiGrade: 4 }, referenceData: { productTitle: '오즈키즈 아기 짜임 레깅스', lowPrice: '11900', category3Name: '레깅스', scoreInfo: '4.7', reviewCountSum: '120', imageUrl: 'https://shopping-phinf.pstatic.net/main_8606587/86065876027.3.jpg' } },
+      ],
+      get_keywords: [
+        { nccKeywordId: 'nkw-1', nccAdgroupId: 'grp-1', keyword: '유아 레깅스', bidAmt: 450, useGroupBidAmt: false, userLock: false, status: 'ELIGIBLE', nccQi: { qiGrade: 5 } },
+        { nccKeywordId: 'nkw-2', nccAdgroupId: 'grp-1', keyword: '아기 레깅스', bidAmt: 380, useGroupBidAmt: false, userLock: false, status: 'ELIGIBLE', nccQi: { qiGrade: 4 } },
+        { nccKeywordId: 'nkw-3', nccAdgroupId: 'grp-1', keyword: '키즈 레깅스', bidAmt: 0, useGroupBidAmt: true, userLock: false, status: 'ELIGIBLE', nccQi: { qiGrade: 3 } },
+      ],
+      get_ad_extensions: [
+        { type: 'POWER_LINK_IMAGE' }, { type: 'POWER_LINK_IMAGE' },
+        { type: 'DESCRIPTION', adExtension: { description: '무료배송 무료교환반품 당일발송' } },
+        { type: 'SUBLINKS' }, { type: 'SHOPPING_WEB' },
       ],
     };
     if (action === 'stats') {
