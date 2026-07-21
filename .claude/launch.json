@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ad-studio-static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8137"],
+      "port": 8137
+    },
+    {
+      "name": "dashboard-static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8138", "--directory", "C:/ozkids-github"],
+      "port": 8138
+    },
+    {
+      "name": "dashboard-local",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8139", "--directory", "C:/ozkids-dashboard"],
+      "port": 8139
+    },
+    {
+      "name": "kw-dashboard",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "5599", "--directory", "C:/keyword-dashboard/docs"],
+      "port": 5599
+    }
+  ]
+}

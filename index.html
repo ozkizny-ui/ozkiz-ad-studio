@@ -432,7 +432,7 @@ input,select,textarea{font-family:var(--font-body)}
 <div class="page" id="page-adneed">
   <div class="page-header">
     <div class="page-title">광고 집행 요망</div>
-    <div class="page-sub">현재 시즌 기준 · 광고집행요망 · 재시도 후보 · 카테고리 추천</div>
+    <div class="page-sub">현재 시즌 기준 · 광고집행요망 · 입고될 제품(미래재고) · 작년 이맘때 톱셀러 · 재시도 후보 · 카테고리 추천</div>
   </div>
   <div id="adneed-result">
     <div class="empty-state">
@@ -1604,6 +1604,20 @@ function kstMinutes() {
   return kst.getUTCHours() * 60 + kst.getUTCMinutes();
 }
 
+// ── 쉬는날 판정 (2026-07-21, auto-adjust.js와 동일 로직) ─────────
+// 금·토·일 + 공휴일엔 오후·저녁 감액 사다리(r10·r17·r12·r16) 문턱 200→240% 확대.
+const KR_HOLIDAYS = [
+  '2026-08-15', '2026-08-17', '2026-09-24', '2026-09-25', '2026-09-26',
+  '2026-10-03', '2026-10-05', '2026-10-09', '2026-12-25',
+];
+function ladderMax() {
+  const kst = new Date(Date.now() + 9 * 3600 * 1000);
+  const dow = kst.getUTCDay();
+  const today = kst.toISOString().split('T')[0];
+  const rest = dow === 5 || dow === 6 || dow === 0 || KR_HOLIDAYS.includes(today);
+  return rest ? 240 : 200;
+}
+
 // ── 광고비 조정 규칙 정의 ────────────────────────────────────────
 // triggerMin: KST 분 기준, dir: 'up'|'dn'|'off'
 const BUDGET_RULES = [
@@ -1707,8 +1721,8 @@ const BUDGET_RULES = [
   },
   {
     id: 'r10', triggerMin: 15*60, dir: 'dn',
-    label: '오후 3:00 · ROAS ≤200% → 구매전환값의 50%',
-    check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
+    label: '오후 3:00 · ROAS ≤200%(쉬는날 ≤240%) → 구매전환값의 50%',
+    check: (ad) => ad.roas <= ladderMax() && ad.roas > 0 && ad.purchaseValue > 0,
     calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
   },
   {
@@ -1719,8 +1733,8 @@ const BUDGET_RULES = [
   },
   {
     id: 'r12', triggerMin: 18*60, dir: 'dn',
-    label: '오후 6:00 · ROAS ≤200% → 구매전환값의 30%',
-    check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
+    label: '오후 6:00 · ROAS ≤200%(쉬는날 ≤240%) → 구매전환값의 30%',
+    check: (ad) => ad.roas <= ladderMax() && ad.roas > 0 && ad.purchaseValue > 0,
     calc:  (ad) => Math.round(ad.purchaseValue * 0.3 / 1000) * 1000,
   },
   {
@@ -1752,8 +1766,8 @@ const BUDGET_RULES = [
   },
   {
     id: 'r16', triggerMin: 21*60, dir: 'dn',
-    label: '오후 9:00 · ROAS ≤200% → 구매전환값의 50%',
-    check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
+    label: '오후 9:00 · ROAS ≤200%(쉬는날 ≤240%) → 구매전환값의 50%',
+    check: (ad) => ad.roas <= ladderMax() && ad.roas > 0 && ad.purchaseValue > 0,
     calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
   },
   {
@@ -1808,9 +1822,9 @@ const BUDGET_RULES = [
   },
   {
     id: 'r17', triggerMin: 16*60, dir: 'dn',
-    label: '오후 4:00 · ROAS 150~200% → 구매전환값의 40%',
+    label: '오후 4:00 · ROAS 150~200%(쉬는날 ~240%) → 구매전환값의 40%',
     // 방향 가드 내장: 계산값(구매전환값×0.4)이 현재 예산보다 작을 때만 발동(트림 전용)
-    check: (ad) => ad.roas >= 150 && ad.roas < 200 && ad.purchaseValue > 0 && ad.budget > Math.round(ad.purchaseValue * 0.4 / 1000) * 1000,
+    check: (ad) => ad.roas >= 150 && ad.roas < ladderMax() && ad.purchaseValue > 0 && ad.budget > Math.round(ad.purchaseValue * 0.4 / 1000) * 1000,
     calc:  (ad) => Math.round(ad.purchaseValue * 0.4 / 1000) * 1000,
   },
 ];
@@ -2180,6 +2194,7 @@ function editorLogout() { try { localStorage.removeItem('ad_editor_email'); } ca
 
 // 규칙 로직 변경 이력 — 규칙은 코드로만 바뀌므로 코드에 직접 기록(최신이 위)
 const RULE_CHANGELOG = [
+  { date: '2026-07-21', by: 'Claude Code', text: '쉬는날(금·토·일·공휴일) 감액 사다리 확대 — r10(15:00)·r17(16:00)·r12(18:00)·r16(21:00) ROAS 문턱 200→240%. 근거: 90일 요일 분석(금 173% 꼴찌·일 최근 164% 급락)과 쉬는날 오후(109~152%)·저녁(84~132%) 붕괴 실측 — 누적 200~240% 광고도 저녁 붕괴로 종가 200% 아래. 공휴일은 2026 하반기 하드코딩(8/15·8/17·9/24~26·10/3·10/5·10/9·12/25).' },
   { date: '2026-07-21', by: 'Claude Code', text: 'r27 추가 — 오전 8:10 · 오늘 소진 ≥₩50,000 + ROAS ≤100% → 기존 예산의 50%. 새벽 브레이크(r19·r20)의 예산 ≥20만 게이트에 안 걸리는 광고의 아침 대형 폭주 보완(7/14 사고 광고가 예산 18만으로 정확히 이 사각). 최근 4일 시뮬 발동 0건 — 순수 안전망. r25는 r27이 당일 발동한 광고 스킵(8:10→9:00 연속 반토막 방지).' },
   { date: '2026-07-14', by: 'Claude Code', text: 'r26 추가 + 저녁 페이스 사다리 조정 — r26 오후 5:00 · 구매 ≥2 + ROAS ≥200% → 전환값의 70%(감액 ≤200%·증액 ≥300% 사이 데드존 진공지대 관리, 오후 감액으로 멈춘 200%대 광고 부활 경로 · 17시 대상 일 ~12건). r14 문턱 400→350%. r15는 r14·r26 발동 광고 스킵으로 확장.' },
   { date: '2026-07-14', by: 'Claude Code', text: '규칙 충돌 2건 수정 — ①r5에 예산≤전환값 가드(증액 전용): 9:50 r4 계열이 올린 예산을 10시 r5가 전환값 100%로 되돌려 깎던 신설 충돌 예방 ②r15는 r14가 당일 이미 발동한 광고 스킵: ROAS 400%+ 광고가 18:05 r14(70%)→18:10 r15(50%)로 5분 간격 이중 감액되던 문제(2주 77건 실증) — r14 완화가 실효를 갖게 됨.' },
@@ -2238,9 +2253,9 @@ const RULE_HIDDEN = {
   r7c: '예산이 ₩10,000 초과일 때만 발동',
   r8:  '구매전환값 >0 + 현재 예산 ≤ 구매전환값일 때만',
   r9:  '예산 ≤₩5,000 + 구매전환값 >0',
-  r10: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지)',
+  r10: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지) · 쉬는날(금·토·일·공휴일) 문턱 240%',
   r11: '구매전환값 >0 + 현재 예산 ≤ 구매전환값일 때만',
-  r12: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지)',
+  r12: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지) · 쉬는날(금·토·일·공휴일) 문턱 240%',
   r13: 'ROAS 정확히 0%만 · 예산이 ₩10,000 초과일 때만 의미 (r7c와 기능 중복 지적됨)',
   r26: '⚠ 증액 표기지만 예산 ≤ 전환값 가드가 의도적으로 없어, 과지출 상태면 조임으로 작동 · 데드존(200~300%) 진공지대에 페이스를 되돌리는 역할 — 오후 감액으로 멈춘 200%대 광고 부활 경로',
   r14: '⚠ 증액 표기지만 예산 ≤ 전환값 가드가 의도적으로 없어, 예산이 전환값×0.7보다 크면 실제로는 감액됨(과지출 조임 목적) · 17시 r26과 배수가 같아(70%) r26 발동 광고엔 사실상 변경 없음',
@@ -2251,8 +2266,8 @@ const RULE_HIDDEN = {
   r24: '오늘 구매도 0이어야 발동 · 누적 7일 기준이라 소액 예산으로 천천히 타는 좀비(3일 게이트 미달)도 포착 · 구매 1건뿐이어도 대상 · 자동 전용',
   r21: '자동 전용(어제 인사이트는 서버만 조회, 수동 실행 미발동) · 방향 가드 내장(트림 전용) · 어제 데이터 조회 실패 시 미발동 · 오늘 성과가 좋아지면 낮 증액 규칙이 되올림',
   r22: '어제 소진 ≥₩5,000 = 어제 실제로 돌았던 광고만(오늘 켠 신규 광고의 학습 보호) · 자동 전용 · 예산 ₩10,000 초과일 때만',
-  r16: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지)',
-  r17: '방향 가드 내장: 계산값(전환값×0.4)이 현재 예산보다 작을 때만',
+  r16: 'ROAS 0% 제외 + 구매전환값 >0 · 방향 가드: 계산값이 현재 예산보다 작을 때만(증액 방지) · 쉬는날(금·토·일·공휴일) 문턱 240%',
+  r17: '방향 가드 내장: 계산값(전환값×0.4)이 현재 예산보다 작을 때만 · 쉬는날(금·토·일·공휴일) 상한 240%',
 };
 
 function renderRulesEditor() {
@@ -5164,6 +5179,75 @@ function adCurSeasonWord() { return AD_SEASON_WORD[new Date(Date.now()+9*3600*10
 function adInSeason(season) { const w = adCurSeasonWord(); return !season || season === '사계절' || String(season).includes(w); }
 const AD_NEED_TARGET = 250; // 목표 ROAS(%) — 미만이면 '성과 미달'
 
+// ── 작년 동기간 판매 (브랜드보드 daily_sales, 대시보드 Apps Script 경유) ──
+//   기간 = 오늘 기준 [과거 1주 ~ 미래 2주]의 작년 동일 달력 구간. 작년 매출(revenue)은 원천(gsheet)에 0인 행이 많아 판매량(qty) 중심.
+const DASH_EXEC = 'https://script.google.com/macros/s/AKfycbwsdFo91OuwikvMvh8tGf6ml1SvoYgFu2X-leqexk_pvzAHjylb7_G1sGvrBbEj_Edu/exec';
+function _lyWindow() {
+  const kst = new Date(Date.now() + 9*3600*1000);
+  const d = (base, days) => { const t = new Date(base.getTime() + days*86400000); return `${t.getUTCFullYear()-1}-${String(t.getUTCMonth()+1).padStart(2,'0')}-${String(t.getUTCDate()).padStart(2,'0')}`; };
+  return { from: d(kst, -7), to: d(kst, 14) };
+}
+async function loadLastYearSales() {
+  if (state._lyLoaded || state._lyLoading) return;
+  state._lyLoading = true;
+  try {
+    const { from, to } = _lyWindow();
+    const r = await fetch(`${DASH_EXEC}?action=bb_ly_sales&from=${from}&to=${to}`);
+    const d = await r.json();
+    state._lySales = (d && d.values) || [];
+    state._lyRange = { from, to };
+  } catch (e) { state._lySales = []; }
+  state._lyLoaded = true; state._lyLoading = false;
+  renderAdNeedPage();
+}
+const _adNorm = s => String(s||'').toLowerCase().replace(/[-\s]/g,'');
+// ── 최근 3일 광고비 (제품명 단위) — get_adset_insights(days=3, 시간대별)를 제품명(세트명 ';' 앞부분)으로 합산.
+//    '데이터 불러오기'(state.metaAds)와 무관하게 로드되므로 입고·작년 표는 이 값 기준이 더 안정적.
+async function loadSpend3d() {
+  if (state._spend3dLoaded || state._spend3dLoading) return;
+  state._spend3dLoading = true;
+  try {
+    const r = await fetch(`${PROXY}/api/meta?action=get_adset_insights&days=3`);
+    const d = await r.json();
+    const map = {};
+    (d.adsets || []).forEach(a => {
+      const prod = _adNorm(String(a.adset_name || '').split(';')[0]);
+      if (!prod) return;
+      let s = 0;
+      (a.days || []).forEach(day => (day.hours || []).forEach(h => { s += h.spend || 0; }));
+      map[prod] = (map[prod] || 0) + s;
+    });
+    state._spend3d = map;
+  } catch (e) { state._spend3d = null; }
+  state._spend3dLoaded = true; state._spend3dLoading = false;
+  renderAdNeedPage();
+}
+function spend3dOf(name) { // 양방향 부분일치 합산. 데이터 미로드 시 null
+  const m = state._spend3d; if (!m) return null;
+  const k = _adNorm(name); if (!k) return 0;
+  if (m[k] != null) return Math.round(m[k]);
+  let sum = 0, hit = false;
+  for (const x in m) { if (x && (k.includes(x) || x.includes(k))) { sum += m[x]; hit = true; } }
+  return hit ? Math.round(sum) : 0;
+}
+// 소재명(state.metaAds) 매칭 — computeStockData와 동일 규칙(양방향 부분일치)
+function _adMatchMeta(name) {
+  const k = _adNorm(name);
+  if (!k) return { hasAd: false };
+  const matched = (state.metaAds || []).filter(ad => {
+    const a = _adNorm(ad.name); return a && (k.includes(a) || a.includes(k));
+  });
+  const spend = matched.reduce((s,a)=>s+(a.spend||0),0);
+  const rev   = matched.reduce((s,a)=>s+(a.purchaseValue||0),0);
+  return { hasAd: matched.length > 0, roas: spend > 0 ? Math.round(rev/spend*100) : null };
+}
+// 입고예정 시즌 판정 — '사계절, 봄' 같은 복합 문자열 지원
+function _inboundInSeason(season) {
+  const s = String(season||''); if (!s) return true;
+  return s.includes(adCurSeasonWord()) || s.includes('사계절');
+}
+function toggleInboundSeason() { state._inboundSeasonAll = !state._inboundSeasonAll; renderAdNeedPage(); }
+
 function renderAdNeedPage() {
   const el = document.getElementById('adneed-result');
   if (!el) return;
@@ -5177,15 +5261,81 @@ function renderAdNeedPage() {
   const word = adCurSeasonWord();
   const eligible = products.filter(p => adInSeason(p.season));
 
+  // 작년 동기간 판매 + 최근 3일 광고비 로드(비동기 1회) + 제품명 매칭 맵
+  if (!state._lyLoaded && !state._lyLoading) loadLastYearSales();
+  if (!state._spend3dLoaded && !state._spend3dLoading) loadSpend3d();
+  const lyList = state._lySales || [];
+  const lyByNorm = {};
+  lyList.forEach(v => { lyByNorm[_adNorm(v.name)] = v; });
+  const lyQtyOf = name => {
+    const k = _adNorm(name);
+    if (lyByNorm[k]) return lyByNorm[k].qty;
+    const hit = Object.keys(lyByNorm).find(x => x && (k.includes(x) || x.includes(k)));
+    return hit ? lyByNorm[hit].qty : null;
+  };
+  // 현재 재고 제품 맵(입고예정·작년 표에서 역매칭용)
+  const prodByNorm = {};
+  products.forEach(p => { prodByNorm[_adNorm(p.name)] = p; });
+  const findProd = name => {
+    const k = _adNorm(name);
+    if (prodByNorm[k]) return prodByNorm[k];
+    const hit = Object.keys(prodByNorm).find(x => x && (k.includes(x) || x.includes(k)));
+    return hit ? prodByNorm[hit] : null;
+  };
+
   // 1) 광고집행요망: 재고 많음 & SERA 클릭가치 700↑ & 광고 미집행
   const adNeed = eligible
     .filter(p => p.highStock && (p.seraClickValue||0) > 700 && !p.hasAd)
+    .map(p => ({ ...p, lyQty: lyQtyOf(p.name) }))
     .sort((a,b) => (b.onlineStockValue - a.onlineStockValue) || ((b.seraClickValue||0)-(a.seraClickValue||0)));
 
   // 2) 재시도 후보: 광고 집행 중이나 최근 성과 미달(ROAS<목표) & 재고 많음
   const retry = eligible
     .filter(p => p.highStock && p.hasAd && p.adRoas != null && p.adRoas < AD_NEED_TARGET)
+    .map(p => ({ ...p, lyQty: lyQtyOf(p.name) }))
     .sort((a,b) => (b.onlineStockValue - a.onlineStockValue));
+
+  // 4) 입고될 제품(미래재고): 노션 입고 DB — 3주 내 입고예정 + 생산중 상태
+  const today = new Date(Date.now() + 9*3600*1000).toISOString().slice(0,10);
+  const limitDate = new Date(Date.now() + 9*3600*1000 + 21*86400000).toISOString().slice(0,10);
+  const inboundAll = (state._notionPresale || []).filter(n =>
+    n.arrivalDate && n.arrivalDate >= today && n.arrivalDate <= limitDate &&
+    String(n.status||'').includes('생산중') &&
+    (!n.brand || n.brand === '오즈키즈'));
+  const inboundSeasonal = inboundAll.filter(n => _inboundInSeason(n.season));
+  const inbound = (state._inboundSeasonAll ? inboundAll : inboundSeasonal).map(n => {
+    const prod = findProd(n.name);
+    const spend3d = spend3dOf(n.name);
+    // 광고 여부: 3일 광고비 로드됐으면 '3일간 실소진 >0' 기준(더 안정적), 아니면 metaAds 매칭 폴백
+    const hasAd = spend3d != null ? spend3d > 0 : (prod ? prod.hasAd : _adMatchMeta(n.name).hasAd);
+    const isReorder = String(n.kinds||'').includes('리오더');
+    return {
+      name: n.name, arrivalDate: n.arrivalDate,
+      dday: Math.ceil((new Date(n.arrivalDate) - new Date(today)) / 86400000),
+      season: n.season || '', kinds: n.kinds || '', qty: n.qty,
+      curStock: prod ? prod.totalAvail : null,
+      lyQty: lyQtyOf(n.name),
+      spend3d, hasAd, isReorder,
+      focus: isReorder && !hasAd, // 재입고인데 광고가 안 돎 = 준비 필요
+    };
+  }).sort((a,b) => (b.focus - a.focus) || a.arrivalDate.localeCompare(b.arrivalDate) || ((b.qty||0)-(a.qty||0)));
+
+  // 5) 작년 이맘때 톱셀러 · 광고 미집행: 작년 [과거1주~미래2주] 판매량 상위 중 현재 메타 광고가 없는 제품
+  const lyNeed = lyList.map(v => {
+    const prod = findProd(v.name);
+    const spend3d = spend3dOf(v.name);
+    const hasAd = spend3d != null ? spend3d > 0 : (prod ? prod.hasAd : _adMatchMeta(v.name).hasAd);
+    const inb = inboundAll.find(n => { const k=_adNorm(n.name), x=_adNorm(v.name); return k && (k.includes(x) || x.includes(k)); });
+    return {
+      name: v.name, category: v.category || '', season: v.season || '',
+      lyQty: v.qty, lyRev: v.revenue,
+      curStock: prod ? prod.totalAvail : null,
+      inboundDate: inb ? inb.arrivalDate : null,
+      hasAd,
+    };
+  }).filter(r => !r.hasAd && ((r.curStock||0) > 0 || r.inboundDate))
+    .sort((a,b) => b.lyQty - a.lyQty)
+    .slice(0, 30);
 
   // 3) 카테고리 추천: 재고 많음 제품 신호 합산 + 평균 ROAS
   const catMap = {};
@@ -5208,6 +5358,11 @@ function renderAdNeedPage() {
   state._adNeedView = {
     adNeed: { rows: adNeed, sortKey: 'onlineStockValue', dir: 'desc',
       emptyMsg: `조건(재고 많음 · 클릭가치 700↑ · 광고 미집행 · ${word} 시즌) 충족 제품 없음` },
+    inbound: { rows: inbound, sortKey: 'arrivalDate', dir: 'asc',
+      emptyMsg: state._inboundSeasonAll ? '3주 내 입고예정(생산중) 제품 없음'
+        : `3주 내 입고예정(생산중) 중 ${word}·사계절 제품 없음 — '전체 시즌'으로 확인해보세요` },
+    ly:     { rows: lyNeed, sortKey: 'lyQty', dir: 'desc',
+      emptyMsg: state._lyLoaded ? '작년 동기간 톱셀러 중 광고 미집행(재고 보유·입고예정) 제품 없음' : '작년 판매 데이터 로딩 중…' },
     retry:  { rows: retry, sortKey: 'onlineStockValue', dir: 'desc',
       emptyMsg: `조건(재고 많음 · 광고 집행 중 · 최근 ROAS ${AD_NEED_TARGET}% 미만) 충족 제품 없음` },
     cats:   { rows: cats, sortKey: 'stockValue', dir: 'desc',
@@ -5228,17 +5383,26 @@ function renderAdNeedPage() {
       <div id="${containerId}"></div></div>`;
   }
 
+  const lyRangeLabel = state._lyRange ? `작년 ${state._lyRange.from.slice(5)}~${state._lyRange.to.slice(5)}` : '작년 동기간';
+  const inboundToggle = `<span onclick="toggleInboundSeason()" style="cursor:pointer;font-size:11px;padding:2px 9px;border-radius:20px;border:0.5px solid var(--border2);color:${state._inboundSeasonAll?'var(--accent)':'var(--muted)'};user-select:none">${state._inboundSeasonAll ? '전체 시즌 표시 중 — 클릭 시 ' + word + '·사계절만' : word + '·사계절만 표시 중 — 클릭 시 전체'}</span>${state._inboundSeasonAll ? '' : ` <span style="font-size:11px;color:var(--muted)">(타시즌 ${inboundAll.length - inboundSeasonal.length}개 숨김)</span>`}`;
+
   el.innerHTML = `
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">🗓️ 현재 시즌 <b style="color:var(--text)">${word}</b> 기준 · ROAS는 현재 불러온 Meta 광고 성과(최근) 기준 · <span>표 머리글 클릭 시 해당 컬럼 정렬</span></div>
     ${perfNote}
     ${section('🎯 광고집행요망', '재고 많음 · 클릭가치 700↑ · 광고 미집행',
         '광고를 아직 안 돌렸지만 재고가 많고 자사몰 클릭가치가 높은 제품 — 신규 집행 1순위.', 'adneed-tbl-adNeed')}
+    ${section('📦 입고될 제품', '3주 내 입고예정 · 생산중 · 미래재고',
+        `노션 입고 DB의 생산중 제품 중 3주 내 입고예정. <b>재입고(리오더)인데 광고 미집행</b>이면 ⚡표시 — 입고 전에 소재를 준비하세요. ${inboundToggle}`, 'adneed-tbl-inbound')}
+    ${section('🕰️ 작년 이맘때 톱셀러 · 광고 미집행', `${lyRangeLabel} 판매량 상위 · 현재 재고 보유 또는 입고예정 · 최근 3일 광고비 0원`,
+        '작년 같은 기간(과거 1주~미래 2주)에 많이 팔렸는데 지금 메타 광고가 안 돌고 있는(최근 3일 소진 0원) 제품. 판매량은 전 채널 합산.', 'adneed-tbl-ly')}
     ${section('🔁 재시도 후보', `재고 많음 · 광고 집행 중 · 최근 ROAS ${AD_NEED_TARGET}% 미만`,
         '이미 광고를 돌렸지만 성과가 목표에 못 미친 제품 — 소재·타겟 교체 후 재도전 후보.', 'adneed-tbl-retry')}
     ${section('🗂️ 카테고리 추천', '재고 많음 제품 신호 합산 + 평균 ROAS',
         '카테고리별로 밀어야 할 재고(온라인 재고총액 합)와 자사몰 수요(클릭가치 합)를 합산했어요. 평균 ROAS는 해당 카테고리 광고 성과(spend 가중).', 'adneed-tbl-cats')}`;
 
   renderAdNeedTable('adNeed');
+  renderAdNeedTable('inbound');
+  renderAdNeedTable('ly');
   renderAdNeedTable('retry');
   renderAdNeedTable('cats');
 }
@@ -5259,6 +5423,30 @@ const ADNEED_COLS = {
     { key:'totalAvail',      label:'가용재고',       align:'right', type:'num', cell:p=>_adInt(p.totalAvail,'개') },
     { key:'onlineStockValue',label:'온라인 재고총액',align:'right', type:'num', cell:p=>_adWon(p.onlineStockValue) },
     { key:'seraClickValue',  label:'SERA 클릭가치',  align:'right', type:'num', cell:p=>`<b style="color:var(--green)">${_adInt(p.seraClickValue)}</b>` },
+    { key:'lyQty',           label:'작년 동기간 판매',align:'right', type:'num', cell:p=>_adInt(p.lyQty,'개') },
+  ],
+  inbound: [
+    { key:'name',        label:'제품',        align:'left',  type:'str', cell:p=>`${p.focus?'⚡ ':''}${p.name}` },
+    { key:'arrivalDate', label:'입고예정일',  align:'left',  type:'str', cell:p=>`${p.arrivalDate} <span style="color:var(--muted)">(D-${p.dday})</span>` },
+    { key:'kinds',       label:'유형',        align:'left',  type:'str', cell:p=>p.isReorder ? `<b style="color:var(--amber)">${p.kinds}</b>` : (p.kinds||'<span style="color:var(--muted)">—</span>') },
+    { key:'season',      label:'시즌',        align:'left',  type:'str', cell:p=>_adSeason(p.season) },
+    { key:'qty',         label:'입고수량',    align:'right', type:'num', cell:p=>_adInt(p.qty,'개') },
+    { key:'curStock',    label:'현재 가용재고',align:'right', type:'num', cell:p=>_adInt(p.curStock,'개') },
+    { key:'lyQty',       label:'작년 동기간 판매',align:'right', type:'num', cell:p=>_adInt(p.lyQty,'개') },
+    { key:'spend3d',     label:'최근 3일 광고비', align:'right', type:'num', cell:p=>{
+        if (p.spend3d == null) return p.hasAd ? '<span class="tag green">집행 중</span>' : '<span style="color:var(--muted)">로딩 중…</span>';
+        if (p.spend3d > 0) return `<b style="color:var(--green)">${Math.round(p.spend3d).toLocaleString()}원</b>`;
+        return p.isReorder ? '<span class="tag red">0원 (광고 안 돎)</span>' : '<span style="color:var(--muted)">0원 (신제품)</span>';
+      } },
+  ],
+  ly: [
+    { key:'name',        label:'제품',        align:'left',  type:'str', cell:p=>p.name },
+    { key:'category',    label:'카테고리',    align:'left',  type:'str', cell:p=>_adCat(p.category) },
+    { key:'season',      label:'시즌',        align:'left',  type:'str', cell:p=>_adSeason(p.season) },
+    { key:'lyQty',       label:'작년 판매량', align:'right', type:'num', cell:p=>`<b style="color:var(--green)">${_adInt(p.lyQty,'개')}</b>` },
+    { key:'lyRev',       label:'작년 매출',   align:'right', type:'num', cell:p=>_adWon(p.lyRev) },
+    { key:'curStock',    label:'현재 가용재고',align:'right', type:'num', cell:p=>_adInt(p.curStock,'개') },
+    { key:'inboundDate', label:'입고예정',    align:'left',  type:'str', cell:p=>p.inboundDate || '<span style="color:var(--muted)">—</span>' },
   ],
   retry: [
     { key:'name',            label:'제품',           align:'left',  type:'str', cell:p=>p.name||'' },
@@ -5268,6 +5456,7 @@ const ADNEED_COLS = {
     { key:'totalAvail',      label:'가용재고',       align:'right', type:'num', cell:p=>_adInt(p.totalAvail,'개') },
     { key:'onlineStockValue',label:'온라인 재고총액',align:'right', type:'num', cell:p=>_adWon(p.onlineStockValue) },
     { key:'seraClickValue',  label:'SERA 클릭가치',  align:'right', type:'num', cell:p=>_adInt(p.seraClickValue) },
+    { key:'lyQty',           label:'작년 동기간 판매',align:'right', type:'num', cell:p=>_adInt(p.lyQty,'개') },
   ],
   cats: [
     { key:'cat',        label:'카테고리',          align:'left',  type:'str', cell:c=>`<b>${c.cat}</b>` },
