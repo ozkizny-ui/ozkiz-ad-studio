@@ -164,8 +164,10 @@
   // 기본지표+순위 배치(/stats ids, 90개씩) — AD보고서 대체·빠름. per-id avgRnk/노출/클릭/비용 반환.
   async function loadStatsBatch(ids) {
     if (MOCK) return { 'nad-1': { imp: 5000, clk: 70, cost: 100000, rank: 4.2 }, 'nad-2': { imp: 900, clk: 8, cost: 40000, rank: 6.1 }, 'nad-3': { imp: 200, clk: 2, cost: 3000, rank: 8 }, 'nad-brand': { imp: 17946, clk: 70, cost: 23980, rank: 3.0 }, 'nkw-1': { imp: 3000, clk: 60, cost: 60000, rank: 2.1 }, 'nkw-2': { imp: 800, clk: 15, cost: 40000, rank: 4.5 }, 'nkw-3': { imp: 200, clk: 3, cost: 5000, rank: 7 } };
-    const map = {}, chunks = [];
-    for (let i = 0; i < ids.length; i += 90) chunks.push(ids.slice(i, i + 90));
+    // ⚠️ /stats는 한 요청에 동일 타입 ID만 허용(nad·nkw 섞으면 code11001). 타입별로 분리 후 90개씩 청크.
+    const map = {}, byType = {}, chunks = [];
+    ids.forEach(id => { const t = String(id).split('-')[0]; (byType[t] ||= []).push(id); });
+    for (const t in byType) for (let i = 0; i < byType[t].length; i += 90) chunks.push(byType[t].slice(i, i + 90));
     await mapLimit(chunks, 4, async ch => { // 동시 4청크로 제한(rate limit 완화)
       try {
         const r = await apiR('stats', { params: { ids: ch.join(','), fields: JSON.stringify(['impCnt', 'clkCnt', 'salesAmt', 'avgRnk']), timeRange: JSON.stringify({ since: isoAgo(7), until: isoAgo(1) }) } });
