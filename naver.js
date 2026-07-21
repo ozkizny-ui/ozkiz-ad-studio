@@ -275,7 +275,8 @@
         <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvf-changed"> 제안 있는 것만</label>
         <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvf-paused" ${dashPaused ? 'checked' : ''}> 정지 포함</label>
         <span style="font-size:12px;color:var(--muted)">· ${mod.label} 보정 · 비용 많은 순</span>
-        <button id="nvc-applyall" style="${pBtn};margin-left:auto" ${(!pending && nvSuggestions.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음')}</button>
+        <button id="nvc-selnone" style="margin-left:auto;padding:8px 14px;border-radius:10px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer;font-weight:600;font-size:13px;${(!pending && nvSuggestions.length) ? '' : 'display:none'}">전체 해제</button>
+        <button id="nvc-applyall" style="${pBtn}" ${(!pending && nvSuggestions.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음')}</button>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${chips}</div>
       <div id="nvc-dash">${sections}</div>
@@ -302,6 +303,7 @@
     const updateApplyBtn = () => { const n = document.querySelectorAll('.nvc-cb:checked').length; const bt = $('#nvc-applyall'); if (bt) { bt.disabled = !n; bt.textContent = n ? `▶ 선택 ${n}건 입찰가 반영` : '선택된 항목 없음'; } };
     document.querySelectorAll('.nvc-cb').forEach(cb => cb.onchange = updateApplyBtn);
     const btn = $('#nvc-applyall'); if (btn) { btn.onclick = () => applyAll(); if (!pending && nvSuggestions.length) updateApplyBtn(); }
+    const selN = $('#nvc-selnone'); if (selN) selN.onclick = () => { const cbs = [...document.querySelectorAll('.nvc-cb')]; const anyOn = cbs.some(c => c.checked); cbs.forEach(c => c.checked = !anyOn); updateApplyBtn(); selN.textContent = anyOn ? '전체 선택' : '전체 해제'; };
     document.querySelectorAll('.nvp-off').forEach(b => b.onclick = () => togglePowerKw(b)); // 브랜드형 키워드 OFF/ON
     document.querySelectorAll('.nv-urlcopy').forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.url).then(() => { const t = b.textContent; b.textContent = '✓'; setTimeout(() => b.textContent = t, 1200); }); });
     loadBidHistory('shopping', 'nvc-history');
@@ -633,7 +635,8 @@
         <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvpf-changed"> 제안 있는 것만</label>
         <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvpf-paused" ${pwrPaused ? 'checked' : ''}> 정지 포함</label>
         <span style="font-size:12px;color:var(--muted)">· ${mod.label} 보정 · 비용순 · 그룹입찰 키워드는 제외</span>
-        <button id="nvp-applyall" style="${pBtn};margin-left:auto" ${(!pending && nvPwrSug.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvPwrSug.length ? `▶ ${nvPwrSug.length}건 입찰가 반영` : '변경 대상 없음')}</button>
+        <button id="nvp-selnone" style="margin-left:auto;padding:8px 14px;border-radius:10px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer;font-weight:600;font-size:13px;${(!pending && nvPwrSug.length) ? '' : 'display:none'}">전체 해제</button>
+        <button id="nvp-applyall" style="${pBtn}" ${(!pending && nvPwrSug.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvPwrSug.length ? `▶ ${nvPwrSug.length}건 입찰가 반영` : '변경 대상 없음')}</button>
       </div>
       <div id="nvp-dash">${sections || '<div style="color:var(--muted);padding:20px">운영중 파워링크 키워드가 없어요.</div>'}</div>
       <div id="nvp-history" style="margin-top:18px;border-top:1px solid var(--border);padding-top:8px"></div>`;
@@ -648,6 +651,7 @@
     const upd = () => { const n = document.querySelectorAll('.nvp-cb:checked').length; const bt = $('#nvp-applyall'); if (bt) { bt.disabled = !n; bt.textContent = n ? `▶ 선택 ${n}건 입찰가 반영` : '선택된 항목 없음'; } };
     document.querySelectorAll('.nvp-cb').forEach(cb => cb.onchange = upd);
     const btn = $('#nvp-applyall'); if (btn) { btn.onclick = () => applyPowerBids(); if (!pending && nvPwrSug.length) upd(); }
+    const selN = $('#nvp-selnone'); if (selN) selN.onclick = () => { const cbs = [...document.querySelectorAll('.nvp-cb')]; const anyOn = cbs.some(c => c.checked); cbs.forEach(c => c.checked = !anyOn); upd(); selN.textContent = anyOn ? '전체 선택' : '전체 해제'; };
     document.querySelectorAll('.nvp-off').forEach(b => b.onclick = () => togglePowerKw(b));
     document.querySelectorAll('.nv-urlcopy').forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.url).then(() => { const t = b.textContent; b.textContent = '✓'; setTimeout(() => b.textContent = t, 1200); }); });
     loadBidHistory('powerlink', 'nvp-history');
