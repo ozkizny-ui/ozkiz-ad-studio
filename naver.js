@@ -8,6 +8,8 @@
   const PROXY = 'https://ozkiz-proxy.vercel.app';
   const MOCK = /[?&]navermock=1/.test(location.search);
   const TARGET_ROAS = 250; // 목표 구매 ROAS(%). 이 값 기준으로 입찰 상·하향 + ROAS 색상. 변경 시 시뮬→확인→배포.
+  // 오가닉(비광고) 쇼핑순위 = 키워드 대시보드 brandboard_rank 엔드포인트(브랜드보드 Supabase 매일수집). 크로스앱 GET.
+  const KWDASH = 'https://script.google.com/macros/s/AKfycbwxeD3Ofxr1r5Aq6ZZUmt64B48lVSeq757jh5r0wWJRf1T1tycMU6NN50p7odBgqw_xhw/exec';
   const $ = (sel, root = document) => root.querySelector(sel);
   const el = (html) => { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild; };
   const won = (n) => (n == null ? '-' : Number(n).toLocaleString('ko-KR') + '원');
@@ -159,7 +161,8 @@
       const ids = structure.flatMap(s => s.groups.flatMap(g => g.isBrand ? g.kws.map(k => k.nccKeywordId) : g.ads.map(a => a.nccAdId)));
       const statsMap = await loadStatsBatch(ids);
       renderDashboard(body, structure, statsMap, null);
-      loadPurchase7d().then(p => { if (sub === 'shopbid' && document.getElementById('nvc-dash')) renderDashboard(body, structure, statsMap, p); }).catch(() => {});
+      loadPurchase7d().then(p => { if (sub === 'shopbid' && document.getElementById('nvc-dash')) { renderDashboard(body, structure, statsMap, p); loadOrganicRanks().then(injectOrganic); } }).catch(() => {});
+      loadOrganicRanks().then(injectOrganic).catch(() => {}); // 첫 렌더에도 주입(재렌더 후 재주입)
     } catch (e) { body.innerHTML = errBox(e); }
   }
   // 기본지표+순위 배치(/stats ids, 90개씩) — AD보고서 대체·빠름. per-id avgRnk/노출/클릭/비용 반환.
@@ -332,6 +335,7 @@
         <div class="nvc-meta" style="margin-top:5px">${meta}</div>
         ${adc.description ? `<div style="font-size:11.5px;color:var(--muted);margin-top:3px">${esc(adc.description)}</div>` : ''}
         ${landing ? `<div style="font-size:11px;margin-top:2px"><span style="color:var(--muted);font-weight:700">🔗 연결 URL</span> <a href="${esc(landing)}" target="_blank" rel="noopener" style="color:var(--accent-d);text-decoration:none;word-break:break-all">${esc(landing)}</a></div>` : ''}
+        <div class="nvc-organic" data-pid="${esc(rd.mallProductId || '')}" style="font-size:11px;margin-top:3px;display:flex;gap:5px;flex-wrap:wrap;align-items:center"></div>
         <div class="nvc-metrics">${M.map(([k, v]) => `<div class="nvc-m"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}</div>
       </div>
       <div class="nvc-right">
@@ -410,6 +414,36 @@
     const mAd = {}, mKw = {};
     per.forEach(({ ad, kw }) => { for (const k in ad) { const m = (mAd[k] ||= { cnt: 0, val: 0 }); m.cnt += ad[k].cnt; m.val += ad[k].val; } for (const k in kw) { const m = (mKw[k] ||= { cnt: 0, val: 0 }); m.cnt += kw[k].cnt; m.val += kw[k].val; } });
     purchaseCache = mAd; purchaseKwCache = mKw; return mAd;
+  }
+  // 오가닉 순위: brandboard_rank → {상품번호(mallProductId): [{keyword,rank}...]}. 상품이 노출된 키워드별 오가닉 순위.
+  let organicCache = null;
+  async function loadOrganicRanks() {
+    if (organicCache) return organicCache;
+    if (MOCK) { organicCache = { '86862273595': [{ keyword: '유아원피스', rank: 9 }, { keyword: '여아원피스', rank: 12 }], '9317773272': [{ keyword: '유아원피스', rank: 9 }] }; return organicCache; }
+    const map = {};
+    try {
+      const r = await fetch(KWDASH + '?action=brandboard_rank');
+      const j = await r.json();
+      (j.values || []).forEach(v => (v.ozProducts || []).forEach(p => {
+        const m = String(p.url || '').match(/products\/(\d+)/); if (!m) return;
+        (map[m[1]] ||= []).push({ keyword: v.keyword, rank: p.rank });
+      }));
+      // 키워드별 중복 제거(최고순위만) 후 순위순 정렬
+      for (const id in map) {
+        const best = {}; map[id].forEach(k => { if (!(k.keyword in best) || k.rank < best[k.keyword]) best[k.keyword] = k.rank; });
+        map[id] = Object.entries(best).map(([keyword, rank]) => ({ keyword, rank })).sort((a, b) => a.rank - b.rank);
+      }
+    } catch {}
+    organicCache = map; return map;
+  }
+  // 렌더된 소재 카드(.nvc-organic[data-pid])에 오가닉 순위 주입 (재렌더 없이)
+  function injectOrganic(map) {
+    document.querySelectorAll('.nvc-organic[data-pid]').forEach(el => {
+      const pid = el.dataset.pid, list = pid && map[pid];
+      if (!list || !list.length) { el.innerHTML = ''; return; }
+      const top = list.slice(0, 6).map(k => `<span style="background:var(--green-l);color:var(--green);border-radius:6px;padding:1px 7px;font-weight:700">${esc(k.keyword)} ${k.rank}위</span>`).join(' ');
+      el.innerHTML = `<span style="color:var(--muted);font-weight:700;margin-right:4px">🌿 오가닉</span>${top}`;
+    });
   }
   // 소재 기본지표(최근 7일): /stats 라벨값 합산
   async function adBase(nad) {
@@ -889,7 +923,7 @@
         { nccAdgroupId: 'grp-brand', name: '★스스_쇼핑검색_브랜드형_층간소음', nccCampaignId: 'cmp-s1', status: 'ELIGIBLE', adgroupType: 'SHOPPING_BRAND' },
       ],
       get_ads: [
-        { nccAdId: 'nad-1', userLock: false, adAttr: { bidAmt: 660, useGroupBidAmt: false }, nccQi: { qiGrade: 5 }, ad: { headline: '오즈키즈 래쉬가드', description: '자외선 차단 UPF50+ 아기 유아 수영복', pc: { final: 'https://brand.naver.com/ozkiz/search?q=래쉬가드&st=REVIEW&dt=IMAGE&nt_source=npowerlink&nt_medium=swimsuit&nt_keyword={keyword}', display: 'https://smartstore.naver.com/ozkids' } }, referenceData: { productTitle: '오즈키즈 여아 치랭스 레깅스 유아 아기', lowPrice: '16900', category3Name: '레깅스', scoreInfo: '4.9', reviewCountSum: '312', imageUrl: 'https://shopping-phinf.pstatic.net/main_8686227/86862273595.1.jpg' } },
+        { nccAdId: 'nad-1', userLock: false, adAttr: { bidAmt: 660, useGroupBidAmt: false }, nccQi: { qiGrade: 5 }, ad: { headline: '오즈키즈 래쉬가드', description: '자외선 차단 UPF50+ 아기 유아 수영복', pc: { final: 'https://brand.naver.com/ozkiz/search?q=래쉬가드&st=REVIEW&dt=IMAGE&nt_source=npowerlink&nt_medium=swimsuit&nt_keyword={keyword}', display: 'https://smartstore.naver.com/ozkids' } }, referenceData: { productTitle: '오즈키즈 여아 치랭스 레깅스 유아 아기', mallProductId: '86862273595', lowPrice: '16900', category3Name: '레깅스', scoreInfo: '4.9', reviewCountSum: '312', imageUrl: 'https://shopping-phinf.pstatic.net/main_8686227/86862273595.1.jpg' } },
         { nccAdId: 'nad-2', userLock: false, adAttr: { bidAmt: 510, useGroupBidAmt: false }, nccQi: { qiGrade: 3 }, referenceData: { productTitle: '오즈키즈 유아 사계절 레깅스', lowPrice: '13900', category3Name: '레깅스', scoreInfo: '4.8', reviewCountSum: '846', imageUrl: 'https://shopping-phinf.pstatic.net/main_8466870/84668700368.20.jpg' } },
         { nccAdId: 'nad-3', userLock: true, adAttr: { bidAmt: 300, useGroupBidAmt: false }, nccQi: { qiGrade: 4 }, referenceData: { productTitle: '오즈키즈 아기 짜임 레깅스', lowPrice: '11900', category3Name: '레깅스', scoreInfo: '4.7', reviewCountSum: '120', imageUrl: 'https://shopping-phinf.pstatic.net/main_8606587/86065876027.3.jpg' } },
         { nccAdId: 'nad-brand', type: 'SHOPPING_BRAND_IMAGE_BANNER_AD', userLock: false, status: 'ELIGIBLE', ad: { headline: '층간소음방지 실내화', description: '매트 깔지 말고, 신으세요', image: '/MjAyNTA1MjFfNzgg/MDAxNzQ3Nzk2MzQ1MTY5.Gtm20W67KhPMyL1lMVVekNIIq5Panqgh8mhzhZkv7T4g.wV8gsH9AotPVVvm_jaGu8MokOjNRe1cRgAOGw9e2WdQg.JPEG/434195-92a7d4b4-2214-40b0-b2da-2cc6b11b8dda.jpg', landingUrl: 'https://brand.naver.com/ozkiz/category/d59b32ff4eb74d82bdc0648e949dc573?cp=1&nt_keyword={keyword}' } },
