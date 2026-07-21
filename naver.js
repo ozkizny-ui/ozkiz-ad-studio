@@ -7,6 +7,7 @@
   'use strict';
   const PROXY = 'https://ozkiz-proxy.vercel.app';
   const MOCK = /[?&]navermock=1/.test(location.search);
+  const TARGET_ROAS = 250; // 목표 구매 ROAS(%). 이 값 기준으로 입찰 상·하향 + ROAS 색상. 변경 시 시뮬→확인→배포.
   const $ = (sel, root = document) => root.querySelector(sel);
   const el = (html) => { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild; };
   const won = (n) => (n == null ? '-' : Number(n).toLocaleString('ko-KR') + '원');
@@ -262,7 +263,7 @@
     body.innerHTML = `
       <div class="nvc-tiles">
         <div class="nvc-tile"><div class="k">총비용 (7일)</div><div class="v">${won(gCost)}</div></div>
-        <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접</span></div><div class="v" style="color:${pending ? 'var(--muted)' : (gRoas >= 300 ? 'var(--green)' : 'var(--red)')}">${pending ? '<span style="font-size:13px">집계 중…</span>' : (gCost ? Math.round(gRoas) + '%' : '-')}</div></div>
+        <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접</span></div><div class="v" style="color:${pending ? 'var(--muted)' : (gRoas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)')}">${pending ? '<span style="font-size:13px">집계 중…</span>' : (gCost ? Math.round(gRoas) + '%' : '-')}</div></div>
         <div class="nvc-tile"><div class="k">구매 전환</div><div class="v">${pending ? '<span style="color:var(--muted);font-size:13px">집계 중…</span>' : gConvN + '건 · ' + cnt(gConvV) + '원'}</div></div>
         <div class="nvc-tile"><div class="k">상품 · 변경대상</div><div class="v">${prodCount} · <span style="color:var(--accent-d)">${pending ? '…' : nvSuggestions.length}</span></div></div>
       </div>
@@ -320,7 +321,7 @@
           : `<span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface);color:var(--muted)">유지</span>`);
     const M = [['순위', it.b.rank ? it.b.rank.toFixed(1) : '-'], ['품질', qiBar(a.nccQi && a.nccQi.qiGrade)], ['노출', cnt(it.b.imp)], ['클릭', cnt(it.b.clk)], ['CTR', it.ctr.toFixed(2) + '%'], ['CPC', won(Math.round(it.cpc))], ['총비용', won(it.b.cost)], ['구매', pend ? '<span style="color:var(--muted)">…</span>' : (it.pc.cnt + '건·' + cnt(it.pc.val))]];
     const roasTxt = pend ? '<span style="color:var(--muted)">…</span>' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
-    const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= 300 ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
+    const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
     return `<div class="nvc-card" data-title="${esc(title.toLowerCase())}" data-changed="${changed ? '1' : '0'}">
       <img class="nvc-thumb" src="${esc(thumb)}" onerror="this.style.opacity=.2">
       <div style="min-width:0">
@@ -353,7 +354,7 @@
       <td style="${tf}">${gr.aimp ? (gr.aclk / gr.aimp * 100).toFixed(2) : '0.00'}%</td>
       <td style="${tf}">${won(gr.aclk ? Math.round(gr.total / gr.aclk) : 0)}</td><td style="${tf}">${won(gr.total)}</td>
       <td style="${tf}">${pend ? '…' : (gr.acnt + '건·' + cnt(gr.aval))}</td>
-      <td style="${tf};color:${pend ? 'var(--muted)' : (gr.total && gr.aval / gr.total * 100 >= 300 ? 'var(--green)' : 'var(--red)')}">${pend ? '…' : (gr.total ? Math.round(gr.aval / gr.total * 100) + '%' : '-')}</td>
+      <td style="${tf};color:${pend ? 'var(--muted)' : (gr.total && gr.aval / gr.total * 100 >= TARGET_ROAS ? 'var(--green)' : 'var(--red)')}">${pend ? '…' : (gr.total ? Math.round(gr.aval / gr.total * 100) + '%' : '-')}</td>
       <td style="${tf}"></td><td style="${tf}"></td>
     </tr></tfoot>`;
     const url = (gr.banner && gr.banner.length) ? `<div style="margin:0 0 8px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:9px"><div style="font-size:11px;color:var(--muted);font-weight:700">소재 · 연결 URL</div>${adPreview(gr.banner)}</div>` : '';
@@ -369,7 +370,7 @@
       : changed ? `<span style="color:var(--muted);text-decoration:line-through">${it.cur}</span><span style="color:var(--muted)"> → </span><span style="font-weight:800;color:var(--accent-d)">${it.nb}원</span> <span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span> <input type="checkbox" class="nvc-cb" data-id="${esc(kw.nccKeywordId)}" checked title="이 제안 반영" style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;vertical-align:middle">`
       : `<span style="font-weight:700">${it.cur}원</span> <span style="color:var(--muted);font-size:11px">유지</span>`;
     const roasTxt = pend ? '…' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
-    const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= 300 ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
+    const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
     const buy = pend ? '…' : (it.pc.cnt + '건·' + cnt(it.pc.val));
     return `<tr class="nvc-krow" data-title="${esc((kw.keyword || '').toLowerCase())}" data-changed="${changed ? '1' : '0'}" style="border-top:1px solid var(--border)">
       <td style="padding:6px 8px;text-align:left"><span style="font-size:11px">${paused ? '⚪' : '🟢'}</span> <span style="font-weight:600">${esc(kw.keyword || kw.nccKeywordId)}</span></td>
@@ -422,7 +423,7 @@
   }
   let nvSuggestions = [];
 
-  // ── 입찰 규칙 엔진 (목표 ROAS 300, 데드존 밴드, 요일·공휴일 보정) ──
+  // ── 입찰 규칙 엔진 (목표 ROAS = TARGET_ROAS, 데드존 밴드, 요일·공휴일 보정) ──
   const KR_HOLIDAYS = new Set([ // 2026 하반기~2027 상반기 (PLAN 근거)
     '2026-07-17', '2026-08-15', '2026-08-17', '2026-09-24', '2026-09-25', '2026-09-26', '2026-09-28',
     '2026-10-03', '2026-10-05', '2026-10-09', '2026-12-25', '2027-01-01', '2027-02-16', '2027-02-17', '2027-02-18',
@@ -435,16 +436,17 @@
     if (dow === 5 || dow === 6 || dow === 0) return { mod: 0.90, label: '금·토·일 −10%' };
     return { mod: 1, label: '평일' };
   }
-  function roasFactor(r) { // 데드존: 300~360% 유지
-    if (r >= 600) return 1.20; if (r >= 450) return 1.15; if (r >= 360) return 1.08;
-    if (r >= 300) return 1.00; if (r >= 250) return 0.88; return 0.80;
+  function roasFactor(r) { // 목표(TARGET_ROAS) 배수 기준 밴드. 목표~1.2배=유지(데드존)
+    const t = TARGET_ROAS;
+    if (r >= t * 2) return 1.20; if (r >= t * 1.5) return 1.15; if (r >= t * 1.2) return 1.08;
+    if (r >= t) return 1.00; if (r >= t * 0.84) return 0.88; return 0.80;
   }
   function computeBid(cur, roas, mod) {
     let nb = Math.round(cur * roasFactor(roas) * mod / 10) * 10;
     const lo = Math.round(cur * 0.75 / 10) * 10, hi = Math.round(cur * 1.25 / 10) * 10; // 1회 ±25% 캡
     nb = Math.max(lo, Math.min(hi, nb));
     nb = Math.max(70, Math.min(100000, nb));
-    if (roas < 300 && nb > cur) nb = cur; // 300 미만은 상향 금지
+    if (roas < TARGET_ROAS && nb > cur) nb = cur; // 목표 미만은 상향 금지
     return nb;
   }
   async function applyAll() {
@@ -553,7 +555,7 @@
       <td style="${tf}">${won(gr.aclk ? Math.round(gr.total / gr.aclk) : 0)}</td>
       <td style="${tf}">${won(gr.total)}</td>
       <td style="${tf}">${pending ? '…' : (gr.acnt + '건·' + cnt(gr.aval))}</td>
-      <td style="${tf};color:${pending ? 'var(--muted)' : (gr.total && gr.aval / gr.total * 100 >= 300 ? 'var(--green)' : 'var(--red)')}">${pending ? '…' : (gr.total ? Math.round(gr.aval / gr.total * 100) + '%' : '-')}</td>
+      <td style="${tf};color:${pending ? 'var(--muted)' : (gr.total && gr.aval / gr.total * 100 >= TARGET_ROAS ? 'var(--green)' : 'var(--red)')}">${pending ? '…' : (gr.total ? Math.round(gr.aval / gr.total * 100) + '%' : '-')}</td>
       <td style="${tf}"></td><td style="${tf}"></td>
     </tr></tfoot>`;
     const tableHead = `<thead><tr style="color:var(--muted);font-size:11px;text-align:right;border-bottom:1px solid var(--border)">
@@ -581,7 +583,7 @@
     body.innerHTML = `
       <div class="nvc-tiles">
         <div class="nvc-tile"><div class="k">총비용 (7일)</div><div class="v">${won(gCost)}</div></div>
-        <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접</span></div><div class="v" style="color:${pending ? 'var(--muted)' : (gRoas >= 300 ? 'var(--green)' : 'var(--red)')}">${pending ? '<span style="font-size:13px">집계 중…</span>' : (gCost ? Math.round(gRoas) + '%' : '-')}</div></div>
+        <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접</span></div><div class="v" style="color:${pending ? 'var(--muted)' : (gRoas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)')}">${pending ? '<span style="font-size:13px">집계 중…</span>' : (gCost ? Math.round(gRoas) + '%' : '-')}</div></div>
         <div class="nvc-tile"><div class="k">구매 전환</div><div class="v">${pending ? '<span style="color:var(--muted);font-size:13px">집계 중…</span>' : gConvN + '건 · ' + cnt(gConvV) + '원'}</div></div>
         <div class="nvc-tile"><div class="k">키워드 · 변경대상</div><div class="v">${kwCount} · <span style="color:var(--accent-d)">${pending ? '…' : nvPwrSug.length}</span></div></div>
       </div>
@@ -634,7 +636,7 @@
           ? `<span style="color:var(--muted);text-decoration:line-through">${it.cur}</span><span style="color:var(--muted)"> → </span><span style="font-weight:800;color:var(--accent-d)">${it.nb}원</span> <span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span> <input type="checkbox" class="nvp-cb" data-kw="${esc(kw.nccKeywordId)}" checked title="이 제안 반영" style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;vertical-align:middle">`
           : `<span style="font-weight:700">${it.cur}원</span> <span style="color:var(--muted);font-size:11px">유지</span>`;
     const roasTxt = pend ? '…' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
-    const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= 300 ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
+    const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
     const buyTxt = pend ? '…' : (it.pc.cnt + '건·' + cnt(it.pc.val));
     return `<tr class="nvp-row" data-kw="${esc((kw.keyword || '').toLowerCase())}" data-changed="${changed ? '1' : '0'}" style="border-top:1px solid var(--border)">
       <td style="padding:6px 8px;text-align:left"><span style="font-size:11px" title="${paused ? '정지' : '노출중'}">${paused ? '⚪' : '🟢'}</span> <span style="font-weight:600">${esc(kw.keyword || kw.nccKeywordId)}</span></td>
@@ -856,7 +858,7 @@
             <td style="padding:6px 8px;text-align:right">${cnt(Math.round(d.cost))}원</td>
             <td style="padding:6px 8px;text-align:right">${d.convCnt}건</td>
             <td style="padding:6px 8px;text-align:right">${cnt(Math.round(d.convVal))}원</td>
-            <td style="padding:6px 8px;text-align:right;font-weight:700;color:${d.roas == null ? 'var(--muted)' : (d.roas >= 300 ? 'var(--green)' : 'var(--red)')}">${d.roas == null ? '-' : d.roas + '%'}</td>
+            <td style="padding:6px 8px;text-align:right;font-weight:700;color:${d.roas == null ? 'var(--muted)' : (d.roas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)')}">${d.roas == null ? '-' : d.roas + '%'}</td>
             <td style="padding:6px 8px"><div style="height:8px;border-radius:4px;background:var(--accent);width:${Math.round(d.cost / maxCost * 100)}%;min-width:2px"></div></td>
           </tr>`).join('')}</tbody></table></div>`
           : `<div style="color:var(--muted);padding:14px">아직 일별 데이터가 없어요. 내일 06시 수집부터 하루씩 쌓입니다.</div>`}
