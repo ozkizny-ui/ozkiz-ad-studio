@@ -251,8 +251,8 @@
     const totalAll = structure.reduce((t, s) => t + s.total, 0);
     if (dashCamp && !structure.some(s => s.camp.nccCampaignId === dashCamp)) dashCamp = ''; // 사라진 캠페인 선택 방어
     const chipStyle = (on) => `cursor:pointer;padding:4px 10px;border-radius:8px;border:1px solid var(--border2);font-size:12px;font-weight:700;background:${on ? 'var(--accent)' : 'var(--accent-l)'};color:${on ? '#fff' : 'var(--accent-d)'}`;
-    const chips = [`<button class="nvf-camp" data-camp="" style="${chipStyle(!dashCamp)}">전체 <span style="opacity:.7">${won(totalAll)}</span></button>`]
-      .concat(structure.map(s => `<button class="nvf-camp" data-camp="${s.camp.nccCampaignId}" style="${chipStyle(dashCamp === s.camp.nccCampaignId)}">${esc(s.camp.name)} <span style="opacity:.7">${won(s.total)}</span></button>`)).join('');
+    const chips = [`<button class="nvf-camp" data-camp="" style="${chipStyle(!dashCamp)}">전체</button>`]
+      .concat(structure.map(s => `<button class="nvf-camp" data-camp="${s.camp.nccCampaignId}" style="${chipStyle(dashCamp === s.camp.nccCampaignId)}">${esc(s.camp.name)}</button>`)).join('');
     const sections = structure.map(s => s.groups.map(gr => `
       <div class="nvc-gsec" data-camp="${s.camp.nccCampaignId}">
         <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;flex-wrap:wrap">
