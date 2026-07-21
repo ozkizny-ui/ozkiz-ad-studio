@@ -415,33 +415,40 @@
     per.forEach(({ ad, kw }) => { for (const k in ad) { const m = (mAd[k] ||= { cnt: 0, val: 0 }); m.cnt += ad[k].cnt; m.val += ad[k].val; } for (const k in kw) { const m = (mKw[k] ||= { cnt: 0, val: 0 }); m.cnt += kw[k].cnt; m.val += kw[k].val; } });
     purchaseCache = mAd; purchaseKwCache = mKw; return mAd;
   }
-  // 오가닉 순위: brandboard_rank → {상품번호(mallProductId): [{keyword,rank}...]}. 상품이 노출된 키워드별 오가닉 순위.
+  // 오가닉 순위: brandboard_rank(순위) + keyword_dict(검색수) → {상품번호: [{keyword,rank,vol}...]}. 검색수 많은 순.
   let organicCache = null;
   async function loadOrganicRanks() {
     if (organicCache) return organicCache;
-    if (MOCK) { organicCache = { '86862273595': [{ keyword: '유아원피스', rank: 9 }, { keyword: '여아원피스', rank: 12 }], '9317773272': [{ keyword: '유아원피스', rank: 9 }] }; return organicCache; }
-    const map = {};
+    if (MOCK) { organicCache = { '86862273595': [{ keyword: '유아원피스', rank: 9, vol: 40100 }, { keyword: '여아원피스', rank: 12, vol: 12000 }], '9317773272': [] }; return organicCache; }
     try {
-      const r = await fetch(KWDASH + '?action=brandboard_rank');
-      const j = await r.json();
-      (j.values || []).forEach(v => (v.ozProducts || []).forEach(p => {
+      const [bb, dict] = await Promise.all([
+        fetch(KWDASH + '?action=brandboard_rank').then(r => r.json()),
+        fetch(KWDASH + '?action=keyword_dict').then(r => r.json()).catch(() => ({ rows: [] })),
+      ]);
+      // 키워드→최신 주간검색수 (dict: 0~7 메타[…,6키워드,7시드], 8+ 주차. 끝에서 첫 비어있지 않은 값)
+      const vol = {};
+      (dict.rows || []).forEach(r => { const kw = r[6]; if (!kw) return; let v = 0; for (let i = r.length - 1; i >= 8; i--) { const t = String(r[i]).trim(); if (t) { const n = parseInt(t.replace(/,/g, ''), 10); if (Number.isFinite(n)) { v = n; break; } } } vol[kw] = v; });
+      const map = {};
+      (bb.values || []).forEach(v => (v.ozProducts || []).forEach(p => {
         const m = String(p.url || '').match(/products\/(\d+)/); if (!m) return;
         (map[m[1]] ||= []).push({ keyword: v.keyword, rank: p.rank });
       }));
-      // 키워드별 중복 제거(최고순위만) 후 순위순 정렬
       for (const id in map) {
         const best = {}; map[id].forEach(k => { if (!(k.keyword in best) || k.rank < best[k.keyword]) best[k.keyword] = k.rank; });
-        map[id] = Object.entries(best).map(([keyword, rank]) => ({ keyword, rank })).sort((a, b) => a.rank - b.rank);
+        map[id] = Object.entries(best).map(([keyword, rank]) => ({ keyword, rank, vol: vol[keyword] || 0 })).sort((a, b) => b.vol - a.vol); // 검색수 많은 순
       }
-    } catch {}
-    organicCache = map; return map;
+      organicCache = map; return map;
+    } catch { return null; } // 실패 시 캐시 안 함(다음에 재시도) — 잘못된 '순위권 밖' 표시 방지
   }
-  // 렌더된 소재 카드(.nvc-organic[data-pid])에 오가닉 순위 주입 (재렌더 없이)
+  // 렌더된 소재 카드(.nvc-organic[data-pid])에 오가닉 순위 주입. top100 진입 없으면 '순위권 밖'. (재렌더 없이)
   function injectOrganic(map) {
+    if (!map) return; // fetch 실패 시 아무것도 안 함
     document.querySelectorAll('.nvc-organic[data-pid]').forEach(el => {
-      const pid = el.dataset.pid, list = pid && map[pid];
-      if (!list || !list.length) { el.innerHTML = ''; return; }
-      const top = list.slice(0, 6).map(k => `<span style="background:var(--green-l);color:var(--green);border-radius:6px;padding:1px 7px;font-weight:700">${esc(k.keyword)} ${k.rank}위</span>`).join(' ');
+      const pid = el.dataset.pid;
+      if (!pid) { el.innerHTML = ''; return; } // 상품번호 없으면 판정 불가
+      const list = map[pid];
+      if (!list || !list.length) { el.innerHTML = '<span style="color:var(--muted)">🌿 오가닉 <span style="font-weight:700">순위권 밖</span> <span style="font-size:10px">(추적 키워드 top100 진입 없음)</span></span>'; return; }
+      const top = list.slice(0, 6).map(k => `<span style="background:var(--green-l);color:var(--green);border-radius:6px;padding:1px 7px;font-weight:700">${esc(k.keyword)}${k.vol ? ` <span style="opacity:.7;font-weight:400">(${cnt(k.vol)})</span>` : ''} ${k.rank}위</span>`).join(' ');
       el.innerHTML = `<span style="color:var(--muted);font-weight:700;margin-right:4px">🌿 오가닉</span>${top}`;
     });
   }
