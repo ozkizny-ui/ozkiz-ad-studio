@@ -64,6 +64,12 @@
   // open/close는 index.html의 routeHash()가 해시 기준으로 호출 (멱등 — isOpen 가드).
   let root, prevActive = null, isOpen = false;
   function open(hash) {
+    // root 지연 초기화 (2026-07-21 버그 수정): #naver-* 해시로 콜드 로드 시 index.html의
+    // routeHash()가 init()보다 먼저 open()을 호출 — root가 없으면 여기서 TypeError가 나며
+    // 메타 페이지만 숨긴 채 죽고, 이후 init의 open()은 isOpen 가드에 걸려 naver-root를
+    // 영영 표시하지 않았음(새로고침·딥링크 진입 시 완전 빈 화면의 원인).
+    if (!root) root = document.getElementById('naver-root');
+    if (!root) return;
     const m = String(hash || '').match(/^naver-(\w+)$/);
     if (m && SUBTABS.some(t => t.k === m[1])) sub = m[1];
     if (isOpen) { setPlatform(true); render(); return; }
