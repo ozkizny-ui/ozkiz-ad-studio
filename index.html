@@ -5203,6 +5203,34 @@ async function loadLastYearSales() {
   renderAdNeedPage();
 }
 const _adNorm = s => String(s||'').toLowerCase().replace(/[-\s]/g,'');
+// ── 신상 제품 목록 (브랜드보드 products.registered_at — 제품의 '최초 옵션 등록일'이 30일 이내) ──
+//    기존 제품에 옵션만 추가된 경우는 최초 등록일이 과거라 제외됨. 🆕 배지 표시용(행 포함 조건 아님).
+async function loadNewProducts() {
+  if (state._newLoaded || state._newLoading) return;
+  state._newLoading = true;
+  try {
+    const r = await fetch(`${DASH_EXEC}?action=bb_new_products&days=30`);
+    const d = await r.json();
+    state._newSet = new Set(((d && d.values) || []).map(v => _adNorm(v.name)).filter(k => k.length >= 3));
+  } catch (e) {
+    state._newSet = null;
+    // 첫 호출(캐시 미적중·수 초 소요)이 Apps Script 일시 오류 페이지(HTML)를 받는 경우가 있어 1회 재시도
+    if (!state._newRetried) {
+      state._newRetried = true; state._newLoading = false;
+      setTimeout(loadNewProducts, 4000);
+      return;
+    }
+  }
+  state._newLoaded = true; state._newLoading = false;
+  renderAdNeedPage();
+}
+function isNewProduct(name) {
+  const s = state._newSet; if (!s) return false;
+  const k = _adNorm(name); if (!k) return false;
+  if (s.has(k)) return true;
+  for (const x of s) { if (k.includes(x) || x.includes(k)) return true; }
+  return false;
+}
 // ── 최근 7일 광고비 (제품명 단위) — get_adset_insights(days=7, 시간대별)를 제품명(세트명 ';' 앞부분)으로 합산.
 //    '데이터 불러오기'(state.metaAds)와 무관하게 로드되므로 입고·작년 표는 이 값 기준이 더 안정적.
 //    (2026-07-22 사용자 요청: 3일 → 7일 — 광고 집행 여부 판정도 7일 소진 기준)
@@ -5264,9 +5292,10 @@ function renderAdNeedPage() {
   const word = adCurSeasonWord();
   const eligible = products.filter(p => adInSeason(p.season));
 
-  // 작년 동기간 판매 + 최근 7일 광고비 로드(비동기 1회) + 제품명 매칭 맵
+  // 작년 동기간 판매 + 최근 7일 광고비 + 신상 목록 로드(비동기 1회) + 제품명 매칭 맵
   if (!state._lyLoaded && !state._lyLoading) loadLastYearSales();
   if (!state._spend7dLoaded && !state._spend7dLoading) loadSpend7d();
+  if (!state._newLoaded && !state._newLoading) loadNewProducts();
   const lyList = state._lySales || [];
   const lyByNorm = {};
   lyList.forEach(v => { lyByNorm[_adNorm(v.name)] = v; });
@@ -5365,6 +5394,7 @@ function renderAdNeedPage() {
       merged[k] = {
         name: prod ? prod.name : name,
         labels: [],
+        repCode: prod ? (prod.repCode || '') : '',
         category: prod ? (prod.category || '') : (src.category || ''),
         season: prod ? (prod.season || '') : (src.season || ''),
         totalAvail: prod ? prod.totalAvail : null,
@@ -5383,12 +5413,14 @@ function renderAdNeedPage() {
     const r = addRow(p.name, p);
     r.labels.push('inbound');
     r.inboundDate = p.arrivalDate; r.inboundQty = p.qty; r.focus = p.focus;
+    r.isNewKind = String(p.kinds||'').includes('신제품'); // 노션 제품유형 기반 신상 판정 보조
     if (r.totalAvail == null) r.totalAvail = p.curStock;
   });
   lyNeedFiltered.forEach(p => { const r = addRow(p.name, p); r.labels.push('ly'); if (r.lyQty == null) r.lyQty = p.lyQty; });
   retry.forEach(p => { const r = addRow(p.name, p); r.labels.push('retry'); r.adRoas = p.adRoas; });
   const mainRows = Object.values(merged)
-    .map(r => ({ ...r, signalCount: r.labels.length }))
+    .map(r => ({ ...r, signalCount: r.labels.length, isNew: isNewProduct(r.name) || !!r.isNewKind,
+      creator: (state._creativeStatus || {})['creator|' + (r.repCode || r.name)] || '' }))
     .sort((a,b) => (b.focus - a.focus) || (b.signalCount - a.signalCount) || ((b.onlineStockValue||0) - (a.onlineStockValue||0)));
 
   // 3) 카테고리 추천: 재고 많음 제품 신호 합산 + 평균 ROAS
@@ -5437,7 +5469,7 @@ function renderAdNeedPage() {
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">🗓️ 현재 시즌 <b style="color:var(--text)">${word}</b> 기준 · ROAS는 현재 불러온 Meta 광고 성과(최근) 기준 · <span>표 머리글 클릭 시 해당 컬럼 정렬</span></div>
     ${perfNote}
     ${section('🎯 광고 액션 후보 (통합)', '집행요망 · 입고예정 · 작년 톱셀러 · 재시도',
-        `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+광고 미집행 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매가 평균 이상(현재 창 기준 ${lyList.length ? lyMinQty.toLocaleString() + '개↑ · 상위 ' + lyTopCount + '개' : '계산 중'}, 전 채널)인데 최근 7일 광고비 0원 (재고총액 200만↑ 또는 입고예정 있는 것만) / <span class="tag red">🔁 재시도</span> 광고 집행 중이나 ROAS ${AD_NEED_TARGET}% 미만(배지의 %는 오늘 불러온 그 제품 광고의 ROAS). ${inboundToggle}`, 'adneed-tbl-main')}
+        `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+광고 미집행 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매가 평균 이상(현재 창 기준 ${lyList.length ? lyMinQty.toLocaleString() + '개↑ · 상위 ' + lyTopCount + '개' : '계산 중'}, 전 채널)인데 최근 7일 광고비 0원 (재고총액 200만↑ 또는 입고예정 있는 것만) / <span class="tag red">🔁 재시도</span> 광고 집행 중이나 ROAS ${AD_NEED_TARGET}% 미만(배지의 %는 오늘 불러온 그 제품 광고의 ROAS) / <span class="tag" style="background:rgba(139,92,246,.12);color:#6d28d9;border:1px solid #ddd6fe">🆕 신상</span> 최초 등록 30일 이내(이지어드민 등록일, 옵션 추가만 된 기존 제품 제외) 또는 노션 입고예정 제품유형=신제품. ${inboundToggle}`, 'adneed-tbl-main')}
     ${section('🗂️ 카테고리 추천', '재고 많음 제품 신호 합산 + 평균 ROAS',
         '카테고리별로 밀어야 할 재고(온라인 재고총액 합)와 자사몰 수요(클릭가치 합)를 합산했어요. 평균 ROAS는 해당 카테고리 광고 성과(spend 가중).', 'adneed-tbl-cats')}`;
 
@@ -5460,6 +5492,28 @@ const ADNEED_LABEL_CELL = {
   ly:      p => '<span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span>',
   retry:   p => `<span class="tag red">🔁 재시도${p.adRoas != null ? ` ${p.adRoas}%` : ''}</span>`,
 };
+
+// 제작자 지정 (2026-07-22): 광고세팅 탭 DESC_CREATORS와 동일 목록. '그외' 선택 시 직접 입력.
+// 저장 = creative_status 테이블 재사용, key='creator|'+(repCode||제품명) — 스키마 변경 없이 영속,
+// 기존 제작상태 키(repCode||name)와 접두어로 격리. loadCreativeStatus가 함께 불러옴.
+async function adneedSetCreator(sel) {
+  const key = decodeURIComponent(sel.dataset.k || '');
+  if (!key) return;
+  let val = sel.value;
+  if (val === '그외') {
+    const t = prompt('제작자 이름을 입력하세요');
+    if (!t || !t.trim()) { renderAdNeedPage(); return; }
+    val = t.trim();
+  }
+  state._creativeStatus = state._creativeStatus || {};
+  if (val) state._creativeStatus[key] = val; else delete state._creativeStatus[key];
+  renderAdNeedPage(); // 즉시 반영
+  try {
+    await sbUpsert('creative_status', [{ key, status: val || '', updated_at: new Date().toISOString() }]);
+  } catch (e) {
+    alert('제작자 저장 실패 — 사이드바 쓰기 잠금을 해제했는지 확인해주세요.\n' + (e.message || e));
+  }
+}
 
 // 제품명 클릭 → 행 아래로 SKU별 재고 토글 (광고세팅 탭 showAdStock과 동일 데이터·스타일, 2026-07-22)
 function adneedSkuToggle(el) {
@@ -5512,7 +5566,8 @@ const ADNEED_COLS = {
   main: [
     { key:'name',            label:'제품',           align:'left',  type:'str', wrap:true,
       cell:p=>`<span data-n="${encodeURIComponent(p.name||'')}" onclick="adneedSkuToggle(this)" title="클릭하면 SKU별 재고" style="cursor:pointer;border-bottom:1px dashed var(--border2)">${p.focus?'⚡ ':''}${p.name||''}</span>` },
-    { key:'signalCount',     label:'신호',           align:'left',  type:'num', wrap:true, cell:p=>p.labels.map(l=>ADNEED_LABEL_CELL[l](p)).join(' ') },
+    { key:'signalCount',     label:'신호',           align:'left',  type:'num', wrap:true,
+      cell:p=>`${p.isNew ? '<span class="tag" style="background:rgba(139,92,246,.12);color:#6d28d9;border:1px solid #ddd6fe">🆕 신상</span> ' : ''}${p.labels.map(l=>ADNEED_LABEL_CELL[l](p)).join(' ')}` },
     { key:'season',          label:'시즌',           align:'left',  type:'str', cell:p=>_adSeason(p.season) },
     { key:'totalAvail',      label:'가용재고',       align:'right', type:'num', cell:p=>_adInt(p.totalAvail,'개') },
     { key:'onlineStockValue',label:'온라인 재고총액',align:'right', type:'num', cell:p=>_adWon(p.onlineStockValue) },
@@ -5522,6 +5577,16 @@ const ADNEED_COLS = {
         if (p.spend7d == null) return '<span style="color:var(--muted)">로딩 중…</span>';
         if (p.spend7d > 0) return `<b style="color:var(--green)">${Math.round(p.spend7d).toLocaleString()}원</b>`;
         return `<span style="color:var(--muted)">0원</span>`;
+      } },
+    { key:'creator',         label:'제작자',         align:'left',  type:'str', cell:p=>{
+        const key = 'creator|' + (p.repCode || p.name);
+        const cur = p.creator || '';
+        const opts = ['', ...DESC_CREATORS];
+        if (cur && !opts.includes(cur)) opts.push(cur); // '그외' 직접입력값 표시
+        return `<select data-k="${encodeURIComponent(key)}" onchange="adneedSetCreator(this)"
+          style="font-size:11.5px;padding:3px 6px;border:1px solid var(--border2);border-radius:6px;background:var(--surface);color:${cur?'var(--text)':'var(--muted)'};cursor:pointer">
+          ${opts.map(o=>`<option value="${o}"${o===cur?' selected':''}>${o||'— 미지정'}</option>`).join('')}
+        </select>`;
       } },
   ],
   cats: [
