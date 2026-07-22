@@ -5203,13 +5203,14 @@ async function loadLastYearSales() {
   renderAdNeedPage();
 }
 const _adNorm = s => String(s||'').toLowerCase().replace(/[-\s]/g,'');
-// ── 최근 3일 광고비 (제품명 단위) — get_adset_insights(days=3, 시간대별)를 제품명(세트명 ';' 앞부분)으로 합산.
+// ── 최근 7일 광고비 (제품명 단위) — get_adset_insights(days=7, 시간대별)를 제품명(세트명 ';' 앞부분)으로 합산.
 //    '데이터 불러오기'(state.metaAds)와 무관하게 로드되므로 입고·작년 표는 이 값 기준이 더 안정적.
-async function loadSpend3d() {
-  if (state._spend3dLoaded || state._spend3dLoading) return;
-  state._spend3dLoading = true;
+//    (2026-07-22 사용자 요청: 3일 → 7일 — 광고 집행 여부 판정도 7일 소진 기준)
+async function loadSpend7d() {
+  if (state._spend7dLoaded || state._spend7dLoading) return;
+  state._spend7dLoading = true;
   try {
-    const r = await fetch(`${PROXY}/api/meta?action=get_adset_insights&days=3`);
+    const r = await fetch(`${PROXY}/api/meta?action=get_adset_insights&days=7`);
     const d = await r.json();
     const map = {};
     (d.adsets || []).forEach(a => {
@@ -5219,13 +5220,13 @@ async function loadSpend3d() {
       (a.days || []).forEach(day => (day.hours || []).forEach(h => { s += h.spend || 0; }));
       map[prod] = (map[prod] || 0) + s;
     });
-    state._spend3d = map;
-  } catch (e) { state._spend3d = null; }
-  state._spend3dLoaded = true; state._spend3dLoading = false;
+    state._spend7d = map;
+  } catch (e) { state._spend7d = null; }
+  state._spend7dLoaded = true; state._spend7dLoading = false;
   renderAdNeedPage();
 }
-function spend3dOf(name) { // 양방향 부분일치 합산. 데이터 미로드 시 null
-  const m = state._spend3d; if (!m) return null;
+function spend7dOf(name) { // 양방향 부분일치 합산. 데이터 미로드 시 null
+  const m = state._spend7d; if (!m) return null;
   const k = _adNorm(name); if (!k) return 0;
   if (m[k] != null) return Math.round(m[k]);
   let sum = 0, hit = false;
@@ -5263,9 +5264,9 @@ function renderAdNeedPage() {
   const word = adCurSeasonWord();
   const eligible = products.filter(p => adInSeason(p.season));
 
-  // 작년 동기간 판매 + 최근 3일 광고비 로드(비동기 1회) + 제품명 매칭 맵
+  // 작년 동기간 판매 + 최근 7일 광고비 로드(비동기 1회) + 제품명 매칭 맵
   if (!state._lyLoaded && !state._lyLoading) loadLastYearSales();
-  if (!state._spend3dLoaded && !state._spend3dLoading) loadSpend3d();
+  if (!state._spend7dLoaded && !state._spend7dLoading) loadSpend7d();
   const lyList = state._lySales || [];
   const lyByNorm = {};
   lyList.forEach(v => { lyByNorm[_adNorm(v.name)] = v; });
@@ -5307,9 +5308,9 @@ function renderAdNeedPage() {
   const inboundSeasonal = inboundAll.filter(n => _inboundInSeason(n.season));
   const inbound = (state._inboundSeasonAll ? inboundAll : inboundSeasonal).map(n => {
     const prod = findProd(n.name);
-    const spend3d = spend3dOf(n.name);
-    // 광고 여부: 3일 광고비 로드됐으면 '3일간 실소진 >0' 기준(더 안정적), 아니면 metaAds 매칭 폴백
-    const hasAd = spend3d != null ? spend3d > 0 : (prod ? prod.hasAd : _adMatchMeta(n.name).hasAd);
+    const spend7d = spend7dOf(n.name);
+    // 광고 여부: 7일 광고비 로드됐으면 '7일간 실소진 >0' 기준(더 안정적), 아니면 metaAds 매칭 폴백
+    const hasAd = spend7d != null ? spend7d > 0 : (prod ? prod.hasAd : _adMatchMeta(n.name).hasAd);
     const isReorder = String(n.kinds||'').includes('리오더');
     return {
       name: n.name, arrivalDate: n.arrivalDate,
@@ -5318,7 +5319,7 @@ function renderAdNeedPage() {
       category: n.category || '',
       curStock: prod ? prod.totalAvail : null,
       lyQty: lyQtyOf(n.name),
-      spend3d, hasAd, isReorder,
+      spend7d, hasAd, isReorder,
       focus: isReorder && !hasAd, // 재입고인데 광고가 안 돎 = 준비 필요
     };
   }).sort((a,b) => (b.focus - a.focus) || a.arrivalDate.localeCompare(b.arrivalDate) || ((b.qty||0)-(a.qty||0)));
@@ -5326,8 +5327,8 @@ function renderAdNeedPage() {
   // 5) 작년 이맘때 톱셀러 · 광고 미집행: 작년 [과거1주~미래2주] 판매량 상위 중 현재 메타 광고가 없는 제품
   const lyNeed = lyList.map(v => {
     const prod = findProd(v.name);
-    const spend3d = spend3dOf(v.name);
-    const hasAd = spend3d != null ? spend3d > 0 : (prod ? prod.hasAd : _adMatchMeta(v.name).hasAd);
+    const spend7d = spend7dOf(v.name);
+    const hasAd = spend7d != null ? spend7d > 0 : (prod ? prod.hasAd : _adMatchMeta(v.name).hasAd);
     const inb = inboundAll.find(n => { const k=_adNorm(n.name), x=_adNorm(v.name); return k && (k.includes(x) || x.includes(k)); });
     return {
       name: v.name, category: v.category || '', season: v.season || '',
@@ -5338,8 +5339,9 @@ function renderAdNeedPage() {
       hasAd,
     };
   }).filter(r => !r.hasAd && ((r.curStock||0) > 0 || r.inboundDate))
-    .sort((a,b) => b.lyQty - a.lyQty)
-    .slice(0, 30);
+    .sort((a,b) => b.lyQty - a.lyQty);
+  // 개수 컷 없음 (2026-07-22): 조건(작년 판매 상위 150 내 + 미집행 + 재고/입고) 충족 전부 표시.
+  // 유일한 상한은 서버(bb_ly_sales)의 작년 판매량 top 150 — 그 아래는 판매량 자체가 미미.
 
   // ── 통합 표: 네 신호(집행요망·입고예정·작년톱셀러·재시도)를 제품 단위로 병합 (2026-07-21) ──
   const merged = {};
@@ -5356,7 +5358,7 @@ function renderAdNeedPage() {
         onlineStockValue: prod ? prod.onlineStockValue : null,
         seraClickValue: prod ? prod.seraClickValue : null,
         lyQty: lyQtyOf(name),
-        spend3d: spend3dOf(name),
+        spend7d: spend7dOf(name),
         adRoas: prod ? prod.adRoas : null,
         inboundDate: null, inboundQty: null, focus: false,
       };
@@ -5422,7 +5424,7 @@ function renderAdNeedPage() {
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">🗓️ 현재 시즌 <b style="color:var(--text)">${word}</b> 기준 · ROAS는 현재 불러온 Meta 광고 성과(최근) 기준 · <span>표 머리글 클릭 시 해당 컬럼 정렬</span></div>
     ${perfNote}
     ${section('🎯 광고 액션 후보 (통합)', '집행요망 · 입고예정 · 작년 톱셀러 · 재시도',
-        `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+광고 미집행 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매 상위인데 최근 3일 광고비 0원 / <span class="tag red">🔁 재시도</span> 광고 집행 중이나 ROAS ${AD_NEED_TARGET}% 미만. ${inboundToggle}`, 'adneed-tbl-main')}
+        `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+광고 미집행 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매 상위인데 최근 7일 광고비 0원 / <span class="tag red">🔁 재시도</span> 광고 집행 중이나 ROAS ${AD_NEED_TARGET}% 미만(배지의 %는 오늘 불러온 그 제품 광고의 ROAS). ${inboundToggle}`, 'adneed-tbl-main')}
     ${section('🗂️ 카테고리 추천', '재고 많음 제품 신호 합산 + 평균 ROAS',
         '카테고리별로 밀어야 할 재고(온라인 재고총액 합)와 자사몰 수요(클릭가치 합)를 합산했어요. 평균 ROAS는 해당 카테고리 광고 성과(spend 가중).', 'adneed-tbl-cats')}`;
 
@@ -5448,17 +5450,16 @@ const ADNEED_LABEL_CELL = {
 
 const ADNEED_COLS = {
   main: [
-    { key:'name',            label:'제품',           align:'left',  type:'str', cell:p=>`${p.focus?'⚡ ':''}${p.name||''}` },
-    { key:'signalCount',     label:'신호',           align:'left',  type:'num', cell:p=>p.labels.map(l=>ADNEED_LABEL_CELL[l](p)).join(' ') },
-    { key:'category',        label:'카테고리',       align:'left',  type:'str', cell:p=>_adCat(p.category) },
+    { key:'name',            label:'제품',           align:'left',  type:'str', wrap:true, cell:p=>`${p.focus?'⚡ ':''}${p.name||''}` },
+    { key:'signalCount',     label:'신호',           align:'left',  type:'num', wrap:true, cell:p=>p.labels.map(l=>ADNEED_LABEL_CELL[l](p)).join(' ') },
     { key:'season',          label:'시즌',           align:'left',  type:'str', cell:p=>_adSeason(p.season) },
     { key:'totalAvail',      label:'가용재고',       align:'right', type:'num', cell:p=>_adInt(p.totalAvail,'개') },
     { key:'onlineStockValue',label:'온라인 재고총액',align:'right', type:'num', cell:p=>_adWon(p.onlineStockValue) },
     { key:'seraClickValue',  label:'SERA 클릭가치',  align:'right', type:'num', cell:p=>_adInt(p.seraClickValue) },
     { key:'lyQty',           label:'작년 동기간 판매',align:'right', type:'num', cell:p=>_adInt(p.lyQty,'개') },
-    { key:'spend3d',         label:'최근 3일 광고비', align:'right', type:'num', cell:p=>{
-        if (p.spend3d == null) return '<span style="color:var(--muted)">로딩 중…</span>';
-        if (p.spend3d > 0) return `<b style="color:var(--green)">${Math.round(p.spend3d).toLocaleString()}원</b>`;
+    { key:'spend7d',         label:'최근 7일 광고비', align:'right', type:'num', cell:p=>{
+        if (p.spend7d == null) return '<span style="color:var(--muted)">로딩 중…</span>';
+        if (p.spend7d > 0) return `<b style="color:var(--green)">${Math.round(p.spend7d).toLocaleString()}원</b>`;
         return `<span style="color:var(--muted)">0원</span>`;
       } },
   ],
@@ -5491,7 +5492,6 @@ function renderAdNeedTable(which) {
 
   const tWrap = 'overflow-x:auto;border:0.5px solid var(--border2);border-radius:10px';
   const tbl   = 'width:100%;border-collapse:collapse;font-size:12px';
-  const TDbase = 'padding:7px 10px;border-bottom:0.5px solid var(--border);white-space:nowrap';
 
   let html = `<div style="${tWrap}"><table style="${tbl}"><thead><tr>`;
   cols.forEach(c => {
@@ -5506,7 +5506,8 @@ function renderAdNeedTable(which) {
   } else {
     sorted.forEach(row => {
       html += '<tr>';
-      cols.forEach(c => { html += `<td style="${TDbase};text-align:${c.align}">${c.cell(row)}</td>`; });
+      // wrap:true 컬럼(제품·신호)은 줄바꿈 허용 → 가로 스크롤 방지 (2026-07-22)
+      cols.forEach(c => { html += `<td style="padding:7px 10px;border-bottom:0.5px solid var(--border);white-space:${c.wrap ? 'normal' : 'nowrap'};text-align:${c.align}">${c.cell(row)}</td>`; });
       html += '</tr>';
     });
   }
