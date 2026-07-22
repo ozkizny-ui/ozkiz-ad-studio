@@ -5339,14 +5339,22 @@ function renderAdNeedPage() {
       hasAd,
     };
   });
-  // 포함 조건 (2026-07-22 조정): 미집행 + (입고예정 있음 or 재고 보유·재고총액 >200만).
-  // 입고예정 없이 재고총액 ≤200만이면 작년 톱셀러여도 제외 — 밀어봐야 팔 물량이 없는 제품 정리(사용자 지정).
+  // 포함 조건 (2026-07-22 확정): 작년 톱셀러 + 미집행 + (입고예정 있음 or 재고 보유·재고총액 >200만).
+  // ①톱셀러 정의 = "그 시점 작년 창에서 평균 판매량 이상" — 고정 숫자가 아니라 규칙(동적 계산).
+  //   근거(2026-07-22 분포 분석): 누적 곡선 무릎점(knee)과 평균 이상 컷이 동일 지점(26위·268개,
+  //   판매량의 77%)에 수렴 → '평균 이상'이 분포의 머리/꼬리 자연 경계와 일치. 창이 매일 밀려도
+  //   문턱이 자동 재계산돼 성수기엔 높아지고 비수기엔 낮아짐(항상 그 시즌의 머리 그룹).
+  // ②입고예정 없이 재고총액 ≤200만이면 제외 — 밀어봐야 팔 물량이 없는 제품 정리(사용자 지정).
+  // 문턱 계산은 상위 150개 기준으로 고정 (2026-07-22: 서버가 전수(~600개)를 주게 되면서 롱테일이
+  // 평균을 끌어내려 문턱이 물러지는 것 방지 — 무릎점 분석·평균 수렴 검증이 top150 분포 기준이었음)
+  const lyHead = lyList.slice(0, 150);
+  const lyAvg = lyHead.length ? lyHead.reduce((s, v) => s + v.qty, 0) / lyHead.length : Infinity;
+  const lyMinQty = Math.ceil(lyAvg);
+  const lyTopCount = lyHead.filter(v => v.qty >= lyMinQty).length;
   const LY_MIN_STOCK_VALUE = 2000000;
-  const lyNeedFiltered = lyNeed.filter(r => !r.hasAd &&
+  const lyNeedFiltered = lyNeed.filter(r => !r.hasAd && r.lyQty >= lyMinQty &&
       (r.inboundDate || ((r.curStock||0) > 0 && (r.stockValue||0) > LY_MIN_STOCK_VALUE)))
     .sort((a,b) => b.lyQty - a.lyQty);
-  // 개수 컷 없음 (2026-07-22): 조건 충족 전부 표시.
-  // 유일한 상한은 서버(bb_ly_sales)의 작년 판매량 top 150 — 그 아래는 판매량 자체가 미미.
 
   // ── 통합 표: 네 신호(집행요망·입고예정·작년톱셀러·재시도)를 제품 단위로 병합 (2026-07-21) ──
   const merged = {};
@@ -5429,7 +5437,7 @@ function renderAdNeedPage() {
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">🗓️ 현재 시즌 <b style="color:var(--text)">${word}</b> 기준 · ROAS는 현재 불러온 Meta 광고 성과(최근) 기준 · <span>표 머리글 클릭 시 해당 컬럼 정렬</span></div>
     ${perfNote}
     ${section('🎯 광고 액션 후보 (통합)', '집행요망 · 입고예정 · 작년 톱셀러 · 재시도',
-        `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+광고 미집행 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매 상위인데 최근 7일 광고비 0원 (재고총액 200만↑ 또는 입고예정 있는 것만) / <span class="tag red">🔁 재시도</span> 광고 집행 중이나 ROAS ${AD_NEED_TARGET}% 미만(배지의 %는 오늘 불러온 그 제품 광고의 ROAS). ${inboundToggle}`, 'adneed-tbl-main')}
+        `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+광고 미집행 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매가 평균 이상(현재 창 기준 ${lyList.length ? lyMinQty.toLocaleString() + '개↑ · 상위 ' + lyTopCount + '개' : '계산 중'}, 전 채널)인데 최근 7일 광고비 0원 (재고총액 200만↑ 또는 입고예정 있는 것만) / <span class="tag red">🔁 재시도</span> 광고 집행 중이나 ROAS ${AD_NEED_TARGET}% 미만(배지의 %는 오늘 불러온 그 제품 광고의 ROAS). ${inboundToggle}`, 'adneed-tbl-main')}
     ${section('🗂️ 카테고리 추천', '재고 많음 제품 신호 합산 + 평균 ROAS',
         '카테고리별로 밀어야 할 재고(온라인 재고총액 합)와 자사몰 수요(클릭가치 합)를 합산했어요. 평균 ROAS는 해당 카테고리 광고 성과(spend 가중).', 'adneed-tbl-cats')}`;
 
@@ -5453,9 +5461,57 @@ const ADNEED_LABEL_CELL = {
   retry:   p => `<span class="tag red">🔁 재시도${p.adRoas != null ? ` ${p.adRoas}%` : ''}</span>`,
 };
 
+// 제품명 클릭 → 행 아래로 SKU별 재고 토글 (광고세팅 탭 showAdStock과 동일 데이터·스타일, 2026-07-22)
+function adneedSkuToggle(el) {
+  const tr = el.closest('tr');
+  if (!tr) return;
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('adneed-sku-row')) { next.remove(); return; } // 재클릭 = 접기
+  const name = decodeURIComponent(el.dataset.n || '');
+  // 정확 일치 우선, 없으면 느슨 매칭(신제품·노션 이름 차이 대비)
+  let p = (state._allStockProducts || {})[name] || null;
+  if (!p && state._allStockProducts) {
+    const k = _adNorm(name);
+    const hit = Object.keys(state._allStockProducts).find(x => { const nk = _adNorm(x); return nk === k || nk.includes(k) || k.includes(nk); });
+    if (hit) p = state._allStockProducts[hit];
+  }
+  const detail = document.createElement('tr');
+  detail.className = 'adneed-sku-row';
+  const colspan = tr.children.length;
+  if (!p || !p.skus || !p.skus.length) {
+    detail.innerHTML = `<td colspan="${colspan}" style="padding:10px 14px;background:var(--surface);color:var(--muted);font-size:12px;border-bottom:0.5px solid var(--border)">이지어드민 재고 목록에 없는 제품입니다 (신제품·입고 전 등)</td>`;
+  } else {
+    const rows = p.skus.map(s => {
+      const c = s.avail < 0 ? 'var(--amber)' : s.avail === 0 ? 'var(--red)' : s.avail < 5 ? 'var(--amber)' : 'var(--text)';
+      return `<tr style="border-top:1px solid var(--border)">
+        <td style="padding:4px 8px">${s.option || '-'}</td>
+        <td style="padding:4px 8px;text-align:right;color:${c};font-weight:600">${s.avail.toLocaleString()}</td>
+        <td style="padding:4px 8px;text-align:right;color:var(--text2)">${s.store.toLocaleString()}</td>
+      </tr>`;
+    }).join('');
+    const totColor = p.totalAvail <= 0 ? 'color:var(--red)' : 'color:var(--green)';
+    detail.innerHTML = `<td colspan="${colspan}" style="padding:8px 14px;background:var(--surface);border-bottom:0.5px solid var(--border)">
+      <table style="border-collapse:collapse;font-size:12px;min-width:320px">
+        <thead><tr style="color:var(--text2);font-size:11px">
+          <th style="padding:4px 8px;text-align:left;font-weight:600">옵션</th>
+          <th style="padding:4px 8px;text-align:right;font-weight:600">가용재고</th>
+          <th style="padding:4px 8px;text-align:right;font-weight:600">매장총재고</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr style="border-top:2px solid var(--border2);font-weight:700">
+          <td style="padding:5px 8px">합계</td>
+          <td style="padding:5px 8px;text-align:right;${totColor}">${p.totalAvail.toLocaleString()}</td>
+          <td style="padding:5px 8px;text-align:right">${p.totalStore.toLocaleString()}</td>
+        </tr></tfoot>
+      </table></td>`;
+  }
+  tr.after(detail);
+}
+
 const ADNEED_COLS = {
   main: [
-    { key:'name',            label:'제품',           align:'left',  type:'str', wrap:true, cell:p=>`${p.focus?'⚡ ':''}${p.name||''}` },
+    { key:'name',            label:'제품',           align:'left',  type:'str', wrap:true,
+      cell:p=>`<span data-n="${encodeURIComponent(p.name||'')}" onclick="adneedSkuToggle(this)" title="클릭하면 SKU별 재고" style="cursor:pointer;border-bottom:1px dashed var(--border2)">${p.focus?'⚡ ':''}${p.name||''}</span>` },
     { key:'signalCount',     label:'신호',           align:'left',  type:'num', wrap:true, cell:p=>p.labels.map(l=>ADNEED_LABEL_CELL[l](p)).join(' ') },
     { key:'season',          label:'시즌',           align:'left',  type:'str', cell:p=>_adSeason(p.season) },
     { key:'totalAvail',      label:'가용재고',       align:'right', type:'num', cell:p=>_adInt(p.totalAvail,'개') },
