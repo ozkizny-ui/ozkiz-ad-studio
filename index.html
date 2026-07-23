@@ -5185,7 +5185,8 @@ function applyQuickFilter() {
 const AD_SEASON_WORD = ['겨울','겨울','봄','봄','봄','여름','여름','여름','가을','가을','가을','겨울'];
 function adCurSeasonWord() { return AD_SEASON_WORD[new Date(Date.now()+9*3600*1000).getUTCMonth()]; }
 function adInSeason(season) { const w = adCurSeasonWord(); return !season || season === '사계절' || String(season).includes(w); }
-const AD_NEED_TARGET = 250; // 목표 ROAS(%) — 미만이면 '성과 미달'
+const AD_NEED_TARGET = 250; // 목표 ROAS(%) — 카테고리 표 색상 기준
+const AD_RETRY_MAX = 150;   // 재시도 후보 문턱 (2026-07-23 사용자 지정: 250 미만 → 150 이하)
 
 // ── 작년 동기간 판매 (브랜드보드 daily_sales, 대시보드 Apps Script 경유) ──
 //   기간 = 오늘 기준 [과거 1주 ~ 미래 2주]의 작년 동일 달력 구간. 작년 매출(revenue)은 원천(gsheet)에 0인 행이 많아 판매량(qty) 중심.
@@ -5329,7 +5330,7 @@ function renderAdNeedPage() {
 
   // 2) 재시도 후보: 광고 집행 중이나 최근 성과 미달(ROAS<목표) & 재고 많음
   const retry = eligible
-    .filter(p => p.highStock && p.hasAd && p.adRoas != null && p.adRoas < AD_NEED_TARGET)
+    .filter(p => p.highStock && p.hasAd && p.adRoas != null && p.adRoas <= AD_RETRY_MAX)
     .map(p => ({ ...p, lyQty: lyQtyOf(p.name) }))
     .sort((a,b) => (b.onlineStockValue - a.onlineStockValue));
 
@@ -5475,7 +5476,7 @@ function renderAdNeedPage() {
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">🗓️ 현재 시즌 <b style="color:var(--text)">${word}</b> 기준 · ROAS는 현재 불러온 Meta 광고 성과(최근) 기준 · <span>표 머리글 클릭 시 해당 컬럼 정렬</span></div>
     ${perfNote}
     ${section('🎯 광고 액션 후보 (통합)', '집행요망 · 입고예정 · 작년 톱셀러 · 재시도',
-        `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+광고 미집행 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매가 평균 이상(현재 창 기준 ${lyList.length ? lyMinQty.toLocaleString() + '개↑ · 상위 ' + lyTopCount + '개' : '계산 중'}, 전 채널)인데 최근 7일 광고비 0원 (재고총액 200만↑ 또는 입고예정 있는 것만) / <span class="tag red">🔁 재시도</span> 광고 집행 중이나 ROAS ${AD_NEED_TARGET}% 미만(배지의 %는 오늘 불러온 그 제품 광고의 ROAS) / <span class="tag" style="background:rgba(139,92,246,.12);color:#6d28d9;border:1px solid #ddd6fe">🆕 신상</span> 최초 등록 30일 이내(이지어드민 등록일, 옵션 추가만 된 기존 제품 제외) 또는 노션 입고예정 제품유형=신제품. ${inboundToggle}`, 'adneed-tbl-main')}
+        `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+광고 미집행 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매가 평균 이상(현재 창 기준 ${lyList.length ? lyMinQty.toLocaleString() + '개↑ · 상위 ' + lyTopCount + '개' : '계산 중'}, 전 채널)인데 최근 7일 광고비 0원 (재고총액 200만↑ 또는 입고예정 있는 것만) / <span class="tag red">🔁 재시도</span> 광고 집행 중이나 ROAS ${AD_RETRY_MAX}% 이하(배지의 %는 오늘 불러온 그 제품 광고의 ROAS) / <span class="tag" style="background:rgba(139,92,246,.12);color:#6d28d9;border:1px solid #ddd6fe">🆕 신상</span> 최초 등록 30일 이내(이지어드민 등록일, 옵션 추가만 된 기존 제품 제외) 또는 노션 입고예정 제품유형=신제품. ${inboundToggle}`, 'adneed-tbl-main')}
     ${section('🗂️ 카테고리 추천', '재고 많음 제품 신호 합산 + 평균 ROAS',
         '카테고리별로 밀어야 할 재고(온라인 재고총액 합)와 자사몰 수요(클릭가치 합)를 합산했어요. 평균 ROAS는 해당 카테고리 광고 성과(spend 가중).', 'adneed-tbl-cats')}`;
 
