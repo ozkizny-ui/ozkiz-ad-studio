@@ -1542,7 +1542,13 @@ function analyzeStockAlerts(skus) {
   } else {
     // 사이즈만 있는 경우
     const lowCount = skus.filter(s => s.avail <= THRESHOLD).length;
-    if (skus.length > 0 && lowCount / skus.length >= RATIO) {
+    const ratio = skus.length > 0 ? lowCount / skus.length : 0;
+    const total = skus.reduce((s, r) => s + r.avail, 0);
+    // 보조 조건 (2026-07-23): 결품 비율 50%+ 이면서 총가용 ≤30개면 품절 —
+    // 나는공룡장화(결품 57%·가용 21개, 코어 사이즈 150~180 전멸)가 60% 문턱을 3%p 차이로
+    // 피해 광고가 계속 돌던 사각 보완. 총량 조건이 있어 물량 충분한 제품(깃털처럼 808개 등)은
+    // 과잉 판정 안 됨 — 시뮬: 신규 품절 24개 전부 소량 잔고(4~29개), 오폭 0.
+    if (skus.length > 0 && (ratio >= RATIO || (ratio >= 0.5 && total <= 30))) {
       alerts.push({ type: 'size_warn', label: '품절' });
     }
   }
