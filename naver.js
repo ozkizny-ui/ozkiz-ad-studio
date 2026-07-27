@@ -138,7 +138,7 @@
   // 표시 필터 (2026-07-23 UI 정리): 상태 세그먼트(전체/ON/OFF) + 타일 클릭 필터(미노출·변경대상)
   let dashStatus = 'on', dashFNoimp = false, dashFChanged = false; // 기본 ON(기존 화면과 동일) — OFF 868개가 기본 노출되면 과밀
   // 데이터 기간 (2026-07-23): 0=오늘(부분집계), 3/7/30=완결일 기준 최근 N일. 지표·구매전환 모두 이 기간.
-  let dashDays = 7;
+  let dashDays = 3; // 기본 최근 3일 (2026-07-23 사용자 지정)
   const PERIODS = [[0, '오늘'], [3, '3일'], [7, '일주일'], [30, '한 달']];
   const periodLabel = () => dashDays === 0 ? '오늘' : `최근 ${dashDays}일`;
   const periodRange = () => dashDays === 0
@@ -830,7 +830,8 @@
         mine.map(c => {
           if (c.channel === 'onoff') {
             const on = c.new_bid === 1;
-            return `<div style="font-size:11px;padding:1px 0;display:flex;gap:8px"><span style="min-width:78px;color:var(--muted)">${fmt(c.changed_at)}</span><span style="font-weight:700;color:${on ? 'var(--green)' : 'var(--red)'}">${on ? '🟢 ON (노출 재개)' : '🔴 OFF (정지)'}</span></div>`;
+            const ext = String(c.name || '').includes('(외부감지)') ? ' <span style="color:var(--muted);font-weight:400">· 관리자에서 변경(감지 시각 기준)</span>' : '';
+            return `<div style="font-size:11px;padding:1px 0;display:flex;gap:8px"><span style="min-width:78px;color:var(--muted)">${fmt(c.changed_at)}</span><span style="font-weight:700;color:${on ? 'var(--green)' : 'var(--red)'}">${on ? '🟢 ON (노출 재개)' : '🔴 OFF (정지)'}${ext}</span></div>`;
           }
           const d = (c.new_bid || 0) - (c.old_bid || 0); const col = d > 0 ? 'var(--green)' : (d < 0 ? 'var(--red)' : 'var(--muted)');
           return `<div style="font-size:11px;padding:1px 0;display:flex;gap:8px"><span style="min-width:78px;color:var(--muted)">${fmt(c.changed_at)}</span><span>입찰 ${cnt(c.old_bid)} → <b style="color:${col}">${cnt(c.new_bid)}원</b></span></div>`;
@@ -846,7 +847,7 @@
       all.forEach(c => { if (!(c.entity_id in latest)) latest[c.entity_id] = c; });
       const fmt = (iso) => { const k = new Date(new Date(iso).getTime() + 9 * 3600000); return k.toISOString().slice(5, 16).replace('T', ' '); };
       const line = (c) => c.channel === 'onoff'
-        ? `${fmt(c.changed_at)} ${c.new_bid === 1 ? '🟢 ON' : '🔴 OFF'}`
+        ? `${fmt(c.changed_at)} ${c.new_bid === 1 ? '🟢 ON' : '🔴 OFF'}${String(c.name || '').includes('(외부감지)') ? ' (관리자)' : ''}`
         : `${fmt(c.changed_at)} 입찰 ${cnt(c.old_bid)}→${cnt(c.new_bid)}원`;
       document.querySelectorAll('.nv-recent[data-id]').forEach(el => {
         const v = el.querySelector('.nv-recent-val'); if (!v) return;
