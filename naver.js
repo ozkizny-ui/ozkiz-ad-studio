@@ -134,7 +134,9 @@
   }
 
   // ── 입찰가 조정 = 전체 대시보드(B): 운영중 쇼핑 상품 전부, 비용순, 드릴다운 없음 ──
-  let dashPaused = false, dashCamp = ''; // dashCamp='' = 전체, 아니면 선택 캠페인만 표시(메뉴형)
+  let dashCamp = ''; // ''=전체, 아니면 선택 캠페인만 표시
+  // 표시 필터 (2026-07-23 UI 정리): 상태 세그먼트(전체/ON/OFF) + 타일 클릭 필터(미노출·변경대상)
+  let dashStatus = 'on', dashFNoimp = false, dashFChanged = false; // 기본 ON(기존 화면과 동일) — OFF 868개가 기본 노출되면 과밀
   // 데이터 기간 (2026-07-23): 0=오늘(부분집계), 3/7/30=완결일 기준 최근 N일. 지표·구매전환 모두 이 기간.
   let dashDays = 7;
   const PERIODS = [[0, '오늘'], [3, '3일'], [7, '일주일'], [30, '한 달']];
@@ -147,25 +149,25 @@
     body.innerHTML = loading('운영중 쇼핑 캠페인·상품 불러오는 중…');
     try {
       const camps = await apiR('get_campaigns');
-      const shopCamps = camps.filter(c => c.campaignTp === 'SHOPPING' && (dashPaused || isRunning(c))).sort(runningFirst);
+      // 캠페인은 운영중만(기존 유지). 그룹·소재·키워드는 정지 포함 전부 수집 (2026-07-23:
+      // "캠페인 ON + 세트 OFF" 광고도 보이게 — 표시는 상태 세그먼트 전체/ON/OFF로 필터)
+      const shopCamps = camps.filter(c => c.campaignTp === 'SHOPPING' && isRunning(c)).sort(runningFirst);
       if (!shopCamps.length) { body.innerHTML = '<div style="color:var(--muted);padding:20px">운영중 쇼핑검색 캠페인이 없어요.</div>'; return; }
-      // 구조: 캠페인 → (운영중)그룹 → 상품형=소재 / 브랜드형(SHOPPING_BRAND)=키워드(파워링크식)
+      // 구조: 캠페인 → 그룹(정지 포함) → 상품형=소재 / 브랜드형(SHOPPING_BRAND)=키워드(파워링크식)
       // 동시호출 제한(캠페인 3 · 그룹 4) + 재시도로 네이버 rate limit 회피.
       let structure = await mapLimit(shopCamps, 3, async c => {
         const gs = (await apiR('get_adgroups', { params: { nccCampaignId: c.nccCampaignId } }).catch(() => [])) || [];
-        const egs = gs.filter(g => dashPaused || isRunning(g));
-        const groups = await mapLimit(egs, 4, async g => {
+        const groups = await mapLimit(gs, 4, async g => {
           if (g.adgroupType === 'SHOPPING_BRAND') { // 브랜드형쇼검 = 키워드 입찰(파워링크와 동일)
             const [kws, extR, adsR] = await Promise.all([
               apiR('get_keywords', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => []),
               apiR('get_ad_extensions', { params: { ownerId: g.nccAdgroupId } }).catch(() => []),
               apiR('get_ads', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => []),
             ]);
-            const kwArr = (kws || []).filter(k => dashPaused || (isRunning(k) && k.userLock !== true));
-            return { group: g, isBrand: true, kws: kwArr, exts: Array.isArray(extR) ? extR : (extR.data || []), banner: Array.isArray(adsR) ? adsR : (adsR.data || []) };
+            return { group: g, isBrand: true, kws: kws || [], exts: Array.isArray(extR) ? extR : (extR.data || []), banner: Array.isArray(adsR) ? adsR : (adsR.data || []) };
           }
           const ads = (await apiR('get_ads', { params: { nccAdgroupId: g.nccAdgroupId } }).catch(() => [])) || [];
-          return { group: g, isBrand: false, ads: dashPaused ? ads : ads.filter(a => a.userLock !== true) };
+          return { group: g, isBrand: false, ads };
         });
         return { camp: c, groups: groups.filter(x => x.isBrand ? x.kws.length : x.ads.length) };
       });
@@ -221,6 +223,7 @@
     let gCost = 0, gConvV = 0, gConvN = 0, prodCount = 0;
     structure.forEach(s => {
       s.groups.forEach(gr => {
+        const gOff = !isRunning(gr.group); // 그룹(세트) OFF — 표시는 하되 입찰 제안 제외 (2026-07-23)
         if (gr.isBrand) { // 브랜드형쇼검 = 키워드 입찰(파워링크식)
           gr.items = gr.kws.map(kw => {
             const b = statsMap[kw.nccKeywordId] || { imp: 0, clk: 0, cost: 0, rank: 0 };
@@ -228,10 +231,10 @@
             const ctr = b.imp ? b.clk / b.imp * 100 : 0, cpc = b.clk ? b.cost / b.clk : 0;
             const roas = (pc && b.cost) ? pc.val / b.cost * 100 : null;
             const grp = kw.useGroupBidAmt === true, cur = grp ? null : Number(kw.bidAmt), hasBid = !grp && Number.isFinite(cur);
-            const nb = (!pending && hasBid && kw.userLock !== true && b.cost && roas != null) ? computeBid(cur, roas, mod.mod) : cur;
-            if (!pending && hasBid && nb !== cur && kw.userLock !== true) nvSuggestions.push({ kind: 'kw', id: kw.nccKeywordId, adgroupId: kw.nccAdgroupId, cur, nb, name: kw.keyword });
+            const nb = (!pending && hasBid && !gOff && kw.userLock !== true && b.cost && roas != null) ? computeBid(cur, roas, mod.mod) : cur;
+            if (!pending && hasBid && !gOff && nb !== cur && kw.userLock !== true) nvSuggestions.push({ kind: 'kw', id: kw.nccKeywordId, adgroupId: kw.nccAdgroupId, cur, nb, name: kw.keyword });
             gCost += b.cost; if (pc) { gConvV += pc.val; gConvN += pc.cnt; } prodCount++;
-            return { kw, b, pc, ctr, cpc, roas, cur, nb, pending, grp };
+            return { kw, b, pc, ctr, cpc, roas, cur, nb, pending, grp, gOff };
           }).sort((x, y) => y.b.cost - x.b.cost);
           gr.aimp = gr.items.reduce((t, it) => t + it.b.imp, 0); gr.aclk = gr.items.reduce((t, it) => t + it.b.clk, 0);
           gr.arankw = gr.items.reduce((t, it) => t + it.b.rank * it.b.imp, 0);
@@ -245,10 +248,10 @@
             const roas = (pc && b.cost) ? pc.val / b.cost * 100 : null;
             const hasBid = !!(a.adAttr && a.adAttr.bidAmt != null && Number.isFinite(Number(a.adAttr.bidAmt)));
             const cur = hasBid ? Number(a.adAttr.bidAmt) : null;
-            const nb = (!pending && hasBid && a.userLock !== true && b.cost && roas != null) ? computeBid(cur, roas, mod.mod) : cur;
-            if (!pending && hasBid && nb !== cur && a.userLock !== true) nvSuggestions.push({ kind: 'ad', id: a.nccAdId, cur, nb, name: (a.referenceData && a.referenceData.productTitle) || (a.ad && a.ad.headline) || a.nccAdId });
+            const nb = (!pending && hasBid && !gOff && a.userLock !== true && b.cost && roas != null) ? computeBid(cur, roas, mod.mod) : cur;
+            if (!pending && hasBid && !gOff && nb !== cur && a.userLock !== true) nvSuggestions.push({ kind: 'ad', id: a.nccAdId, cur, nb, name: (a.referenceData && a.referenceData.productTitle) || (a.ad && a.ad.headline) || a.nccAdId });
             gCost += b.cost; if (pc) { gConvV += pc.val; gConvN += pc.cnt; } prodCount++;
-            return { a, b, pc, ctr, cpc, roas, cur, nb, pending, hasBid };
+            return { a, b, pc, ctr, cpc, roas, cur, nb, pending, hasBid, gOff };
           }).sort((x, y) => y.b.cost - x.b.cost);
         }
         gr.total = gr.items.reduce((t, it) => t + it.b.cost, 0);
@@ -264,8 +267,6 @@
     const totalAll = structure.reduce((t, s) => t + s.total, 0);
     if (dashCamp && !structure.some(s => s.camp.nccCampaignId === dashCamp)) dashCamp = ''; // 사라진 캠페인 선택 방어
     const chipStyle = (on) => `cursor:pointer;padding:4px 10px;border-radius:8px;border:1px solid var(--border2);font-size:12px;font-weight:700;background:${on ? 'var(--accent)' : 'var(--accent-l)'};color:${on ? '#fff' : 'var(--accent-d)'}`;
-    const chips = [`<button class="nvf-camp" data-camp="" style="${chipStyle(!dashCamp)}">전체</button>`]
-      .concat(structure.map(s => `<button class="nvf-camp" data-camp="${s.camp.nccCampaignId}" style="${chipStyle(dashCamp === s.camp.nccCampaignId)}">${esc(s.camp.name)}</button>`)).join('');
     const sections = structure.map(s => s.groups.map(gr => `
       <div class="nvc-gsec" data-camp="${s.camp.nccCampaignId}">
         <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;flex-wrap:wrap">
@@ -276,84 +277,90 @@
         </div>
         ${gr.isBrand ? brandGroupBody(gr) : gr.items.map(fullCard).join('')}
       </div>`).join('')).join('');
-    // 미노출 = 운영중(정지 아님)인데 선택 기간 노출 0
-    let gNoImp = 0;
+    // 상태 카운트: ON=운영중(그룹·소재 모두), OFF=그룹 OFF 또는 소재 정지. 미노출=ON인데 기간 노출 0
+    let gNoImp = 0, cntOn = 0, cntOff = 0;
     structure.forEach(s => s.groups.forEach(gr => gr.items.forEach(it => {
-      const paused = gr.isBrand ? (it.kw.userLock === true || !isRunning(it.kw)) : (it.a.userLock === true);
-      if (!paused && !it.b.imp) gNoImp++;
+      const paused = it.gOff || (gr.isBrand ? (it.kw.userLock === true || !isRunning(it.kw)) : (it.a.userLock === true));
+      if (paused) cntOff++; else { cntOn++; if (!it.b.imp) gNoImp++; }
     })));
     const periodChips = PERIODS.map(([d, lbl]) =>
       `<button class="nvf-period" data-d="${d}" style="${chipStyle(dashDays === d)}">${lbl}</button>`).join('');
+    const segBtn = (v, lbl) => `<button class="nvf-status" data-v="${v}" style="border:none;background:${dashStatus === v ? 'var(--accent)' : 'transparent'};color:${dashStatus === v ? '#fff' : 'var(--muted)'};padding:8px 13px;font-size:12px;font-weight:700;cursor:pointer">${lbl}</button>`;
+    const campSel = `<select id="nvf-campsel" style="padding:8px 10px;border:1px solid var(--border2);border-radius:9px;background:var(--surface);color:var(--text);font-size:12.5px;font-weight:600;max-width:230px">
+      <option value="">전체 캠페인</option>
+      ${structure.map(s => `<option value="${s.camp.nccCampaignId}" ${dashCamp === s.camp.nccCampaignId ? 'selected' : ''}>${esc(s.camp.name)}</option>`).join('')}</select>`;
+    const tileFilterCss = (on) => `cursor:pointer;${on ? 'border:1.5px solid var(--amber);background:var(--amber-l, rgba(245,158,11,.08))' : ''}`;
     body.innerHTML = `
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
         <span style="font-size:12px;color:var(--muted);font-weight:700">📅 데이터 기간</span>
         ${periodChips}
-        <span style="font-size:11px;color:var(--muted)">${dashDays === 0 ? '· 오늘은 집계 지연으로 실제보다 낮게 보일 수 있어요' : '· 어제까지 완결 ' + dashDays + '일'}</span>
+        <span style="font-size:11px;color:var(--muted);margin-left:auto">${dashDays === 0 ? '오늘은 집계 지연으로 실제보다 낮게 보일 수 있어요 · ' : '어제까지 완결 ' + dashDays + '일 · '}${mod.label} 보정 · 비용 많은 순</span>
       </div>
       <div class="nvc-tiles" style="grid-template-columns:repeat(5,1fr)">
         <div class="nvc-tile"><div class="k">총비용 (${periodLabel()})</div><div class="v">${won(gCost)}</div></div>
         <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접 · ${periodLabel()}</span></div><div class="v" style="color:${pending ? 'var(--muted)' : (gRoas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)')}">${pending ? '<span style="font-size:13px">집계 중…</span>' : (gCost ? Math.round(gRoas) + '%' : '-')}</div></div>
         <div class="nvc-tile"><div class="k">구매 전환 (${periodLabel()})</div><div class="v">${pending ? '<span style="color:var(--muted);font-size:13px">집계 중…</span>' : gConvN + '건 · ' + cnt(gConvV) + '원'}</div></div>
-        <div class="nvc-tile"><div class="k">미노출 (${periodLabel()} 노출 0)</div><div class="v" style="color:${gNoImp ? 'var(--amber)' : 'var(--text)'}">${gNoImp}</div></div>
-        <div class="nvc-tile"><div class="k">상품 · 변경대상</div><div class="v">${prodCount} · <span style="color:var(--accent-d)">${pending ? '…' : nvSuggestions.length}</span></div></div>
+        <div class="nvc-tile" id="nvt-noimp" title="클릭하면 미노출만 보기" style="${tileFilterCss(dashFNoimp)}"><div class="k">미노출 (${periodLabel()} 노출 0) <span style="color:var(--accent-d);font-weight:700;font-size:10px">클릭=필터</span></div><div class="v" style="color:${gNoImp ? 'var(--amber)' : 'var(--text)'}">${gNoImp}</div></div>
+        <div class="nvc-tile" id="nvt-changed" title="클릭하면 제안 있는 것만 보기" style="${tileFilterCss(dashFChanged)}"><div class="k">상품 · 변경대상 <span style="color:var(--accent-d);font-weight:700;font-size:10px">클릭=필터</span></div><div class="v">${prodCount} · <span style="color:var(--accent-d)">${pending ? '…' : nvSuggestions.length}</span></div></div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
         <input id="nvf-q" placeholder="🔎 상품명 검색" style="padding:7px 10px;border:1px solid var(--border2);border-radius:9px;background:var(--surface);color:var(--text);font-size:13px;min-width:180px">
-        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvf-changed"> 제안 있는 것만</label>
-        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvf-noimp"> 미노출만</label>
-        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="nvf-paused" ${dashPaused ? 'checked' : ''}> 정지 포함</label>
-        <span style="font-size:12px;color:var(--muted)">· ${mod.label} 보정 · 비용 많은 순</span>
-        <button id="nvc-selnone" style="margin-left:auto;padding:8px 14px;border-radius:10px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer;font-weight:600;font-size:13px;${(!pending && nvSuggestions.length) ? '' : 'display:none'}">전체 해제</button>
+        <div style="display:flex;border:1px solid var(--border2);border-radius:9px;overflow:hidden;background:var(--surface)">
+          ${segBtn('all', `전체 ${cntOn + cntOff}`)}${segBtn('on', `🟢 ON ${cntOn}`)}${segBtn('off', `⚪ OFF ${cntOff}`)}
+        </div>
+        ${campSel}
+        <span id="nvc-selmeta" style="margin-left:auto;font-size:12px;color:var(--muted);${(!pending && nvSuggestions.length) ? '' : 'display:none'}"><a href="javascript:void(0)" id="nvc-selnone" style="color:var(--accent-d);font-weight:700;text-decoration:none">전체 해제</a></span>
         <button id="nvc-applyall" style="${pBtn}" ${(!pending && nvSuggestions.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음')}</button>
       </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${chips}</div>
       <div id="nvc-dash">${sections}</div>
       <div id="nvc-history" style="margin-top:18px;border-top:1px solid var(--border);padding-top:8px"></div>`;
-    const q = $('#nvf-q'), ch = $('#nvf-changed'), ni = $('#nvf-noimp');
+    const q = $('#nvf-q');
     const applyFilters = () => {
-      const term = (q.value || '').toLowerCase(), onlyCh = ch.checked, onlyNi = ni && ni.checked;
+      const term = (q.value || '').toLowerCase();
       document.querySelectorAll('.nvc-card[data-title], .nvc-krow[data-title]').forEach(el => {
-        el.style.display = ((!term || el.dataset.title.includes(term)) && (!onlyCh || el.dataset.changed === '1') && (!onlyNi || el.dataset.noimp === '1')) ? '' : 'none';
+        const stOk = dashStatus === 'all' || el.dataset.status === dashStatus;
+        el.style.display = ((!term || el.dataset.title.includes(term)) && (!dashFChanged || el.dataset.changed === '1') && (!dashFNoimp || el.dataset.noimp === '1') && stOk) ? '' : 'none';
       });
       document.querySelectorAll('.nvc-gsec').forEach(sec => {
-        const campMatch = !dashCamp || sec.dataset.camp === dashCamp; // 선택 캠페인만(메뉴형)
+        const campMatch = !dashCamp || sec.dataset.camp === dashCamp; // 선택 캠페인만
         const anyVis = [...sec.querySelectorAll('.nvc-card, .nvc-krow')].some(c => c.style.display !== 'none');
         sec.style.display = (campMatch && anyVis) ? '' : 'none';
       });
     };
-    if (q) q.oninput = applyFilters; if (ch) ch.onchange = applyFilters; if (ni) ni.onchange = applyFilters;
-    document.querySelectorAll('.nvf-period').forEach(b => b.onclick = () => { dashDays = +b.dataset.d; renderBid(); });
-    document.querySelectorAll('.nv-hist').forEach(b => b.onclick = () => toggleEntityHistory(b));
-    document.querySelectorAll('.nvf-camp').forEach(b => b.onclick = () => {
-      dashCamp = b.dataset.camp;
-      document.querySelectorAll('.nvf-camp').forEach(x => { const on = x.dataset.camp === dashCamp; x.style.background = on ? 'var(--accent)' : 'var(--accent-l)'; x.style.color = on ? '#fff' : 'var(--accent-d)'; });
+    if (q) q.oninput = applyFilters;
+    // 타일 클릭 필터 (미노출·변경대상) — 켜지면 테두리 강조
+    const tNo = $('#nvt-noimp'); if (tNo) tNo.onclick = () => { dashFNoimp = !dashFNoimp; tNo.style.cssText = tileFilterCss(dashFNoimp); applyFilters(); };
+    const tCh = $('#nvt-changed'); if (tCh) tCh.onclick = () => { dashFChanged = !dashFChanged; tCh.style.cssText = tileFilterCss(dashFChanged); applyFilters(); };
+    // 상태 세그먼트 (전체/ON/OFF)
+    document.querySelectorAll('.nvf-status').forEach(b => b.onclick = () => {
+      dashStatus = b.dataset.v;
+      document.querySelectorAll('.nvf-status').forEach(x => { const on = x.dataset.v === dashStatus; x.style.background = on ? 'var(--accent)' : 'transparent'; x.style.color = on ? '#fff' : 'var(--muted)'; });
       applyFilters();
     });
-    const pcb = $('#nvf-paused'); if (pcb) pcb.onchange = () => { dashPaused = pcb.checked; renderBid(); };
+    const csel = $('#nvf-campsel'); if (csel) csel.onchange = () => { dashCamp = csel.value; applyFilters(); };
+    document.querySelectorAll('.nvf-period').forEach(b => b.onclick = () => { dashDays = +b.dataset.d; renderBid(); });
+    document.querySelectorAll('.nv-hist').forEach(b => b.onclick = () => toggleEntityHistory(b));
     const updateApplyBtn = () => { const n = document.querySelectorAll('.nvc-cb:checked').length; const bt = $('#nvc-applyall'); if (bt) { bt.disabled = !n; bt.textContent = n ? `▶ 선택 ${n}건 입찰가 반영` : '선택된 항목 없음'; } };
     document.querySelectorAll('.nvc-cb').forEach(cb => cb.onchange = updateApplyBtn);
     const btn = $('#nvc-applyall'); if (btn) { btn.onclick = () => applyAll(); if (!pending && nvSuggestions.length) updateApplyBtn(); }
     const selN = $('#nvc-selnone'); if (selN) selN.onclick = () => { const cbs = [...document.querySelectorAll('.nvc-cb')]; const anyOn = cbs.some(c => c.checked); cbs.forEach(c => c.checked = !anyOn); updateApplyBtn(); selN.textContent = anyOn ? '전체 선택' : '전체 해제'; };
     document.querySelectorAll('.nvp-off').forEach(b => b.onclick = () => togglePowerKw(b)); // 브랜드형 키워드 OFF/ON
     document.querySelectorAll('.nv-urlcopy').forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.url).then(() => { const t = b.textContent; b.textContent = '✓'; setTimeout(() => b.textContent = t, 1200); }); });
+    applyFilters(); // 유지 중인 필터 상태(세그먼트·타일·캠페인) 재적용
     loadBidHistory('shopping', 'nvc-history');
+    injectRecentChanges(); // 카드·행의 '최근 변경' 상시 표시 채우기
   }
   function fullCard(it) {
-    const a = it.a, rd = a.referenceData || {}, adc = a.ad || {}, paused = a.userLock === true, pend = it.pending;
+    const a = it.a, rd = a.referenceData || {}, adc = a.ad || {}, paused = a.userLock === true || it.gOff, pend = it.pending;
     const d = (it.hasBid && !pend) ? it.nb - it.cur : 0, pct = it.cur ? Math.round(d / it.cur * 100) : 0, changed = !pend && it.hasBid && d !== 0;
     // 소재 종류: 상품형=referenceData / 브랜드형=ad(headline·image·landingUrl)
     const title = rd.productTitle || adc.headline || a.nccAdId;
     const thumb = rd.imageUrl || (adc.image ? (/^https?:/.test(adc.image) ? adc.image : EXT_IMG + adc.image) : '');
     const landing = rd.mallProductUrl || adc.landingUrl || '';
     const meta = [(rd.category3Name || rd.category2Name) ? `<span class="nvc-chip">${esc(rd.category3Name || rd.category2Name)}</span>` : '', !it.hasBid ? '<span class="nvc-chip" style="background:var(--surface2);color:var(--muted)">브랜드형</span>' : '', rd.scoreInfo ? `<span style="color:#E9A23B;font-weight:700">★ ${esc(rd.scoreInfo)}</span>` : '', rd.reviewCountSum ? `<span>리뷰 ${cnt(rd.reviewCountSum)}</span>` : '', rd.lowPrice ? `<span>· ${cnt(rd.lowPrice)}원</span>` : ''].join('');
-    // 미노출 = 정지 아님 + 선택 기간 노출 0 (2026-07-23)
+    // 미노출 = 정지 아님 + 선택 기간 노출 0 (2026-07-23) · 상태 배지는 이미지 하단(사용자 지정)
     const noImp = !paused && !it.b.imp;
-    const statusPill = `<span style="flex:none;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;white-space:nowrap;background:${paused ? 'var(--surface2)' : (noImp ? 'var(--amber-l, rgba(245,158,11,.12))' : 'var(--green-l)')};color:${paused ? 'var(--muted)' : (noImp ? 'var(--amber, #B45309)' : 'var(--green)')}">${paused ? '⚪ 정지' : (noImp ? '🟡 미노출' : '🟢 노출중')}</span>`;
-    // 광고 순위 배지 (2026-07-23 강조): 기간 평균 노출순위. ≤3 초록 / ≤6 주황 / 그 밖 빨강
-    const rk = it.b.rank;
-    const rankPill = rk > 0
-      ? `<span title="${periodLabel()} 평균 노출순위" style="flex:none;font-size:12px;font-weight:800;padding:2px 10px;border-radius:999px;white-space:nowrap;background:${rk <= 3 ? 'var(--green-l)' : rk <= 6 ? 'var(--amber-l, rgba(245,158,11,.12))' : 'var(--red-l)'};color:${rk <= 3 ? 'var(--green)' : rk <= 6 ? 'var(--amber, #B45309)' : 'var(--red)'}">📍 ${rk.toFixed(1)}위</span>`
-      : `<span title="${periodLabel()} 노출 없음 — 순위 없음" style="flex:none;font-size:12px;font-weight:700;padding:2px 10px;border-radius:999px;white-space:nowrap;background:var(--surface2);color:var(--muted)">📍 순위 —</span>`;
+    const statusPill = `<span style="font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap;background:${paused ? 'var(--surface2)' : (noImp ? 'var(--amber-l, rgba(245,158,11,.12))' : 'var(--green-l)')};color:${paused ? 'var(--muted)' : (noImp ? 'var(--amber, #B45309)' : 'var(--green)')}">${paused ? (it.gOff ? '⚪ 정지 (그룹 OFF)' : '⚪ 정지') : (noImp ? '🟡 미노출' : '🟢 노출중')}</span>`;
     const bidHtml = !it.hasBid
       ? '<span style="color:var(--muted);font-size:11px">브랜드형 · 입찰 조정 대상 아님</span>'
       : pend
@@ -361,27 +368,33 @@
         : (changed
           ? `<span style="color:var(--muted);font-size:10px">현재</span> <span class="cur">${it.cur}</span> <span style="color:var(--muted)">→</span> <span style="color:var(--accent-d);font-size:10px;font-weight:700">제안</span> <span class="new">${it.nb}원</span> <span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span> <input type="checkbox" class="nvc-cb" data-id="${a.nccAdId}" checked title="이 제안 반영" style="margin-left:4px;width:16px;height:16px;accent-color:var(--accent);cursor:pointer;vertical-align:middle">`
           : `<span class="new">${it.cur}원</span><span class="nvc-d" style="background:var(--surface);color:var(--muted)">유지</span>`);
-    const M = [['순위', it.b.rank ? it.b.rank.toFixed(1) : '-'], ['품질', qiBar(a.nccQi && a.nccQi.qiGrade)], ['노출', cnt(it.b.imp)], ['클릭', cnt(it.b.clk)], ['CTR', it.ctr.toFixed(2) + '%'], ['CPC', won(Math.round(it.cpc))], ['총비용', won(it.b.cost)], ['구매', pend ? '<span style="color:var(--muted)">…</span>' : (it.pc.cnt + '건·' + cnt(it.pc.val))]];
+    // '광고노출순위' 초록 강조 (2026-07-23 사용자 지정) — 별도 배지 대신 지표 첫 칸에서 잘 보이게
+    const rankV = it.b.rank > 0
+      ? `<b style="color:var(--green);font-size:15px;font-weight:900">${it.b.rank.toFixed(1)}</b><span style="color:var(--green);font-size:11px;font-weight:700">위</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    const M = [[`<span style="color:var(--green);font-weight:700">광고노출순위</span>`, rankV], ['품질', qiBar(a.nccQi && a.nccQi.qiGrade)], ['노출', cnt(it.b.imp)], ['클릭', cnt(it.b.clk)], ['CTR', it.ctr.toFixed(2) + '%'], ['CPC', won(Math.round(it.cpc))], ['총비용', won(it.b.cost)], ['구매', pend ? '<span style="color:var(--muted)">…</span>' : (it.pc.cnt + '건·' + cnt(it.pc.val))]];
     const roasTxt = pend ? '<span style="color:var(--muted)">…</span>' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
     const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
-    return `<div class="nvc-card" data-title="${esc(title.toLowerCase())}" data-changed="${changed ? '1' : '0'}" data-noimp="${noImp ? '1' : '0'}">
-      <img class="nvc-thumb" src="${esc(thumb)}" onerror="this.style.opacity=.2">
+    return `<div class="nvc-card" data-title="${esc(title.toLowerCase())}" data-changed="${changed ? '1' : '0'}" data-noimp="${noImp ? '1' : '0'}" data-status="${paused ? 'off' : 'on'}" style="${paused ? 'opacity:.62' : ''}">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+        <img class="nvc-thumb" src="${esc(thumb)}" onerror="this.style.opacity=.2">
+        ${statusPill}
+      </div>
       <div style="min-width:0">
-        <div style="display:flex;align-items:flex-start;gap:8px">
-          <div class="nvc-title" style="flex:1;margin-bottom:0">${esc(title)}</div>
-          ${rankPill}
-          ${statusPill}
-        </div>
+        <div class="nvc-title">${esc(title)}</div>
         <div class="nvc-meta" style="margin-top:5px">${meta}</div>
         ${adc.description ? `<div style="font-size:11.5px;color:var(--muted);margin-top:3px">${esc(adc.description)}</div>` : ''}
         ${landing ? `<div style="font-size:11px;margin-top:2px"><span style="color:var(--muted);font-weight:700">🔗 연결 URL</span> <a href="${esc(landing)}" target="_blank" rel="noopener" style="color:var(--accent-d);text-decoration:none;word-break:break-all">${esc(landing)}</a></div>` : ''}
         <div class="nvc-organic" data-pid="${esc(rd.mallProductId || '')}" style="font-size:11px;margin-top:3px;display:flex;gap:5px;flex-wrap:wrap;align-items:center"></div>
         <div class="nvc-metrics">${M.map(([k, v]) => `<div class="nvc-m"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}</div>
+        <div class="nv-recent" data-id="${esc(a.nccAdId)}" style="margin-top:9px;font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          🕐 최근 변경 <span class="nv-recent-val" style="color:var(--text2);font-weight:700">확인 중…</span>
+          <span class="nv-hist" data-id="${esc(a.nccAdId)}" style="color:var(--accent-d);font-weight:700;cursor:pointer">이력 ▾</span>
+        </div>
       </div>
       <div class="nvc-right">
         <div class="nvc-roas" style="color:${roasCol}">${roasTxt}<small>구매 ROAS · ${periodLabel()}</small></div>
-        <div class="nvc-bid" id="nvb-${a.nccAdId}">${bidHtml}</div>
-        <button class="nv-hist" data-id="${esc(a.nccAdId)}" style="font-size:11px;padding:2px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer">📜 이력 ▾</button>
+        <div class="nvc-bid" id="nvb-${a.nccAdId}">${paused && !changed ? '<span style="color:var(--muted);font-size:11px">OFF 상태 · 입찰 조정 대상 아님</span>' : bidHtml}</div>
       </div>
     </div>`;
   }
@@ -407,7 +420,7 @@
     return `${url}${ext}<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">${head}<tbody>${gr.items.map(brandKwRow).join('')}</tbody>${foot}</table></div>`;
   }
   function brandKwRow(it) {
-    const kw = it.kw, locked = kw.userLock === true, paused = locked || !isRunning(kw), pend = it.pending, grp = it.grp;
+    const kw = it.kw, locked = kw.userLock === true, paused = locked || !isRunning(kw) || it.gOff, pend = it.pending, grp = it.grp;
     const d = (!pend && !grp) ? it.nb - it.cur : 0, pct = it.cur ? Math.round(d / it.cur * 100) : 0, changed = !pend && !grp && d !== 0;
     const td = 'padding:6px 8px;text-align:right;white-space:nowrap';
     const bidCell = grp ? '<span style="color:var(--muted);font-size:11px">그룹입찰</span>'
@@ -422,7 +435,7 @@
     const rankCell = rk > 0
       ? `<b style="color:${rk <= 3 ? 'var(--green)' : rk <= 6 ? 'var(--amber, #B45309)' : 'var(--red)'}">${rk.toFixed(1)}</b>`
       : '<span style="color:var(--muted)">—</span>';
-    return `<tr class="nvc-krow" data-title="${esc((kw.keyword || '').toLowerCase())}" data-changed="${changed ? '1' : '0'}" data-noimp="${noImp ? '1' : '0'}" style="border-top:1px solid var(--border)">
+    return `<tr class="nvc-krow" data-title="${esc((kw.keyword || '').toLowerCase())}" data-changed="${changed ? '1' : '0'}" data-noimp="${noImp ? '1' : '0'}" data-status="${paused ? 'off' : 'on'}" style="border-top:1px solid var(--border)${paused ? ';opacity:.62' : ''}">
       <td style="padding:6px 8px;text-align:left"><span style="font-size:11px" title="${paused ? '정지' : (noImp ? '미노출(기간 내 노출 0)' : '노출중')}">${paused ? '⚪' : (noImp ? '🟡' : '🟢')}</span> <span style="font-weight:600">${esc(kw.keyword || kw.nccKeywordId)}</span>${noImp ? ' <span style="font-size:10px;color:var(--amber, #B45309);font-weight:700">미노출</span>' : ''}</td>
       <td style="${td}">${rankCell}</td>
       <td style="padding:6px 8px;text-align:left">${qiBar(kw.nccQi && kw.nccQi.qiGrade)}</td>
@@ -432,7 +445,7 @@
       <td style="${td};font-weight:700;color:${roasCol}">${roasTxt}</td>
       <td id="nvb-${esc(kw.nccKeywordId)}" style="${td}">${bidCell}</td>
       <td style="padding:6px 8px;text-align:center"><button class="nvp-off" data-kw="${esc(kw.nccKeywordId)}" data-ag="${esc(kw.nccAdgroupId)}" data-name="${esc(kw.keyword || kw.nccKeywordId)}" data-lock="${locked ? '0' : '1'}" style="font-size:11px;padding:2px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:${locked ? 'var(--green)' : 'var(--red)'};cursor:pointer;font-weight:700">${locked ? 'ON' : 'OFF'}</button></td>
-      <td style="padding:6px 8px;text-align:center"><button class="nv-hist" data-id="${esc(kw.nccKeywordId)}" style="font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer">▾</button></td>
+      <td style="padding:6px 8px;text-align:center;white-space:nowrap"><span class="nv-recent-mini" data-id="${esc(kw.nccKeywordId)}" style="font-size:10px;color:var(--muted);margin-right:4px"></span><button class="nv-hist" data-id="${esc(kw.nccKeywordId)}" style="font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer">▾</button></td>
     </tr>`;
   }
 
@@ -712,6 +725,7 @@
     document.querySelectorAll('.nv-hist').forEach(b => b.onclick = () => toggleEntityHistory(b));
     document.querySelectorAll('.nv-urlcopy').forEach(b => b.onclick = () => { navigator.clipboard.writeText(b.dataset.url).then(() => { const t = b.textContent; b.textContent = '✓'; setTimeout(() => b.textContent = t, 1200); }); });
     loadBidHistory('powerlink', 'nvp-history');
+    injectRecentChanges(); // 키워드 행 '최근 변경' 미니 표시
   }
   // 키워드 OFF(정지)/ON(노출) — userLock 토글. 파워링크는 제외키워드 대신 낭비 키워드를 직접 끔.
   async function togglePowerKw(b) {
@@ -761,7 +775,7 @@
       <td style="${td};font-weight:700;color:${roasCol}">${roasTxt}</td>
       <td id="nvpb-${esc(kw.nccKeywordId)}" style="${td}">${bidCell}</td>
       <td style="padding:6px 8px;text-align:center"><button class="nvp-off" data-kw="${esc(kw.nccKeywordId)}" data-ag="${esc(kw.nccAdgroupId)}" data-name="${esc(kw.keyword || kw.nccKeywordId)}" data-lock="${locked ? '0' : '1'}" style="font-size:11px;padding:2px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:${locked ? 'var(--green)' : 'var(--red)'};cursor:pointer;font-weight:700">${locked ? 'ON' : 'OFF'}</button></td>
-      <td style="padding:6px 8px;text-align:center"><button class="nv-hist" data-id="${esc(kw.nccKeywordId)}" style="font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer">▾</button></td>
+      <td style="padding:6px 8px;text-align:center;white-space:nowrap"><span class="nv-recent-mini" data-id="${esc(kw.nccKeywordId)}" style="font-size:10px;color:var(--muted);margin-right:4px"></span><button class="nv-hist" data-id="${esc(kw.nccKeywordId)}" style="font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer">▾</button></td>
     </tr>`;
   }
   async function applyPowerBids() {
@@ -822,6 +836,29 @@
           return `<div style="font-size:11px;padding:1px 0;display:flex;gap:8px"><span style="min-width:78px;color:var(--muted)">${fmt(c.changed_at)}</span><span>입찰 ${cnt(c.old_bid)} → <b style="color:${col}">${cnt(c.new_bid)}원</b></span></div>`;
         }).join(''));
     } catch (e) { fill('<span style="font-size:11px;color:var(--red)">이력 조회 실패: ' + esc(e.message || String(e)) + '</span>'); }
+  }
+
+  // ── 최근 변경 상시 표시 (2026-07-23): 카드 하단 '🕐 최근 변경'과 키워드 표 이력 셀을 채움 ──
+  async function injectRecentChanges() {
+    try {
+      const all = await loadAllHistory();
+      const latest = {}; // entity_id -> 최신 1건 (changed_at desc 정렬이므로 첫 것)
+      all.forEach(c => { if (!(c.entity_id in latest)) latest[c.entity_id] = c; });
+      const fmt = (iso) => { const k = new Date(new Date(iso).getTime() + 9 * 3600000); return k.toISOString().slice(5, 16).replace('T', ' '); };
+      const line = (c) => c.channel === 'onoff'
+        ? `${fmt(c.changed_at)} ${c.new_bid === 1 ? '🟢 ON' : '🔴 OFF'}`
+        : `${fmt(c.changed_at)} 입찰 ${cnt(c.old_bid)}→${cnt(c.new_bid)}원`;
+      document.querySelectorAll('.nv-recent[data-id]').forEach(el => {
+        const v = el.querySelector('.nv-recent-val'); if (!v) return;
+        const c = latest[el.dataset.id];
+        if (c) v.textContent = line(c);
+        else { v.textContent = '기록 없음'; v.style.color = 'var(--muted)'; v.style.fontWeight = '400'; }
+      });
+      document.querySelectorAll('.nv-recent-mini[data-id]').forEach(el => {
+        const c = latest[el.dataset.id];
+        el.textContent = c ? line(c) : '';
+      });
+    } catch (e) { /* 이력 테이블 미가용 시 조용히 생략 */ }
   }
 
   // 입찰 변경 이력 로더 — 각 탭 하단에 최근 변경(날짜·이전→새값) 표시
