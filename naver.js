@@ -248,8 +248,8 @@
             const roas = (pc && b.cost) ? pc.val / b.cost * 100 : null;
             const hasBid = !!(a.adAttr && a.adAttr.bidAmt != null && Number.isFinite(Number(a.adAttr.bidAmt)));
             const cur = hasBid ? Number(a.adAttr.bidAmt) : null;
-            const nb = (!pending && hasBid && !gOff && a.userLock !== true && b.cost && roas != null) ? computeBid(cur, roas, mod.mod) : cur;
-            if (!pending && hasBid && !gOff && nb !== cur && a.userLock !== true) nvSuggestions.push({ kind: 'ad', id: a.nccAdId, cur, nb, name: (a.referenceData && a.referenceData.productTitle) || (a.ad && a.ad.headline) || a.nccAdId });
+            const nb = (!pending && hasBid && !gOff && a.userLock !== true && (!a.status || a.status === 'ELIGIBLE') && b.cost && roas != null) ? computeBid(cur, roas, mod.mod) : cur;
+            if (!pending && hasBid && !gOff && nb !== cur && a.userLock !== true && (!a.status || a.status === 'ELIGIBLE')) nvSuggestions.push({ kind: 'ad', id: a.nccAdId, cur, nb, name: (a.referenceData && a.referenceData.productTitle) || (a.ad && a.ad.headline) || a.nccAdId });
             gCost += b.cost; if (pc) { gConvV += pc.val; gConvN += pc.cnt; } prodCount++;
             return { a, b, pc, ctr, cpc, roas, cur, nb, pending, hasBid, gOff };
           }).sort((x, y) => y.b.cost - x.b.cost);
@@ -281,7 +281,8 @@
     let gNoImp = 0, cntOn = 0, cntOff = 0;
     structure.forEach(s => s.groups.forEach(gr => gr.items.forEach(it => {
       const paused = it.gOff || (gr.isBrand ? (it.kw.userLock === true || !isRunning(it.kw)) : (it.a.userLock === true));
-      if (paused) cntOff++; else { cntOn++; if (!it.b.imp) gNoImp++; }
+      const sysP = !paused && !gr.isBrand && it.a.status && it.a.status !== 'ELIGIBLE'; // 네이버 시스템 중지(연동 이상 등)
+      if (paused) cntOff++; else { cntOn++; if (sysP || !it.b.imp) gNoImp++; }
     })));
     const periodChips = PERIODS.map(([d, lbl]) =>
       `<button class="nvf-period" data-d="${d}" style="${chipStyle(dashDays === d)}">${lbl}</button>`).join('');
@@ -358,9 +359,18 @@
     const thumb = rd.imageUrl || (adc.image ? (/^https?:/.test(adc.image) ? adc.image : EXT_IMG + adc.image) : '');
     const landing = rd.mallProductUrl || adc.landingUrl || '';
     const meta = [(rd.category3Name || rd.category2Name) ? `<span class="nvc-chip">${esc(rd.category3Name || rd.category2Name)}</span>` : '', !it.hasBid ? '<span class="nvc-chip" style="background:var(--surface2);color:var(--muted)">브랜드형</span>' : '', rd.scoreInfo ? `<span style="color:#E9A23B;font-weight:700">★ ${esc(rd.scoreInfo)}</span>` : '', rd.reviewCountSum ? `<span>리뷰 ${cnt(rd.reviewCountSum)}</span>` : '', rd.lowPrice ? `<span>· ${cnt(rd.lowPrice)}원</span>` : ''].join('');
-    // 미노출 = 정지 아님 + 선택 기간 노출 0 (2026-07-23) · 상태 배지는 이미지 하단(사용자 지정)
-    const noImp = !paused && !it.b.imp;
-    const statusPill = `<span style="font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap;background:${paused ? 'var(--surface2)' : (noImp ? 'var(--amber-l, rgba(245,158,11,.12))' : 'var(--green-l)')};color:${paused ? 'var(--muted)' : (noImp ? 'var(--amber, #B45309)' : 'var(--green)')}">${paused ? (it.gOff ? '⚪ 정지 (그룹 OFF)' : '⚪ 정지') : (noImp ? '🟡 미노출' : '🟢 노출중')}</span>`;
+    // 상태 판정 (2026-07-27 보강): 사람이 끈 것(userLock·그룹OFF)과 별개로, 네이버가 중지시킨
+    // 시스템 중지(status=PAUSED인데 userLock=false — 예: AD_ABNORMAL_INTERLOCK 소재 연동 이상)를 구분.
+    // 토글은 ON이므로 세그먼트는 ON에 두되 🚫 배지 + 미노출 필터에 포함(조치 필요 신호).
+    const SYS_REASON = { AD_ABNORMAL_INTERLOCK: '소재 연동 이상', AD_UNDER_REVIEW: '검토 중', AD_REJECTED: '미승인' };
+    const sysPaused = !paused && a.status && a.status !== 'ELIGIBLE';
+    const sysLabel = sysPaused ? (SYS_REASON[a.statusReason] || a.statusReason || '시스템 중지') : '';
+    const noImp = !paused && !sysPaused && !it.b.imp;
+    const statusPill = paused
+      ? `<span style="font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap;background:var(--surface2);color:var(--muted)">${it.gOff ? '⚪ 정지 (그룹 OFF)' : '⚪ 정지'}</span>`
+      : sysPaused
+        ? `<span title="네이버가 중지시킨 상태 (statusReason: ${esc(a.statusReason || '')}) — 토글은 ON" style="font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap;background:var(--red-l);color:var(--red)">🚫 중지 · ${esc(sysLabel)}</span>`
+        : `<span style="font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap;background:${noImp ? 'var(--amber-l, rgba(245,158,11,.12))' : 'var(--green-l)'};color:${noImp ? 'var(--amber, #B45309)' : 'var(--green)'}">${noImp ? '🟡 미노출' : '🟢 노출중'}</span>`;
     const bidHtml = !it.hasBid
       ? '<span style="color:var(--muted);font-size:11px">브랜드형 · 입찰 조정 대상 아님</span>'
       : pend
@@ -375,7 +385,7 @@
     const M = [[`<span style="color:var(--green);font-weight:700">광고노출순위</span>`, rankV], ['품질', qiBar(a.nccQi && a.nccQi.qiGrade)], ['노출', cnt(it.b.imp)], ['클릭', cnt(it.b.clk)], ['CTR', it.ctr.toFixed(2) + '%'], ['CPC', won(Math.round(it.cpc))], ['총비용', won(it.b.cost)], ['구매', pend ? '<span style="color:var(--muted)">…</span>' : (it.pc.cnt + '건·' + cnt(it.pc.val))]];
     const roasTxt = pend ? '<span style="color:var(--muted)">…</span>' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
     const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
-    return `<div class="nvc-card" data-title="${esc(title.toLowerCase())}" data-changed="${changed ? '1' : '0'}" data-noimp="${noImp ? '1' : '0'}" data-status="${paused ? 'off' : 'on'}" style="${paused ? 'opacity:.62' : ''}">
+    return `<div class="nvc-card" data-title="${esc(title.toLowerCase())}" data-changed="${changed ? '1' : '0'}" data-noimp="${(noImp || sysPaused) ? '1' : '0'}" data-status="${paused ? 'off' : 'on'}" style="${paused ? 'opacity:.62' : ''}">
       <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
         <img class="nvc-thumb" src="${esc(thumb)}" onerror="this.style.opacity=.2">
         ${statusPill}
