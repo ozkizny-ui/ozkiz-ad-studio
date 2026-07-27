@@ -5247,27 +5247,30 @@ async function loadSpend7d() {
   try {
     const r = await fetch(`${PROXY}/api/meta?action=get_adset_insights&days=7`);
     const d = await r.json();
-    const map = {};
+    const map = {}; // prod -> {s: 소진, v: 구매전환값} (2026-07-27: ROAS 계산 위해 전환값도 합산)
     (d.adsets || []).forEach(a => {
       const prod = _adNorm(String(a.adset_name || '').split(';')[0]);
       if (!prod) return;
-      let s = 0;
-      (a.days || []).forEach(day => (day.hours || []).forEach(h => { s += h.spend || 0; }));
-      map[prod] = (map[prod] || 0) + s;
+      let s = 0, v = 0;
+      (a.days || []).forEach(day => (day.hours || []).forEach(h => { s += h.spend || 0; v += h.purchase_value || 0; }));
+      const m = (map[prod] ||= { s: 0, v: 0 });
+      m.s += s; m.v += v;
     });
     state._spend7d = map;
   } catch (e) { state._spend7d = null; }
   state._spend7dLoaded = true; state._spend7dLoading = false;
   renderAdNeedPage();
 }
-function spend7dOf(name) { // 양방향 부분일치 합산. 데이터 미로드 시 null
+function _spend7dAgg(name) { // 양방향 부분일치 합산 → {s,v} | null(미로드)
   const m = state._spend7d; if (!m) return null;
-  const k = _adNorm(name); if (!k) return 0;
-  if (m[k] != null) return Math.round(m[k]);
-  let sum = 0, hit = false;
-  for (const x in m) { if (x && (k.includes(x) || x.includes(k))) { sum += m[x]; hit = true; } }
-  return hit ? Math.round(sum) : 0;
+  const k = _adNorm(name); if (!k) return { s: 0, v: 0 };
+  if (m[k]) return m[k];
+  let s = 0, v = 0, hit = false;
+  for (const x in m) { if (x && (k.includes(x) || x.includes(k))) { s += m[x].s; v += m[x].v; hit = true; } }
+  return hit ? { s, v } : { s: 0, v: 0 };
 }
+function spend7dOf(name) { const a = _spend7dAgg(name); return a ? Math.round(a.s) : null; }
+function roas7dOf(name) { const a = _spend7dAgg(name); return (a && a.s > 0) ? Math.round(a.v / a.s * 100) : null; }
 // 소재명(state.metaAds) 매칭 — computeStockData와 동일 규칙(양방향 부분일치)
 function _adMatchMeta(name) {
   const k = _adNorm(name);
@@ -5322,16 +5325,23 @@ function renderAdNeedPage() {
     return hit ? prodByNorm[hit] : null;
   };
 
-  // 1) 광고집행요망: 재고 많음 & SERA 클릭가치 700↑ & 광고 미집행
+  // 광고 집행 여부·성과 판정 통일 (2026-07-27 버그 수정): 표의 '최근 7일 광고비'와 같은 소스(7일 소진·전환값).
+  // 기존엔 집행요망/재시도가 state.metaAds('데이터 불러오기' 후에만 채워지는 오늘 성과) 기준이라,
+  // 미로드 상태에선 광고 도는 제품(예: 아쿠아-에어로 7일 14.5만)이 '미집행'으로 집행요망에 오폭.
+  // 7일 데이터 미로드 시에만 metaAds 폴백.
+  const running7d = p => { const s = spend7dOf(p.name); return s != null ? s > 0 : p.hasAd; };
+  const recentRoas = p => { const r = roas7dOf(p.name); return r != null ? r : p.adRoas; };
+
+  // 1) 광고집행요망: 재고 많음 & SERA 클릭가치 700↑ & 최근 7일 광고비 0원(광고 안 돎)
   const adNeed = eligible
-    .filter(p => p.highStock && (p.seraClickValue||0) > 700 && !p.hasAd)
+    .filter(p => p.highStock && (p.seraClickValue||0) > 700 && !running7d(p))
     .map(p => ({ ...p, lyQty: lyQtyOf(p.name) }))
     .sort((a,b) => (b.onlineStockValue - a.onlineStockValue) || ((b.seraClickValue||0)-(a.seraClickValue||0)));
 
-  // 2) 재시도 후보: 광고 집행 중이나 최근 성과 미달(ROAS<목표) & 재고 많음
+  // 2) 재시도 후보: 최근 7일 광고 돌았으나 7일 ROAS ≤150% & 재고 많음
   const retry = eligible
-    .filter(p => p.highStock && p.hasAd && p.adRoas != null && p.adRoas <= AD_RETRY_MAX)
-    .map(p => ({ ...p, lyQty: lyQtyOf(p.name) }))
+    .filter(p => { const r = recentRoas(p); return p.highStock && running7d(p) && r != null && r <= AD_RETRY_MAX; })
+    .map(p => ({ ...p, lyQty: lyQtyOf(p.name), adRoas: recentRoas(p) }))
     .sort((a,b) => (b.onlineStockValue - a.onlineStockValue));
 
   // 4) 입고될 제품(미래재고): 노션 입고 DB — 3주 내 입고예정 + 생산중 상태
@@ -5455,9 +5465,10 @@ function renderAdNeedPage() {
       emptyMsg: `${word} 시즌 · 재고 많음 카테고리 없음` },
   };
 
+  // 집행요망·재시도는 7일 광고비 기준(자동 로드)이라 배너 불필요 — 카테고리 평균 ROAS(오늘 성과)만 해당 (2026-07-27)
   const hasAdPerf = products.some(p => p.adRoas != null);
-  const perfNote = hasAdPerf ? ''
-    : `<div style="font-size:11px;color:var(--amber);background:rgba(245,158,11,.08);border:0.5px solid rgba(245,158,11,.3);border-radius:8px;padding:8px 12px;margin-bottom:14px">⚠️ Meta 광고 성과가 로드되지 않아 ROAS·재시도 후보가 비어 있어요. <b>Meta 광고 예산 조정</b> 탭에서 <b>🔄 데이터 불러오기</b>를 누르면 채워집니다.</div>`;
+  const perfNote = (hasAdPerf || state._spend7dLoaded) ? ''
+    : `<div style="font-size:11px;color:var(--amber);background:rgba(245,158,11,.08);border:0.5px solid rgba(245,158,11,.3);border-radius:8px;padding:8px 12px;margin-bottom:14px">⚠️ 광고 성과 로딩 중 — 집행요망·재시도 판정은 최근 7일 소진 데이터가 로드되면 정확해집니다.</div>`;
 
   function section(title, tag, desc, containerId) {
     return `<div style="margin-bottom:24px">
@@ -5476,7 +5487,7 @@ function renderAdNeedPage() {
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">🗓️ 현재 시즌 <b style="color:var(--text)">${word}</b> 기준 · ROAS는 현재 불러온 Meta 광고 성과(최근) 기준 · <span>표 머리글 클릭 시 해당 컬럼 정렬</span></div>
     ${perfNote}
     ${section('🎯 광고 액션 후보 (통합)', '집행요망 · 입고예정 · 작년 톱셀러 · 재시도',
-        `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+광고 미집행 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매가 평균 이상(현재 창 기준 ${lyList.length ? lyMinQty.toLocaleString() + '개↑ · 상위 ' + lyTopCount + '개' : '계산 중'}, 전 채널)인데 최근 7일 광고비 0원 (재고총액 200만↑ 또는 입고예정 있는 것만) / <span class="tag red">🔁 재시도</span> 광고 집행 중이나 ROAS ${AD_RETRY_MAX}% 이하(배지의 %는 오늘 불러온 그 제품 광고의 ROAS) / <span class="tag" style="background:rgba(139,92,246,.12);color:#6d28d9;border:1px solid #ddd6fe">🆕 신상</span> 최초 등록 30일 이내(이지어드민 등록일, 옵션 추가만 된 기존 제품 제외) 또는 노션 입고예정 제품유형=신제품. ${inboundToggle}`, 'adneed-tbl-main')}
+        `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+최근 7일 광고비 0원 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매가 평균 이상(현재 창 기준 ${lyList.length ? lyMinQty.toLocaleString() + '개↑ · 상위 ' + lyTopCount + '개' : '계산 중'}, 전 채널)인데 최근 7일 광고비 0원 (재고총액 200만↑ 또는 입고예정 있는 것만) / <span class="tag red">🔁 재시도</span> 최근 7일 광고 돌았으나 7일 ROAS ${AD_RETRY_MAX}% 이하(배지의 %는 최근 7일 ROAS) / <span class="tag" style="background:rgba(139,92,246,.12);color:#6d28d9;border:1px solid #ddd6fe">🆕 신상</span> 최초 등록 30일 이내(이지어드민 등록일, 옵션 추가만 된 기존 제품 제외) 또는 노션 입고예정 제품유형=신제품. ${inboundToggle}`, 'adneed-tbl-main')}
     ${section('🗂️ 카테고리 추천', '재고 많음 제품 신호 합산 + 평균 ROAS',
         '카테고리별로 밀어야 할 재고(온라인 재고총액 합)와 자사몰 수요(클릭가치 합)를 합산했어요. 평균 ROAS는 해당 카테고리 광고 성과(spend 가중).', 'adneed-tbl-cats')}`;
 
