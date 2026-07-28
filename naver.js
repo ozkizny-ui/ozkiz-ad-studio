@@ -279,6 +279,7 @@
       </div>`).join('')).join('');
     // 스냅샷 소스(상품형만) — '📋 스냅샷 복사' 버튼용 (2026-07-28)
     nvSnapProducts = [];
+    nvSnapPending = pending; // 구매전환 집계 전이면 ROAS가 비므로 복사 시 경고
     structure.forEach(s => s.groups.forEach(gr => {
       if (gr.isBrand) return;
       gr.items.forEach(it => {
@@ -873,8 +874,9 @@
 
   // ── 📋 스냅샷 복사 (2026-07-28): 라이브 상품형 광고 + 최근 7일 ON/OFF 기록 → TSV 클립보드 ──
   //    정렬: ON 먼저 → OFF, 각 그룹 안에서 총비용(선택 기간) 내림차순. 시트에 바로 붙여넣기 가능.
-  let nvSnapProducts = [];
+  let nvSnapProducts = [], nvSnapPending = true;
   async function nvcSnapshot(btn) {
+    if (nvSnapPending && !confirm('구매 ROAS가 아직 집계 중이라 ROAS 컬럼이 비어 있어요.\n집계가 끝나면(상단 타일 숫자 표시) 다시 누르는 걸 권장합니다.\n그래도 지금 복사할까요?')) return;
     const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳ 생성 중…';
     try {
       // 최근 7일 ON/OFF 기록 (앱 조작 + 외부감지 + 수동 등록 모두)
@@ -897,14 +899,17 @@
       const clean = v => String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
       const kst = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
       const head = `네이버 쇼핑검색 상품형 스냅샷 · 생성 ${kst} (KST) · 데이터 기간: ${periodLabel()} · ${rows.length}개 (라이브 전체 + 7일 내 ON/OFF 기록)`;
-      const cols = ['상태', '썸네일', '제품', '광고그룹', `총비용(${periodLabel()})`, 'ROAS', '최근 7일 ON/OFF 기록'];
+      // 제품명을 첫 컬럼으로(노션 붙여넣기 시 제목(Aa)=소재명), 썸네일은 맨 끝(노션이 이미지를
+      // 파일 속성으로 옮기며 열이 밀리던 문제 회피 — 2026-07-28)
+      const cols = ['제품', '상태', '광고그룹', `총비용(${periodLabel()})`, 'ROAS', '최근 7일 ON/OFF 기록', '썸네일'];
       const cell = it => [
+        clean(it.name),
         stLabel(it),
-        it.thumb ? `=IMAGE("${String(it.thumb).replace(/"/g, '')}")` : '', // 시트/엑셀365에서 이미지로 렌더
-        clean(it.name), clean(it.group),
+        clean(it.group),
         Math.round(it.cost).toLocaleString() + '원',
         it.roas != null ? it.roas + '%' : '-',
         (recent[it.id] || []).join(' / ') || '-',
+        it.thumb ? `=IMAGE("${String(it.thumb).replace(/"/g, '')}")` : '', // 시트/엑셀365에서 이미지로 렌더
       ];
       const tsv = [head, cols.join('\t'), ...rows.map(it => cell(it).join('\t'))].join('\n');
       // HTML 포맷(이미지 셀 포함) — 구글시트는 붙여넣기 시 HTML을 우선 사용해 <img>를 셀 이미지로 삽입
@@ -913,8 +918,8 @@
         `<tr>${cols.map(c => `<th>${eh(c)}</th>`).join('')}</tr>` +
         rows.map(it => {
           const c = cell(it);
-          return `<tr><td>${eh(c[0])}</td><td>${it.thumb ? `<img src="${eh(it.thumb)}" width="64">` : ''}</td>` +
-            c.slice(2).map(x => `<td>${eh(x)}</td>`).join('') + '</tr>';
+          return '<tr>' + c.slice(0, 6).map(x => `<td>${eh(x)}</td>`).join('') +
+            `<td>${it.thumb ? `<img src="${eh(it.thumb)}" width="64">` : ''}</td></tr>`;
         }).join('') + '</table>';
       // 이중 포맷 클립보드(HTML+텍스트) → 미지원 브라우저는 TSV 텍스트 폴백
       try {
