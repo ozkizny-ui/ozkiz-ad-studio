@@ -291,8 +291,10 @@
           id: a.nccAdId,
           name: rdS.productTitle || adcS.headline || a.nccAdId,
           thumb: rdS.imageUrl || (adcS.image ? (/^https?:/.test(adcS.image) ? adcS.image : EXT_IMG + adcS.image) : ''),
+          pid: rdS.mallProductId || '', // 오가닉 순위 매칭키(스마트스토어 상품번호)
           group: gr.group.name, camp: s.camp.name,
-          cost: it.b.cost, imp: it.b.imp, roas: (!it.pending && it.b.cost) ? Math.round(it.roas) : null,
+          cost: it.b.cost, imp: it.b.imp, rank: it.b.rank || 0,
+          roas: (!it.pending && it.b.cost) ? Math.round(it.roas) : null,
           paused, gOff: it.gOff, sysP, noImp: !paused && !sysP && !it.b.imp,
         });
       });
@@ -899,13 +901,23 @@
       const clean = v => String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
       const kst = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
       const head = `네이버 쇼핑검색 상품형 스냅샷 · 생성 ${kst} (KST) · 데이터 기간: ${periodLabel()} · ${rows.length}개 (라이브 전체 + 7일 내 ON/OFF 기록)`;
+      // 오가닉 순위(추적 키워드 top100, 검색수 상위 3개) — 카드와 동일 소스(loadOrganicRanks)
+      const org = await loadOrganicRanks().catch(() => null);
+      const orgTxt = it => {
+        if (!org || !it.pid) return '-';
+        const list = org[it.pid];
+        if (!list || !list.length) return '순위권 밖';
+        return list.slice(0, 3).map(k => `${k.keyword} ${k.rank}위`).join(' / ');
+      };
       // 제품명을 첫 컬럼으로(노션 붙여넣기 시 제목(Aa)=소재명), 썸네일은 맨 끝(노션이 이미지를
       // 파일 속성으로 옮기며 열이 밀리던 문제 회피 — 2026-07-28)
-      const cols = ['제품', '상태', '광고그룹', `총비용(${periodLabel()})`, 'ROAS', '최근 7일 ON/OFF 기록', '썸네일'];
+      const cols = ['제품', '상태', '광고그룹', '광고순위', '오가닉 순위', `총비용(${periodLabel()})`, 'ROAS', '최근 7일 ON/OFF 기록', '썸네일'];
       const cell = it => [
         clean(it.name),
         stLabel(it),
         clean(it.group),
+        it.rank > 0 ? it.rank.toFixed(1) + '위' : '-',
+        clean(orgTxt(it)),
         Math.round(it.cost).toLocaleString() + '원',
         it.roas != null ? it.roas + '%' : '-',
         (recent[it.id] || []).join(' / ') || '-',
@@ -918,7 +930,7 @@
         `<tr>${cols.map(c => `<th>${eh(c)}</th>`).join('')}</tr>` +
         rows.map(it => {
           const c = cell(it);
-          return '<tr>' + c.slice(0, 6).map(x => `<td>${eh(x)}</td>`).join('') +
+          return '<tr>' + c.slice(0, 8).map(x => `<td>${eh(x)}</td>`).join('') +
             `<td>${it.thumb ? `<img src="${eh(it.thumb)}" width="64">` : ''}</td></tr>`;
         }).join('') + '</table>';
       // 이중 포맷 클립보드(HTML+텍스트) → 미지원 브라우저는 TSV 텍스트 폴백
