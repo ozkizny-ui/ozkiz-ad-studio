@@ -5444,14 +5444,15 @@ function renderAdNeedPage() {
   const catMap = {};
   eligible.filter(p => p.highStock).forEach(p => {
     const c = p.category || '기타';
-    if (!catMap[c]) catMap[c] = { cat:c, count:0, stockValue:0, clickValue:0, adSpend:0, adRev:0, adCount:0 };
+    if (!catMap[c]) catMap[c] = { cat:c, count:0, stockValue:0, cvCount:0, adSpend:0, adRev:0, adCount:0 };
     const m = catMap[c];
-    m.count++; m.stockValue += p.onlineStockValue||0; m.clickValue += p.seraClickValue||0;
+    m.count++; m.stockValue += p.onlineStockValue||0;
+    if ((p.seraClickValue||0) > 700) m.cvCount++; // 집행요망과 동일 기준(클릭가치 700↑)
     if (p.adRoas != null) { m.adSpend += p.adSpend||0; m.adRev += p.adRev||0; m.adCount++; }
   });
   const cats = Object.values(catMap)
     .map(m => ({ ...m, roas: m.adSpend > 0 ? Math.round(m.adRev/m.adSpend*100) : null }))
-    .sort((a,b) => (b.stockValue - a.stockValue) || (b.clickValue - a.clickValue));
+    .sort((a,b) => (b.stockValue - a.stockValue) || (b.cvCount - a.cvCount));
 
   // 사이드바 배지 = 광고집행요망 건수
   const badge = document.getElementById('badge-adneed');
@@ -5489,7 +5490,7 @@ function renderAdNeedPage() {
     ${section('🎯 광고 액션 후보 (통합)', '집행요망 · 입고예정 · 작년 톱셀러 · 재시도',
         `네 가지 신호를 제품 단위로 합친 표 — 신호가 겹칠수록 우선순위 높음. <span class="tag green">🎯 집행요망</span> 재고 많음+클릭가치 700↑+최근 7일 광고비 0원 / <span class="tag amber">📦 입고</span> 3주 내 입고예정(생산중), ⚡=재입고인데 광고 안 돎 / <span class="tag" style="background:rgba(59,130,246,.12);color:#1d4ed8;border:1px solid #bfdbfe">🕰️ 작년 톱셀러</span> ${lyRangeLabel} 판매가 평균 이상(현재 창 기준 ${lyList.length ? lyMinQty.toLocaleString() + '개↑ · 상위 ' + lyTopCount + '개' : '계산 중'}, 전 채널)인데 최근 7일 광고비 0원 (재고총액 200만↑ 또는 입고예정 있는 것만) / <span class="tag red">🔁 재시도</span> 최근 7일 광고 돌았으나 7일 ROAS ${AD_RETRY_MAX}% 이하(배지의 %는 최근 7일 ROAS) / <span class="tag" style="background:rgba(139,92,246,.12);color:#6d28d9;border:1px solid #ddd6fe">🆕 신상</span> 최초 등록 45일 이내(이지어드민 등록일, 옵션 추가만 된 기존 제품 제외) 또는 노션 입고예정 제품유형=신제품. ${inboundToggle}`, 'adneed-tbl-main')}
     ${section('🗂️ 카테고리 추천', '재고 많음 제품 신호 합산 + 평균 ROAS',
-        '카테고리별로 밀어야 할 재고(온라인 재고총액 합)와 자사몰 수요(클릭가치 합)를 합산했어요. 평균 ROAS는 해당 카테고리 광고 성과(spend 가중).', 'adneed-tbl-cats')}`;
+        '카테고리별로 밀어야 할 재고(온라인 재고총액 합)와 광고 걸 만한 제품 수(SERA 클릭가치 700↑, 집행요망과 동일 기준)를 집계했어요. 평균 ROAS는 해당 카테고리 광고 성과(spend 가중).', 'adneed-tbl-cats')}`;
 
   renderAdNeedTable('main');
   renderAdNeedTable('cats');
@@ -5611,7 +5612,7 @@ const ADNEED_COLS = {
     { key:'cat',        label:'카테고리',          align:'left',  type:'str', cell:c=>`<b>${c.cat}</b>` },
     { key:'count',      label:'제품수',            align:'right', type:'num', cell:c=>_adInt(c.count,'개') },
     { key:'stockValue', label:'온라인 재고총액 합',align:'right', type:'num', cell:c=>_adWon(c.stockValue) },
-    { key:'clickValue', label:'SERA 클릭가치 합',  align:'right', type:'num', cell:c=>_adInt(c.clickValue) },
+    { key:'cvCount',    label:'클릭가치 700↑ 제품 수', align:'right', type:'num', cell:c=>_adInt(c.cvCount,'개') },
     { key:'roas',       label:'평균 ROAS',         align:'right', type:'num', cell:c=>_adRoasCell(c.roas) },
   ],
 };
