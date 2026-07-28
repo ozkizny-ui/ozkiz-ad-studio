@@ -333,7 +333,7 @@
           ${segBtn('all', `전체 ${cntOn + cntOff}`)}${segBtn('on', `🟢 ON ${cntOn}`)}${segBtn('off', `⚪ OFF ${cntOff}`)}
         </div>
         ${campSel}
-        <button id="nvc-snapshot" title="현재 라이브 상품형 광고 + 최근 7일 ON/OFF 기록을 표(TSV)로 복사 — 시트에 바로 붙여넣기" style="margin-left:auto;padding:8px 14px;border-radius:10px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;font-weight:700;font-size:12.5px">📋 스냅샷 복사</button>
+        <button id="nvc-snapshot" title="현재 라이브 상품형 광고 + 최근 2주 ON/OFF 기록을 표(TSV)로 복사 — 시트에 바로 붙여넣기" style="margin-left:auto;padding:8px 14px;border-radius:10px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;font-weight:700;font-size:12.5px">📋 스냅샷 복사</button>
         <span id="nvc-selmeta" style="font-size:12px;color:var(--muted);${(!pending && nvSuggestions.length) ? '' : 'display:none'}"><a href="javascript:void(0)" id="nvc-selnone" style="color:var(--accent-d);font-weight:700;text-decoration:none">전체 해제</a></span>
         <button id="nvc-applyall" style="${pBtn}" ${(!pending && nvSuggestions.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음')}</button>
       </div>
@@ -881,11 +881,11 @@
     if (nvSnapPending && !confirm('구매 ROAS가 아직 집계 중이라 ROAS 컬럼이 비어 있어요.\n집계가 끝나면(상단 타일 숫자 표시) 다시 누르는 걸 권장합니다.\n그래도 지금 복사할까요?')) return;
     const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳ 생성 중…';
     try {
-      // 최근 7일 ON/OFF 기록 (앱 조작 + 외부감지 + 수동 등록 모두)
+      // 최근 2주 ON/OFF 기록 (앱 조작 + 외부감지 + 수동 등록 모두 — 2026-07-28: 7일→14일, 오가닉 상위라 수동 OFF한 소재들이 창 밖으로 빠지던 문제)
       let recent = {};
       try {
         const all = await loadAllHistory();
-        const cut = Date.now() - 7 * 86400000;
+        const cut = Date.now() - 14 * 86400000;
         all.filter(c => c.channel === 'onoff' && new Date(c.changed_at).getTime() >= cut)
           .sort((a, b) => a.changed_at < b.changed_at ? -1 : 1)
           .forEach(c => {
@@ -900,7 +900,7 @@
       const stLabel = it => it.paused ? (it.gOff ? 'OFF(그룹)' : 'OFF') : (it.sysP ? '중지(연동이상)' : (it.noImp ? 'ON·미노출' : 'ON·노출중'));
       const clean = v => String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
       const kst = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
-      const head = `네이버 쇼핑검색 상품형 스냅샷 · 생성 ${kst} (KST) · 데이터 기간: ${periodLabel()} · ${rows.length}개 (라이브 전체 + 7일 내 ON/OFF 기록)`;
+      const head = `네이버 쇼핑검색 상품형 스냅샷 · 생성 ${kst} (KST) · 데이터 기간: ${periodLabel()} · ${rows.length}개 (라이브 전체 + 2주 내 ON/OFF 기록)`;
       // 오가닉 순위(추적 키워드 top100, 검색수 상위 3개) — 카드와 동일 소스(loadOrganicRanks)
       const org = await loadOrganicRanks().catch(() => null);
       const orgTxt = it => {
@@ -911,7 +911,7 @@
       };
       // 제품명을 첫 컬럼으로(노션 붙여넣기 시 제목(Aa)=소재명), 썸네일은 맨 끝(노션이 이미지를
       // 파일 속성으로 옮기며 열이 밀리던 문제 회피 — 2026-07-28)
-      const cols = ['제품', '상태', '광고그룹', '광고순위', '오가닉 순위', `총비용(${periodLabel()})`, 'ROAS', '최근 7일 ON/OFF 기록', '썸네일'];
+      const cols = ['제품', '상태', '광고그룹', '광고순위', '오가닉 순위', `총비용(${periodLabel()})`, 'ROAS', '최근 2주 ON/OFF 기록', '썸네일'];
       const cell = it => [
         clean(it.name),
         stLabel(it),
