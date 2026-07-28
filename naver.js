@@ -277,6 +277,26 @@
         </div>
         ${gr.isBrand ? brandGroupBody(gr) : gr.items.map(fullCard).join('')}
       </div>`).join('')).join('');
+    // 스냅샷 소스(상품형만) — '📋 스냅샷 복사' 버튼용 (2026-07-28)
+    nvSnapProducts = [];
+    structure.forEach(s => s.groups.forEach(gr => {
+      if (gr.isBrand) return;
+      gr.items.forEach(it => {
+        const a = it.a;
+        const paused = it.gOff || a.userLock === true;
+        const sysP = !paused && a.status && a.status !== 'ELIGIBLE';
+        const rdS = a.referenceData || {}, adcS = a.ad || {};
+        nvSnapProducts.push({
+          id: a.nccAdId,
+          name: rdS.productTitle || adcS.headline || a.nccAdId,
+          thumb: rdS.imageUrl || (adcS.image ? (/^https?:/.test(adcS.image) ? adcS.image : EXT_IMG + adcS.image) : ''),
+          group: gr.group.name, camp: s.camp.name,
+          cost: it.b.cost, imp: it.b.imp, roas: (!it.pending && it.b.cost) ? Math.round(it.roas) : null,
+          paused, gOff: it.gOff, sysP, noImp: !paused && !sysP && !it.b.imp,
+        });
+      });
+    }));
+
     // 상태 카운트: ON=운영중(그룹·소재 모두), OFF=그룹 OFF 또는 소재 정지. 미노출=ON인데 기간 노출 0
     let gNoImp = 0, cntOn = 0, cntOff = 0;
     structure.forEach(s => s.groups.forEach(gr => gr.items.forEach(it => {
@@ -310,7 +330,8 @@
           ${segBtn('all', `전체 ${cntOn + cntOff}`)}${segBtn('on', `🟢 ON ${cntOn}`)}${segBtn('off', `⚪ OFF ${cntOff}`)}
         </div>
         ${campSel}
-        <span id="nvc-selmeta" style="margin-left:auto;font-size:12px;color:var(--muted);${(!pending && nvSuggestions.length) ? '' : 'display:none'}"><a href="javascript:void(0)" id="nvc-selnone" style="color:var(--accent-d);font-weight:700;text-decoration:none">전체 해제</a></span>
+        <button id="nvc-snapshot" title="현재 라이브 상품형 광고 + 최근 7일 ON/OFF 기록을 표(TSV)로 복사 — 시트에 바로 붙여넣기" style="margin-left:auto;padding:8px 14px;border-radius:10px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;font-weight:700;font-size:12.5px">📋 스냅샷 복사</button>
+        <span id="nvc-selmeta" style="font-size:12px;color:var(--muted);${(!pending && nvSuggestions.length) ? '' : 'display:none'}"><a href="javascript:void(0)" id="nvc-selnone" style="color:var(--accent-d);font-weight:700;text-decoration:none">전체 해제</a></span>
         <button id="nvc-applyall" style="${pBtn}" ${(!pending && nvSuggestions.length) ? '' : 'disabled'}>${pending ? '⏳ 구매전환 집계 중…' : (nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음')}</button>
       </div>
       <div id="nvc-dash">${sections}</div>
@@ -341,6 +362,7 @@
     const csel = $('#nvf-campsel'); if (csel) csel.onchange = () => { dashCamp = csel.value; applyFilters(); };
     document.querySelectorAll('.nvf-period').forEach(b => b.onclick = () => { dashDays = +b.dataset.d; renderBid(); });
     document.querySelectorAll('.nv-hist').forEach(b => b.onclick = () => toggleEntityHistory(b));
+    const snapBtn = $('#nvc-snapshot'); if (snapBtn) snapBtn.onclick = () => nvcSnapshot(snapBtn);
     const updateApplyBtn = () => { const n = document.querySelectorAll('.nvc-cb:checked').length; const bt = $('#nvc-applyall'); if (bt) { bt.disabled = !n; bt.textContent = n ? `▶ 선택 ${n}건 입찰가 반영` : '선택된 항목 없음'; } };
     document.querySelectorAll('.nvc-cb').forEach(cb => cb.onchange = updateApplyBtn);
     const btn = $('#nvc-applyall'); if (btn) { btn.onclick = () => applyAll(); if (!pending && nvSuggestions.length) updateApplyBtn(); }
@@ -847,6 +869,63 @@
           return `<div style="font-size:11px;padding:1px 0;display:flex;gap:8px"><span style="min-width:78px;color:var(--muted)">${fmt(c.changed_at)}</span><span>입찰 ${cnt(c.old_bid)} → <b style="color:${col}">${cnt(c.new_bid)}원</b></span></div>`;
         }).join(''));
     } catch (e) { fill('<span style="font-size:11px;color:var(--red)">이력 조회 실패: ' + esc(e.message || String(e)) + '</span>'); }
+  }
+
+  // ── 📋 스냅샷 복사 (2026-07-28): 라이브 상품형 광고 + 최근 7일 ON/OFF 기록 → TSV 클립보드 ──
+  //    정렬: ON 먼저 → OFF, 각 그룹 안에서 총비용(선택 기간) 내림차순. 시트에 바로 붙여넣기 가능.
+  let nvSnapProducts = [];
+  async function nvcSnapshot(btn) {
+    const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳ 생성 중…';
+    try {
+      // 최근 7일 ON/OFF 기록 (앱 조작 + 외부감지 + 수동 등록 모두)
+      let recent = {};
+      try {
+        const all = await loadAllHistory();
+        const cut = Date.now() - 7 * 86400000;
+        all.filter(c => c.channel === 'onoff' && new Date(c.changed_at).getTime() >= cut)
+          .sort((a, b) => a.changed_at < b.changed_at ? -1 : 1)
+          .forEach(c => {
+            const t = new Date(new Date(c.changed_at).getTime() + 9 * 3600000).toISOString().slice(5, 10);
+            (recent[c.entity_id] ||= []).push(`${t} ${c.new_bid === 1 ? 'ON' : 'OFF'}${String(c.name || '').includes('(외부감지)') ? '(관리자)' : ''}`);
+          });
+      } catch (e) {}
+      const rows = nvSnapProducts
+        .filter(it => !it.paused || recent[it.id])
+        .sort((a, b) => (a.paused - b.paused) || (b.cost - a.cost));
+      if (!rows.length) { btn.textContent = '대상 없음'; setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1500); return; }
+      const stLabel = it => it.paused ? (it.gOff ? 'OFF(그룹)' : 'OFF') : (it.sysP ? '중지(연동이상)' : (it.noImp ? 'ON·미노출' : 'ON·노출중'));
+      const clean = v => String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
+      const kst = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
+      const head = `네이버 쇼핑검색 상품형 스냅샷 · 생성 ${kst} (KST) · 데이터 기간: ${periodLabel()} · ${rows.length}개 (라이브 전체 + 7일 내 ON/OFF 기록)`;
+      const cols = ['상태', '썸네일', '제품', '광고그룹', `총비용(${periodLabel()})`, 'ROAS', '최근 7일 ON/OFF 기록'];
+      const cell = it => [
+        stLabel(it),
+        it.thumb ? `=IMAGE("${String(it.thumb).replace(/"/g, '')}")` : '', // 시트/엑셀365에서 이미지로 렌더
+        clean(it.name), clean(it.group),
+        Math.round(it.cost).toLocaleString() + '원',
+        it.roas != null ? it.roas + '%' : '-',
+        (recent[it.id] || []).join(' / ') || '-',
+      ];
+      const tsv = [head, cols.join('\t'), ...rows.map(it => cell(it).join('\t'))].join('\n');
+      // HTML 포맷(이미지 셀 포함) — 구글시트는 붙여넣기 시 HTML을 우선 사용해 <img>를 셀 이미지로 삽입
+      const eh = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const htmlTbl = `<table><tr><td colspan="${cols.length}">${eh(head)}</td></tr>` +
+        `<tr>${cols.map(c => `<th>${eh(c)}</th>`).join('')}</tr>` +
+        rows.map(it => {
+          const c = cell(it);
+          return `<tr><td>${eh(c[0])}</td><td>${it.thumb ? `<img src="${eh(it.thumb)}" width="64">` : ''}</td>` +
+            c.slice(2).map(x => `<td>${eh(x)}</td>`).join('') + '</tr>';
+        }).join('') + '</table>';
+      // 이중 포맷 클립보드(HTML+텍스트) → 미지원 브라우저는 TSV 텍스트 폴백
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/plain': new Blob([tsv], { type: 'text/plain' }),
+          'text/html': new Blob([htmlTbl], { type: 'text/html' }),
+        })]);
+      } catch (e2) { await navigator.clipboard.writeText(tsv); }
+      btn.textContent = `✓ ${rows.length}행 복사됨 — 시트에 붙여넣기`;
+    } catch (e) { btn.textContent = '복사 실패'; alert('스냅샷 복사 실패: ' + (e.message || e)); }
+    setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 2500);
   }
 
   // ── 최근 변경 상시 표시 (2026-07-23): 카드 하단 '🕐 최근 변경'과 키워드 표 이력 셀을 채움 ──
