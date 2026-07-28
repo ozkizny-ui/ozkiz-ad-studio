@@ -834,9 +834,9 @@
     try {
       const all = await loadAllHistory();
       const mine = all.filter(c => c.entity_id === btn.dataset.id);
-      if (!mine.length) { fill('<span style="font-size:11px;color:var(--muted)">이 항목의 변경 이력이 없어요. (이 앱에서 조작한 입찰·ON/OFF만 기록됩니다 — 네이버 관리자에서 직접 바꾼 건 안 남아요)</span>'); return; }
+      if (!mine.length) { fill('<span style="font-size:11px;color:var(--muted)">이 항목의 변경 이력이 없어요.</span>'); return; }
       const fmt = (iso) => { const k = new Date(new Date(iso).getTime() + 9 * 3600000); return k.toISOString().slice(5, 16).replace('T', ' '); };
-      fill(`<div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:3px">변경 이력 ${mine.length}건 <span style="font-weight:400">(이 앱에서 조작한 것만)</span></div>` +
+      fill(`<div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:3px">변경 이력 ${mine.length}건</div>` +
         mine.map(c => {
           if (c.channel === 'onoff') {
             const on = c.new_bid === 1;
