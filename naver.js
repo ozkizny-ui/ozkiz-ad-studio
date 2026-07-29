@@ -728,15 +728,23 @@
   function termIdx() {
     if (nvTermIdxCache) return nvTermIdxCache;
     const m = {};
-    (nvTermsCache || []).forEach(r => { const t = (m[r.term] ||= { list: [], imp: 0 }); t.list.push(r); t.imp += r.imp || 0; });
-    for (const k in m) m[k].list.sort((a, b) => (b.imp || 0) - (a.imp || 0));
+    (nvTermsCache || []).forEach(r => { const t = (m[r.term] ||= { list: [], imp: 0, cost: 0, conv: 0, rankW: 0, rankImp: 0 }); t.list.push(r); t.imp += r.imp || 0; t.cost += Number(r.cost) || 0; t.conv += Number(r.conv_value) || 0; if (r.avg_rank != null && r.imp > 0) { t.rankW += Number(r.avg_rank) * r.imp; t.rankImp += r.imp; } });
+    for (const k in m) { const t = m[k]; t.list.sort((a, b) => (b.cost || 0) - (a.cost || 0)); t.roas = t.cost > 0 ? Math.round(t.conv / t.cost * 100) : null; t.rank = t.rankImp > 0 ? Math.round(t.rankW / t.rankImp * 10) / 10 : null; } // 대표 ROAS·랭킹 = 전 그룹 노출/비용 가중
     nvTermIdxCache = m; return m;
+  }
+  // 대시보드 구조 기반 그룹 평균 광고순위 — 보고서에 평균노출순위 컬럼이 없을 때의 대체값(≈, 전체 검색어 평균)
+  function dashGroupRank() {
+    const m = {};
+    (dashFlat || []).forEach(x => { const g = (m[x.grName] ||= { w: 0, imp: 0 }); const b = x.it.b; if (b.rank > 0 && b.imp > 0) { g.w += b.rank * b.imp; g.imp += b.imp; } });
+    const out = {};
+    for (const k in m) if (m[k].imp > 0) out[k] = Math.round(m[k].w / m[k].imp * 10) / 10;
+    return out;
   }
   async function loadSearchTerms() {
     if (nvTermsCache !== null) return nvTermsCache;
     if (MOCK) { nvTermsCache = [{ term: '유아원피스', campaign: 'ONS', adgroup: '원피스_모모리본', imp: 1240, clk: 33, cost: 32000, conv_value: 67000, updated_at: new Date().toISOString() }]; nvTermsTs = nvTermsCache[0].updated_at; nvTermIdxCache = null; return nvTermsCache; }
     try {
-      const rows = await sbGet('nv_search_terms', 'term,campaign,adgroup,imp,clk,cost,conv_value,updated_at');
+      const rows = await sbGet('nv_search_terms', 'term,campaign,adgroup,imp,clk,cost,conv_value,avg_rank,updated_at');
       nvTermsCache = Array.isArray(rows) ? rows : [];
       nvTermsTs = nvTermsCache.length ? nvTermsCache[0].updated_at : null;
     } catch (e) { nvTermsCache = []; nvTermsTs = null; } // 테이블 미생성·게이트웨이 오류 → '미업로드'로 표시
@@ -749,31 +757,42 @@
     const k = new Date(new Date(nvTermsTs).getTime() + 9 * 3600000);
     return `검색어 보고서: ✓ ${cnt(nvTermsCache.length)}행 · 마지막 업로드 ${k.toISOString().slice(0, 16).replace('T', ' ')} (KST)`;
   }
-  function adCellHtml(kw) {
-    if (nvTermsCache === null) return '<span style="color:var(--muted);font-size:11px">…</span>';
-    if (!nvTermsCache.length) return '<span style="color:var(--muted);font-size:11px">보고서 미업로드</span>';
+  function kwAdInfo(kw) { // 광고 셀 HTML + 대표 광고랭킹(정렬용) — 랭킹은 CSV 평균노출순위 우선, 없으면 대시보드 평균(≈)
+    if (nvTermsCache === null) return { html: '<span style="color:var(--muted);font-size:11px">…</span>', rank: null };
+    if (!nvTermsCache.length) return { html: '<span style="color:var(--muted);font-size:11px">보고서 미업로드</span>', rank: null };
     const t = termIdx()[kw];
-    if (!t || !t.list.length) return '<span style="color:var(--muted);font-size:11px">노출 기록 없음</span>';
-    return t.list.slice(0, 4).map(g => {
+    if (!t || !t.list.length) return { html: '<span style="color:var(--muted);font-size:11px">노출 기록 없음</span>', rank: null };
+    const fb = dashGroupRank(); // 대체값(그룹 전체 검색어 평균)
+    let fbW = 0, fbImp = 0;
+    const html = t.list.slice(0, 4).map(g => {
       const roas = g.cost > 0 ? Math.round((g.conv_value || 0) / g.cost * 100) : null;
-      return `<span class="nvs-oc a" title="${esc(g.adgroup)} · 노출 ${cnt(g.imp)} · 클릭 ${cnt(g.clk)} · ${won(g.cost)}${roas != null ? ' · ROAS ' + roas + '%' : ''}">${esc(g.adgroup)} ${cnt(g.imp)}회${roas != null ? ' · ' + roas + '%' : ''}</span>`;
+      const rc = roas == null ? 'var(--muted)' : roas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)';
+      const rk = g.avg_rank != null ? Math.round(Number(g.avg_rank) * 10) / 10 : null;
+      const rkFb = rk == null ? fb[g.adgroup] : null;
+      if (rkFb != null && g.imp > 0) { fbW += rkFb * g.imp; fbImp += g.imp; }
+      const rkV = rk != null ? rk : rkFb;
+      const rkc = rkV == null ? 'var(--muted)' : rkV <= 5 ? 'var(--green)' : rkV <= 10 ? 'var(--amber, #B45309)' : 'var(--red)';
+      const rkHtml = rkV == null ? '' : `<b style="color:${rkc}">${rk == null ? '≈' : ''}${rkV}위</b> · `;
+      const tip = `${g.adgroup} · ${rk != null ? '이 검색어 평균노출순위 ' + rk + '위' : (rkFb != null ? '순위 ≈' + rkFb + '위 (보고서에 순위 없음 → 대시보드 전체 평균)' : '순위 정보 없음')} · 노출 ${cnt(g.imp)} · 클릭 ${cnt(g.clk)} · ${won(g.cost)}${roas != null ? ' · ROAS ' + roas + '%' : ' · 클릭 0(비용 없음)'}`;
+      return `<span class="nvs-oc a" title="${esc(tip)}">${esc(g.adgroup)} ${rkHtml}<b style="color:${rc}">${roas != null ? roas + '%' : '—'}</b></span>`;
     }).join('') + (t.list.length > 4 ? `<span style="color:var(--muted);font-size:10.5px"> 외 ${t.list.length - 4}그룹</span>` : '');
+    const rank = t.rank != null ? t.rank : (fbImp > 0 ? Math.round(fbW / fbImp * 10) / 10 : null);
+    return { html, rank };
   }
   function kwRow(kw, info) {
+    // 2026-07-29 사용자 지정: '오가닉 최고' 별도 컬럼 제거(첫 칩과 중복) — 최고순위는 정렬값(data-kbest)으로만 유지
     const best = info.products.length ? info.products[0].rank : null;
-    const bestCell = best == null ? '<span style="color:var(--muted)">—</span>'
-      : `<b style="font-size:13.5px;font-weight:900;color:${best <= 10 ? 'var(--green)' : best <= 50 ? 'var(--amber, #B45309)' : 'var(--muted)'}">${best}위</b>`;
     const shortT = (t) => { const s = String(t).replace(/오즈키즈|OZKIZ/gi, '').trim(); return s.length > 16 ? s.slice(0, 16) + '…' : s; };
     const orgCell = info.products.length
       ? info.products.slice(0, 5).map(p => `<span class="nvs-oc ${p.rank <= 10 ? 't' : p.rank <= 50 ? 'm' : 'l'} nvk-chip" data-pid="${esc(p.pid)}" style="cursor:pointer" title="${esc(p.title)} · ${p.rank}위 — 클릭: 광고 소재 상세">${esc(shortT(p.title))} ${p.rank}</span>`).join('')
       : '<span style="color:var(--muted);font-size:11px">순위권 밖 (top100 진입 없음)</span>';
     const t = termIdx()[kw];
-    return `<tr class="nvk-row" data-title="${esc(kw.toLowerCase())}" data-kname="${esc(kw)}" data-kvol="${info.vol || ''}" data-kbest="${best == null ? '' : best}" data-kimp="${t ? t.imp : ''}">
+    const ad = kwAdInfo(kw);
+    return `<tr class="nvk-row" data-title="${esc(kw.toLowerCase())}" data-kname="${esc(kw)}" data-kvol="${info.vol || ''}" data-kbest="${best == null ? '' : best}" data-kroas="${t && t.roas != null ? t.roas : ''}" data-krank="${ad.rank != null ? ad.rank : ''}">
       <td style="font-weight:700">${esc(kw)}</td>
       <td style="text-align:right">${info.vol ? cnt(info.vol) : '<span style="color:var(--muted)">—</span>'}</td>
-      <td style="text-align:right">${bestCell}</td>
       <td class="nvk-org">${orgCell}</td>
-      <td class="nvk-ad" data-kw="${esc(kw)}">${adCellHtml(kw)}</td>
+      <td class="nvk-ad" data-kw="${esc(kw)}">${ad.html}</td>
     </tr>`;
   }
   function kwTable() {
@@ -790,13 +809,12 @@
     if (!organicKwCache) return bar + '<div id="nvk-empty" style="color:var(--muted);padding:18px">⏳ 오가닉 순위 데이터 불러오는 중…</div>';
     const entries = Object.entries(organicKwCache);
     return bar + `<div class="nvs-wrap"><table id="nvk-table">
-      <colgroup><col style="width:140px"><col style="width:88px"><col style="width:88px"><col style="width:34%"><col></colgroup>
+      <colgroup><col style="width:140px"><col style="width:88px"><col style="width:40%"><col></colgroup>
       <thead><tr>
         ${KTH('name', '키워드')}
         ${KTH('vol', '주간검색수', 1)}
-        ${KTH('best', '오가닉 최고', 1)}
-        <th>오가닉 랭킹 (우리 제품 · 최고순위순)</th>
-        ${KTH('imp', '광고 실측 노출 (검색어 보고서)')}
+        ${KTH('best', '오가닉 랭킹 (우리 제품 · 최고순위순)')}
+        <th>광고 실측 — ${(() => { const S2 = (key, label) => { const active = kwSort.key === key; return `<span class="nvs-sort2" data-key="${key}" style="cursor:pointer" title="클릭: ${label} 정렬">${label} <span class="nvs-arr" style="font-size:9px;color:${active ? 'var(--accent-d)' : 'var(--border2)'}">${active ? (kwSort.dir === 1 ? '▲' : '▼') : '↕'}</span></span>`; }; return S2('rank', '랭킹') + ' · ' + S2('roas', 'ROAS'); })()} <span style="font-weight:400;color:var(--muted)">(검색어 보고서)</span></th>
       </tr></thead>
       <tbody id="nvk-tbody">${entries.map(([kw, info]) => kwRow(kw, info)).join('')}</tbody>
     </table></div>
@@ -819,9 +837,9 @@
       return f1 ? -1 : f2 ? 1 : 0; // 값 없는 행은 항상 아래
     });
     packs.forEach(p => p.forEach(tr => tb.appendChild(tr)));
-    document.querySelectorAll('#nvk-table th[data-key]').forEach(th => {
-      const arr = th.querySelector('.nvs-arr'); if (!arr) return;
-      const on = th.dataset.key === key;
+    document.querySelectorAll('#nvk-table th[data-key], #nvk-table .nvs-sort2[data-key]').forEach(el => {
+      const arr = el.querySelector('.nvs-arr'); if (!arr) return;
+      const on = el.dataset.key === key;
       arr.textContent = on ? (dir === 1 ? '▲' : '▼') : '↕';
       arr.style.color = on ? 'var(--accent-d)' : 'var(--border2)';
     });
@@ -830,11 +848,12 @@
     const st = document.getElementById('nvk-upstat'); if (st) st.textContent = termsStatusText();
     document.querySelectorAll('#nvk-tbody td.nvk-ad[data-kw]').forEach(td => {
       const kw = td.dataset.kw;
-      td.innerHTML = adCellHtml(kw);
+      const ad = kwAdInfo(kw);
+      td.innerHTML = ad.html;
       const t = termIdx()[kw], tr = td.closest('tr');
-      if (tr) tr.dataset.kimp = t ? t.imp : '';
+      if (tr) { tr.dataset.kroas = (t && t.roas != null) ? t.roas : ''; tr.dataset.krank = ad.rank != null ? ad.rank : ''; }
     });
-    if (kwSort.key === 'imp') applyKwSort();
+    if (kwSort.key === 'roas' || kwSort.key === 'rank') applyKwSort();
   }
   // 검색어 보고서 CSV 파싱 — 제외키워드 탭과 동일한 헤더 탐지·쇼핑검색 전용 필터, (검색어, 광고그룹) 단위 집계
   function parseTermsCsv(text) {
@@ -844,7 +863,12 @@
     if (hi < 0) throw new Error('"검색어"·"총비용" 컬럼을 못 찾았어요. 쇼핑검색 검색어 보고서 CSV인지 확인하세요.');
     const H = lines[hi].split(',');
     const idx = (name) => H.findIndex(h => h.split('(')[0].trim().includes(name));
-    const ci = { grp: idx('광고그룹'), camp: idx('캠페인'), type: idx('유형'), term: idx('검색어'), imp: idx('노출'), clk: idx('클릭'), cost: idx('총비용'), sales: idx('전환매출') };
+    // 노출은 '노출수'가 '평균노출순위'와 헷갈리지 않게 순위 컬럼을 먼저 확정 후 제외하고 탐색
+    const rankIdx = H.findIndex(h => h.split('(')[0].trim().includes('평균노출순위')) >= 0
+      ? H.findIndex(h => h.split('(')[0].trim().includes('평균노출순위'))
+      : H.findIndex(h => h.split('(')[0].trim().includes('노출순위'));
+    const impIdx = H.findIndex((h, i) => i !== rankIdx && h.split('(')[0].trim().includes('노출'));
+    const ci = { grp: idx('광고그룹'), camp: idx('캠페인'), type: idx('유형'), term: idx('검색어'), imp: impIdx, clk: idx('클릭'), cost: idx('총비용'), sales: idx('전환매출'), rank: rankIdx };
     if (ci.term < 0 || ci.cost < 0) throw new Error('필수 컬럼(검색어/총비용) 매핑 실패');
     const agg = {}; let skipped = 0;
     for (let i = hi + 1; i < lines.length; i++) {
@@ -855,10 +879,14 @@
       const rowType = ci.type >= 0 ? (c[ci.type] || '').trim() : '';
       if (/플레이스|파워링크|파링|브랜드형/.test(grp + camp) || (ci.type >= 0 && !rowType.includes('쇼핑'))) { skipped++; continue; }
       const k = term + '' + grp;
-      const a = (agg[k] ||= { term, campaign: camp, adgroup: grp, imp: 0, clk: 0, cost: 0, conv_value: 0 });
-      a.imp += Number(c[ci.imp]) || 0; a.clk += Number(c[ci.clk]) || 0; a.cost += Number(c[ci.cost]) || 0; a.conv_value += Number(c[ci.sales]) || 0;
+      const a = (agg[k] ||= { term, campaign: camp, adgroup: grp, imp: 0, clk: 0, cost: 0, conv_value: 0, _rw: 0, _ri: 0 });
+      const imp = Number(c[ci.imp]) || 0;
+      a.imp += imp; a.clk += Number(c[ci.clk]) || 0; a.cost += Number(c[ci.cost]) || 0; a.conv_value += Number(c[ci.sales]) || 0;
+      if (ci.rank >= 0 && imp > 0) { const rk = parseFloat(c[ci.rank]); if (Number.isFinite(rk) && rk > 0) { a._rw += rk * imp; a._ri += imp; } }
     }
-    return { rows: Object.values(agg), skipped };
+    // 평균노출순위(있으면) = 노출 가중 평균. _rw/_ri는 서버에 안 보냄.
+    const rows = Object.values(agg).map(a => { const { _rw, _ri, ...row } = a; row.avg_rank = _ri > 0 ? Math.round(_rw / _ri * 10) / 10 : null; return row; });
+    return { rows, skipped };
   }
   async function uploadSearchTerms(text) {
     const st = document.getElementById('nvk-upstat');
@@ -879,9 +907,10 @@
     }
   }
   function wireKwSheet() {
-    document.querySelectorAll('#nvk-table th[data-key]').forEach(th => th.onclick = () => {
-      const k = th.dataset.key;
-      kwSort = { key: k, dir: kwSort.key === k ? -kwSort.dir : ((k === 'name' || k === 'best') ? 1 : -1) };
+    document.querySelectorAll('#nvk-table th[data-key], #nvk-table .nvs-sort2[data-key]').forEach(el => el.onclick = (e) => {
+      e.stopPropagation();
+      const k = el.dataset.key;
+      kwSort = { key: k, dir: kwSort.key === k ? -kwSort.dir : ((k === 'name' || k === 'best' || k === 'rank') ? 1 : -1) };
       applyKwSort();
     });
     const tb = document.getElementById('nvk-tbody');
