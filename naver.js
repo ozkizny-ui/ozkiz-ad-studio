@@ -283,15 +283,15 @@
 .nvc-bid .cur{color:var(--muted);text-decoration:line-through} .nvc-bid .new{font-weight:800;color:var(--accent-d)}
 .nvc-d{font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:6px}
 .nvs-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface);max-height:calc(100vh - 130px)}
-.nvs-wrap table{border-collapse:collapse;width:100%;font-size:12px;min-width:1080px}
-.nvs-wrap thead th{position:sticky;top:0;background:var(--surface2);padding:7px 9px;font-weight:700;color:var(--text2);text-align:left;white-space:nowrap;border-bottom:1px solid var(--border2);z-index:2;user-select:none}
+.nvs-wrap table{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed}
+.nvs-wrap thead th{position:sticky;top:0;background:var(--surface2);padding:7px 9px;font-weight:700;color:var(--text2);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid var(--border2);z-index:2;user-select:none}
 .nvs-wrap thead th[data-key]{cursor:pointer}
 .nvs-wrap thead th[data-key]:hover{color:var(--accent-d)}
-.nvs-wrap td{padding:4px 9px;border-bottom:1px solid var(--border);white-space:nowrap;vertical-align:middle}
+.nvs-wrap td{padding:4px 9px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .nvc-srow{cursor:pointer}
 .nvc-srow:hover td{background:var(--surface2)}
 .nvs-th36{width:32px;height:32px;border-radius:7px;object-fit:cover;background:var(--surface2);display:block}
-.nvs-nm{max-width:270px;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.nvs-nm{font-weight:600}
 .nvs-oc{display:inline-block;border-radius:6px;padding:1px 6px;font-weight:700;font-size:10.5px;margin-right:3px}
 .nvs-oc.t{background:var(--green-l);color:var(--green)}
 .nvs-oc.m{background:var(--amber-l,rgba(245,158,11,.12));color:var(--amber,#B45309)}
@@ -606,7 +606,9 @@
       const active = dashSort.key === key;
       return `<th data-key="${key}" title="클릭: 정렬 · 다시 클릭: 역순" style="${right ? 'text-align:right' : ''}">${label} <span class="nvs-arr" style="font-size:9px;color:${active ? 'var(--accent-d)' : 'var(--border2)'}">${active ? (dashSort.dir === 1 ? '▲' : '▼') : '↕'}</span></th>`;
     };
+    // 고정 레이아웃(가로 스크롤 방지): 수치 컬럼은 px 고정, 제품·오가닉이 남는 폭을 나눠 갖고 말줄임 (2026-07-29)
     return `<div class="nvs-wrap"><table>
+      <colgroup><col style="width:44px"><col><col style="width:72px"><col style="width:36%"><col style="width:92px"><col style="width:62px"><col style="width:66px"><col style="width:150px"></colgroup>
       <thead><tr>
         <th></th>
         ${TH('name', '제품')}
@@ -614,12 +616,12 @@
         ${TH('organic', '오가닉 랭킹 <span style="font-weight:400;color:var(--muted)">(검색수 많은 순)</span>')}
         ${TH('cost', `총비용(${periodLabel()})`, 1)}
         ${TH('roas', 'ROAS', 1)}
-        ${TH('bid', '입찰 (현재→제안)', 1)}
+        ${TH('bid', '입찰가', 1)}
         <th style="text-align:center">최근 변경 · 이력</th>
       </tr></thead>
       <tbody id="nvs-tbody">${dashFlat.map((x, i) => sheetRow(x, i)).join('')}</tbody>
     </table></div>
-    <div style="font-size:11px;color:var(--muted);margin:6px 2px">행 클릭 = 카드 상세 펼침 · 헤더 클릭 = 정렬 · 오가닉 칩 <span class="nvs-oc t">1~10위</span><span class="nvs-oc m">11~50위</span><span class="nvs-oc l">51위~</span></div>`;
+    <div style="font-size:11px;color:var(--muted);margin:6px 2px">행 클릭 = 카드 상세 펼침(입찰 제안은 카드 뷰에서) · 헤더 클릭 = 정렬 · 오가닉 칩 <span class="nvs-oc t">1~10위</span><span class="nvs-oc m">11~50위</span><span class="nvs-oc l">51위~</span></div>`;
   }
   function sheetRow(x, i) {
     const it = x.it, a = it.a, rd = a.referenceData || {}, adc = a.ad || {}, pend = it.pending;
@@ -635,20 +637,18 @@
       : `<span style="color:var(--muted);font-size:11px">${paused ? '—' : sysP ? '🚫 중지' : '미노출'}</span>`;
     const roasTxt = pend ? '<span style="color:var(--muted)">…</span>' : (it.b.cost ? Math.round(it.roas) + '%' : '-');
     const roasCol = pend ? 'var(--muted)' : (it.b.cost ? (it.roas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)') : 'var(--muted)');
-    const d = (it.hasBid && !pend) ? it.nb - it.cur : 0, pct = it.cur ? Math.round(d / it.cur * 100) : 0, changed = !pend && it.hasBid && d !== 0;
+    // 시트엔 현재 입찰가만 표시 — 제안·반영 체크박스는 카드 뷰 전용 (2026-07-29 사용자 지정)
+    const changed = !pend && it.hasBid && it.nb !== it.cur;
     const bidCell = !it.hasBid ? '<span style="color:var(--muted);font-size:11px">—</span>'
-      : paused && !changed ? '<span style="color:var(--muted);font-size:11px">OFF</span>'
-      : pend ? `<span style="font-weight:700">${it.cur}원</span> <span style="color:var(--muted)">…</span>`
-      : changed ? `<span style="color:var(--muted);text-decoration:line-through">${it.cur}</span> → <b style="color:var(--accent-d)">${it.nb}원</b> <span class="nvc-d" style="background:${d > 0 ? 'var(--green-l)' : 'var(--red-l)'};color:${d > 0 ? 'var(--green)' : 'var(--red)'}">${d > 0 ? '+' : ''}${pct}%</span> <input type="checkbox" class="nvc-cb" data-id="${a.nccAdId}" checked title="이 제안 반영" style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;vertical-align:middle">`
-      : `<span style="font-weight:700">${it.cur}원</span> <span style="color:var(--muted);font-size:11px">유지</span>`;
+      : `<span style="font-weight:700${paused ? ';color:var(--muted)' : ''}">${it.cur}원</span>`;
     return `<tr class="nvc-srow" data-i="${i}" data-title="${esc(String(title).toLowerCase())}" data-camp="${x.camp.nccCampaignId}" data-status="${paused ? 'off' : 'on'}" data-changed="${changed ? '1' : '0'}" data-noimp="${(noImp || sysP) ? '1' : '0'}" data-sname="${esc(title)}" data-srank="${rk > 0 ? rk : ''}" data-scost="${it.b.cost}" data-sroas="${(!pend && it.b.cost) ? Math.round(it.roas) : ''}" data-sbid="${it.hasBid ? it.cur : ''}" style="${paused ? 'opacity:.6' : ''}">
       <td>${thumb ? `<img class="nvs-th36" src="${esc(thumb)}" loading="lazy" onerror="this.style.opacity=.15">` : '<span class="nvs-th36"></span>'}</td>
       <td class="nvs-nm" title="${esc(x.grName)} · ${esc(title)}"><span style="font-size:10px">${dot}</span> ${esc(title)}</td>
       <td style="text-align:right">${rankCell}</td>
-      <td class="nvc-organic" data-pid="${esc(rd.mallProductId || '')}" data-compact="1" style="max-width:360px;overflow:hidden;text-overflow:ellipsis"><span style="color:var(--muted);font-size:11px">…</span></td>
+      <td class="nvc-organic" data-pid="${esc(rd.mallProductId || '')}" data-compact="1"><span style="color:var(--muted);font-size:11px">…</span></td>
       <td style="text-align:right;font-weight:700">${won(it.b.cost)}</td>
       <td style="text-align:right;font-weight:800;color:${roasCol}">${roasTxt}</td>
-      <td id="nvb-${a.nccAdId}" style="text-align:right">${bidCell}</td>
+      <td style="text-align:right">${bidCell}</td>
       <td style="text-align:center;white-space:nowrap"><span class="nv-recent-mini" data-id="${esc(a.nccAdId)}" style="font-size:10px;color:var(--muted);margin-right:4px"></span><button class="nv-hist" data-id="${esc(a.nccAdId)}" style="font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);color:var(--muted);cursor:pointer">▾</button></td>
     </tr>`;
   }
