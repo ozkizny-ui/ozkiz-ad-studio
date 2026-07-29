@@ -349,22 +349,11 @@
     const totalAll = structure.reduce((t, s) => t + s.total, 0);
     if (dashCamp && !structure.some(s => s.camp.nccCampaignId === dashCamp)) dashCamp = ''; // 사라진 캠페인 선택 방어
     const chipStyle = (on) => `cursor:pointer;padding:4px 10px;border-radius:8px;border:1px solid var(--border2);font-size:12px;font-weight:700;background:${on ? 'var(--accent)' : 'var(--accent-l)'};color:${on ? '#fff' : 'var(--accent-d)'}`;
-    const gsecHtml = (s, gr) => `
-      <div class="nvc-gsec" data-camp="${s.camp.nccCampaignId}">
-        <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;flex-wrap:wrap">
-          <span style="font-size:11px;color:var(--muted)">${esc(s.camp.name)}</span>
-          <b style="font-size:14px">${statusDot(gr.group)} ${esc(gr.group.name)}</b>
-          ${gr.isBrand ? '<span class="nvc-chip" style="background:var(--surface2);color:var(--muted)">브랜드형 · 키워드입찰</span>' : ''}
-          <span style="color:var(--muted);font-size:12px">${won(gr.total)} · ${gr.isBrand ? '키워드 ' : ''}${gr.items.length}개</span>
-        </div>
-        ${gr.isBrand ? brandGroupBody(gr) : gr.items.map(fullCard).join('')}
-      </div>`;
     // 뷰 분기 (2026-07-29): 시트=상품형 소재를 한 줄씩 한 표로(광고순위·오가닉 나란히), 브랜드형 섹션은 아래에 그대로.
+    // gsecHtml·buildDashFlat은 모듈 스코프(뷰 토글 부분 재렌더 swapProdView와 공유).
     let sections;
     if (dashView === 'sheet') {
-      dashFlat = [];
-      structure.forEach(s => s.groups.forEach(gr => { if (!gr.isBrand) gr.items.forEach(it => dashFlat.push({ camp: s.camp, grName: gr.group.name, it })); }));
-      dashFlat.sort((a, b) => b.it.b.cost - a.it.b.cost);
+      dashFlat = buildDashFlat(structure);
       const brandSecs = structure.flatMap(s => s.groups.filter(g => g.isBrand).map(gr => gsecHtml(s, gr))).join('');
       sections = sheetTable() + brandSecs;
     } else {
@@ -470,12 +459,26 @@
     });
     const csel = $('#nvf-campsel'); if (csel) csel.onchange = () => { dashCamp = csel.value; applyFilters(); };
     document.querySelectorAll('.nvf-period').forEach(b => b.onclick = () => { dashDays = +b.dataset.d; renderBid(); });
-    // 뷰 토글 (시트↔카드) — 데이터 재수집 없이 마지막 렌더 인자로 즉시 재렌더
+    // 뷰 토글 (시트↔카드) — 상품 뷰만 부분 재렌더(swapProdView), 브랜드형 표는 DOM 재사용 → 즉시 전환
     document.querySelectorAll('.nvf-view').forEach(b => b.onclick = () => {
       if (dashView === b.dataset.v || !lastDash) return;
       dashView = b.dataset.v; localStorage.setItem('nv_dash_view', dashView);
-      renderDashboard(lastDash.body, lastDash.structure, lastDash.statsMap, lastDash.purchase, lastDash.opts);
+      document.querySelectorAll('.nvf-view').forEach(x => { const on = x.dataset.v === dashView; x.style.background = on ? 'var(--accent)' : 'transparent'; x.style.color = on ? '#fff' : 'var(--muted)'; });
+      if (!swapProdView()) { // 폴백: 부분 재렌더 불가 시 전체 재렌더(기존 방식)
+        renderDashboard(lastDash.body, lastDash.structure, lastDash.statsMap, lastDash.purchase, lastDash.opts);
+        if (organicLast) injectOrganic(organicLast);
+        return;
+      }
+      // 새로 만든 상품 뷰만 재와이어링(브랜드형 노드는 리스너 유지된 채 이동됨)
+      document.querySelectorAll('#nvc-dash .nv-hist').forEach(x => x.onclick = () => toggleEntityHistory(x));
+      if (!opts.staleTs) {
+        document.querySelectorAll('.nvc-cb').forEach(cb => cb.onchange = updateApplyBtn);
+        if (!pending && nvSuggestions.length) updateApplyBtn(); // 체크박스가 전체선택으로 리셋되므로 카운트 갱신
+      }
+      if (dashView === 'sheet') wireSheet();
       if (organicLast) injectOrganic(organicLast);
+      injectRecentChanges();
+      applyFilters();
     });
     if (dashView === 'sheet') wireSheet();
     document.querySelectorAll('.nv-hist').forEach(b => b.onclick = () => toggleEntityHistory(b));
@@ -549,6 +552,54 @@
       </div>
     </div>`;
   }
+  // 그룹 섹션 HTML (카드 뷰 본문 + 시트 뷰의 브랜드형 섹션 공용) — 브랜드형엔 data-gid를 달아 뷰 토글 시 DOM 재사용
+  const gsecHtml = (s, gr) => `
+      <div class="nvc-gsec" data-camp="${s.camp.nccCampaignId}"${gr.isBrand ? ` data-brand="1" data-gid="${esc(gr.group.nccAdgroupId)}"` : ''}>
+        <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--muted)">${esc(s.camp.name)}</span>
+          <b style="font-size:14px">${statusDot(gr.group)} ${esc(gr.group.name)}</b>
+          ${gr.isBrand ? '<span class="nvc-chip" style="background:var(--surface2);color:var(--muted)">브랜드형 · 키워드입찰</span>' : ''}
+          <span style="color:var(--muted);font-size:12px">${won(gr.total)} · ${gr.isBrand ? '키워드 ' : ''}${gr.items.length}개</span>
+        </div>
+        ${gr.isBrand ? brandGroupBody(gr) : gr.items.map(fullCard).join('')}
+      </div>`;
+  function buildDashFlat(structure) { // 시트 행 소스(상품형만), 비용 내림차순
+    const flat = [];
+    structure.forEach(s => s.groups.forEach(gr => { if (!gr.isBrand) gr.items.forEach(it => flat.push({ camp: s.camp, grName: gr.group.name, it })); }));
+    flat.sort((a, b) => b.it.b.cost - a.it.b.cost);
+    return flat;
+  }
+  // 뷰 토글 부분 재렌더 (2026-07-29 성능): 상품 뷰(시트↔카드)만 새로 만들고, 대시보드 HTML의 85%를
+  // 차지하는 브랜드형 키워드 표(수백 행)는 DOM 노드를 그대로 이동·재사용(재파싱·재레이아웃 회피).
+  function swapProdView() {
+    const dash = document.getElementById('nvc-dash');
+    if (!dash || !lastDash) return false;
+    const { structure } = lastDash;
+    const brandNodes = {};
+    dash.querySelectorAll('.nvc-gsec[data-brand="1"]').forEach(n => { brandNodes[n.dataset.gid] = n; });
+    const tmp = document.createElement('div');
+    const frag = document.createDocumentFragment();
+    const addHtml = (html) => { tmp.innerHTML = html; while (tmp.firstChild) frag.appendChild(tmp.firstChild); };
+    if (dashView === 'sheet') {
+      dashFlat = buildDashFlat(structure);
+      addHtml(sheetTable());
+      structure.forEach(s => s.groups.forEach(gr => {
+        if (!gr.isBrand) return;
+        const n = brandNodes[gr.group.nccAdgroupId];
+        if (n) frag.appendChild(n); else addHtml(gsecHtml(s, gr)); // 노드 없으면 안전 폴백(재생성)
+      }));
+    } else {
+      structure.forEach(s => s.groups.forEach(gr => {
+        if (gr.isBrand) {
+          const n = brandNodes[gr.group.nccAdgroupId];
+          if (n) frag.appendChild(n); else addHtml(gsecHtml(s, gr));
+        } else addHtml(gsecHtml(s, gr));
+      }));
+    }
+    dash.replaceChildren(frag);
+    return true;
+  }
+
   // ── 시트 뷰 (2026-07-29 대표님 요청): 소재당 한 행 — 광고순위·오가닉 랭킹을 나란히, 드래그(스크롤)로 흐름 파악 ──
   function sheetTable() {
     const TH = (key, label, right) => {
