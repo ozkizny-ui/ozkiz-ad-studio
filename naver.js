@@ -404,7 +404,8 @@
     const campSel = `<select id="nvf-campsel" style="padding:8px 10px;border:1px solid var(--border2);border-radius:9px;background:var(--surface);color:var(--text);font-size:12.5px;font-weight:600;max-width:230px">
       <option value="">전체 캠페인</option>
       ${structure.map(s => `<option value="${s.camp.nccCampaignId}" ${dashCamp === s.camp.nccCampaignId ? 'selected' : ''}>${esc(s.camp.name)}</option>`).join('')}</select>`;
-    const tileFilterCss = (on) => `cursor:pointer;${on ? 'border:1.5px solid var(--amber);background:var(--amber-l, rgba(245,158,11,.08))' : ''}`;
+    // 미노출 필터 = 반영 버튼 옆 미니 칩 (2026-07-29: 타일에서 이동, 변경대상 타일은 제거 — 제안 수는 반영 버튼에 표시됨)
+    const noimpCss = (on) => `padding:8px 12px;border-radius:9px;border:1px solid ${on ? 'var(--amber, #B45309)' : 'var(--border2)'};background:${on ? 'var(--amber-l, rgba(245,158,11,.12))' : 'var(--surface)'};color:var(--amber, #B45309);cursor:pointer;font-weight:700;font-size:12px;white-space:nowrap`;
     const agoTxt = (ts) => { const m = Math.max(1, Math.round((Date.now() - ts) / 60000)); return m < 60 ? m + '분' : (Math.round(m / 6) / 10) + '시간'; };
     const staleNote = opts.staleTs ? `<div id="nvc-stale" style="margin-bottom:10px;font-size:12px;font-weight:700;color:var(--green);background:var(--green-l);border-radius:9px;padding:7px 11px">⚡ ${agoTxt(opts.staleTs)} 전 데이터를 먼저 표시했어요 · 최신 데이터 불러오는 중…</div>` : '';
     const viewBtn = (v, lbl) => `<button class="nvf-view" data-v="${v}" style="border:none;background:${dashView === v ? 'var(--accent)' : 'transparent'};color:${dashView === v ? '#fff' : 'var(--muted)'};padding:8px 13px;font-size:12px;font-weight:700;cursor:pointer">${lbl}</button>`;
@@ -416,12 +417,10 @@
         ${periodChips}
         <span style="font-size:11px;color:var(--muted);margin-left:auto">${dashDays === 0 ? '오늘은 집계 지연으로 실제보다 낮게 보일 수 있어요 · ' : '어제까지 완결 ' + dashDays + '일 · '}${mod.label} 보정 · 비용 많은 순</span>
       </div>
-      <div class="nvc-tiles" style="grid-template-columns:repeat(5,1fr)">
+      <div class="nvc-tiles" style="grid-template-columns:repeat(3,1fr)">
         <div class="nvc-tile"><div class="k">총비용 (${periodLabel()})</div><div class="v">${won(gCost)}</div></div>
         <div class="nvc-tile"><div class="k">구매 ROAS <span style="color:var(--muted);font-weight:400">직접 · ${periodLabel()}</span></div><div class="v" style="color:${pending ? 'var(--muted)' : (gRoas >= TARGET_ROAS ? 'var(--green)' : 'var(--red)')}">${pending ? '<span style="font-size:13px">집계 중…</span>' : (gCost ? Math.round(gRoas) + '%' : '-')}</div></div>
         <div class="nvc-tile"><div class="k">구매 전환 (${periodLabel()})</div><div class="v">${pending ? '<span style="color:var(--muted);font-size:13px">집계 중…</span>' : gConvN + '건 · ' + cnt(gConvV) + '원'}</div></div>
-        <div class="nvc-tile" id="nvt-noimp" title="클릭하면 미노출만 보기" style="${tileFilterCss(dashFNoimp)}"><div class="k">미노출 (${periodLabel()} 노출 0) <span style="color:var(--accent-d);font-weight:700;font-size:10px">클릭=필터</span></div><div class="v" style="color:${gNoImp ? 'var(--amber)' : 'var(--text)'}">${gNoImp}</div></div>
-        <div class="nvc-tile" id="nvt-changed" title="클릭하면 제안 있는 것만 보기" style="${tileFilterCss(dashFChanged)}"><div class="k">상품 · 변경대상 <span style="color:var(--accent-d);font-weight:700;font-size:10px">클릭=필터</span></div><div class="v">${prodCount} · <span style="color:var(--accent-d)">${pending ? '…' : nvSuggestions.length}</span></div></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
         ${viewSeg}
@@ -432,6 +431,7 @@
         ${campSel}
         <button id="nvc-snapshot" title="현재 라이브 상품형 광고 + 최근 2주 ON/OFF 기록을 표(TSV)로 복사 — 시트에 바로 붙여넣기" style="margin-left:auto;padding:8px 14px;border-radius:10px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;font-weight:700;font-size:12.5px">📋 스냅샷 복사</button>
         <span id="nvc-selmeta" style="font-size:12px;color:var(--muted);${(!pending && nvSuggestions.length && !opts.staleTs) ? '' : 'display:none'}"><a href="javascript:void(0)" id="nvc-selnone" style="color:var(--accent-d);font-weight:700;text-decoration:none">전체 해제</a></span>
+        <button id="nvf-noimp" style="${noimpCss(dashFNoimp)}">🟡 미노출 ${gNoImp}</button>
         <button id="nvc-applyall" style="${pBtn}" ${(!pending && nvSuggestions.length && !opts.staleTs) ? '' : 'disabled'}>${opts.staleTs ? '⚡ 최신 데이터 갱신 중…' : pending ? '⏳ 구매전환 집계 중…' : (nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음')}</button>
       </div>
       <div id="nvc-dash">${sections}</div>
@@ -463,9 +463,16 @@
       });
     };
     if (q) q.oninput = applyFilters;
-    // 타일 클릭 필터 (미노출·변경대상) — 켜지면 테두리 강조
-    const tNo = $('#nvt-noimp'); if (tNo) tNo.onclick = () => { dashFNoimp = !dashFNoimp; tNo.style.cssText = tileFilterCss(dashFNoimp); applyFilters(); };
-    const tCh = $('#nvt-changed'); if (tCh) tCh.onclick = () => { dashFChanged = !dashFChanged; tCh.style.cssText = tileFilterCss(dashFChanged); applyFilters(); };
+    // 미노출 미니 필터 — 소재(제품·카드 뷰) 대상이라 키워드 뷰에선 비활성 표시 (2026-07-29)
+    const tNo = $('#nvf-noimp');
+    const setTileMode = () => {
+      const kwMode = dashView === 'kw';
+      if (!tNo) return;
+      tNo.style.cssText = noimpCss(dashFNoimp) + (kwMode ? ';opacity:.45;cursor:default' : '');
+      tNo.title = kwMode ? '제품·카드 뷰 전용 필터 (키워드 뷰에는 소재 행이 없어요)' : '클릭하면 미노출(기간 내 노출 0)만 보기';
+    };
+    if (tNo) tNo.onclick = () => { if (dashView === 'kw') return; dashFNoimp = !dashFNoimp; setTileMode(); applyFilters(); };
+    setTileMode();
     // 상태 세그먼트 (전체/ON/OFF)
     document.querySelectorAll('.nvf-status').forEach(b => b.onclick = () => {
       dashStatus = b.dataset.v;
@@ -492,6 +499,7 @@
       }
       if (dashView === 'sheet') wireSheet();
       else if (dashView === 'kw') wireKwSheet();
+      setTileMode(); // 키워드 뷰=타일 필터 비활성 표시, 제품·카드 뷰=필터 상태 복원
       if (organicLast) injectOrganic(organicLast);
       injectRecentChanges();
       applyFilters();
