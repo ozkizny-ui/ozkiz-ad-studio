@@ -139,9 +139,14 @@
   let dashStatus = 'on', dashFNoimp = false, dashFChanged = false; // 기본 ON(기존 화면과 동일) — OFF 868개가 기본 노출되면 과밀
   // 데이터 기간 (2026-07-23): 0=오늘(부분집계), 3/7/30=완결일 기준 최근 N일. 지표·구매전환 모두 이 기간.
   let dashDays = 3; // 기본 최근 3일 (2026-07-23 사용자 지정)
-  // 뷰 모드 (2026-07-29 대표님 요청): 시트(한 줄=한 소재, 광고순위·오가닉 나란히)가 기본. 카드로 전환 가능.
+  // 뷰 모드 (2026-07-29 대표님 요청): 시트(한 줄=한 소재, 광고순위·오가닉 나란히)가 기본. 카드/키워드로 전환 가능.
   let dashView = localStorage.getItem('nv_dash_view') || 'sheet';
   let dashSort = { key: 'cost', dir: -1 }; // 시트 컬럼 정렬 상태 (기본: 총비용 내림차순)
+  // 키워드 기준 뷰 (2026-07-29 대표님 요청 2차): 행=추적 키워드, 오가닉 순위 + 검색어 보고서 실측 광고 노출
+  let kwSort = { key: 'vol', dir: -1 };        // 키워드 뷰 정렬 (기본: 주간검색수 내림차순)
+  let organicKwCache = null;                    // {keyword: {vol, products:[{pid,title,rank}]}} — 순위권 밖 키워드 포함
+  let nvTermsCache = null, nvTermsTs = null;    // nv_search_terms 행 캐시 + 마지막 업로드 시각(null=조회 전, []=미업로드)
+  let nvTermIdxCache = null;                    // {검색어: {list:[{adgroup,imp,clk,cost,conv_value}], imp}} 지연 계산
   let dashFlat = [];       // 시트 행 인덱스 → {camp, grName, it} (행 클릭 시 카드 상세 펼침용)
   let lastDash = null;     // 마지막 렌더 인자(뷰 토글 시 데이터 재수집 없이 재렌더)
   let organicLast = null;  // 마지막 오가닉 맵(재렌더·상세 펼침 후 재주입용)
@@ -158,6 +163,7 @@
     if (cached && !MOCK) {
       try {
         if (!purchaseKwCache) purchaseKwCache = cached.purchaseKw || null; // 브랜드형 키워드 ROAS 표시용(세션 캐시 없을 때만)
+        if (!organicKwCache && cached.organicKw) organicKwCache = cached.organicKw; // 키워드 뷰 즉시 표시용
         renderDashboard(body, cached.structure, cached.statsMap, cached.purchase, { staleTs: cached.ts });
         injectOrganic(cached.organic);
         staleShown = true;
@@ -243,7 +249,7 @@
           banner: gr.isBrand ? gr.banner : undefined,
         })),
       }));
-      localStorage.setItem(dashCacheKey(), JSON.stringify({ ts: Date.now(), days: dashDays, structure: lite, statsMap, purchase, purchaseKw: purchaseKwCache, organic }));
+      localStorage.setItem(dashCacheKey(), JSON.stringify({ ts: Date.now(), days: dashDays, structure: lite, statsMap, purchase, purchaseKw: purchaseKwCache, organic, organicKw: organicKwCache }));
     } catch (e) { try { localStorage.removeItem(dashCacheKey()); } catch {} } // quota 초과 등 — 캐시 없이 동작(치명 아님)
   }
   // 기본지표+순위 배치(/stats ids, 90개씩) — AD보고서 대체·빠름. per-id avgRnk/노출/클릭/비용 반환.
@@ -295,7 +301,10 @@
 .nvs-oc{display:inline-block;border-radius:6px;padding:1px 6px;font-weight:700;font-size:10.5px;margin-right:3px}
 .nvs-oc.t{background:var(--green-l);color:var(--green)}
 .nvs-oc.m{background:var(--amber-l,rgba(245,158,11,.12));color:var(--amber,#B45309)}
-.nvs-oc.l{background:var(--surface2);color:var(--muted)}`;
+.nvs-oc.l{background:var(--surface2);color:var(--muted)}
+.nvs-oc.a{background:var(--accent-l);color:var(--accent-d)}
+.nvs-grip{position:absolute;right:0;top:0;bottom:0;width:9px;cursor:col-resize;z-index:4}
+.nvs-grip:hover{background:linear-gradient(to right,transparent 3px,var(--accent) 3px,var(--accent) 6px,transparent 6px)}`;
   function injectNvCss() { if (document.getElementById('nv-css')) return; const s = document.createElement('style'); s.id = 'nv-css'; s.textContent = NV_CSS; document.head.appendChild(s); }
   function renderDashboard(body, structure, statsMap, purchase, opts) {
     opts = opts || {};
@@ -349,13 +358,13 @@
     const totalAll = structure.reduce((t, s) => t + s.total, 0);
     if (dashCamp && !structure.some(s => s.camp.nccCampaignId === dashCamp)) dashCamp = ''; // 사라진 캠페인 선택 방어
     const chipStyle = (on) => `cursor:pointer;padding:4px 10px;border-radius:8px;border:1px solid var(--border2);font-size:12px;font-weight:700;background:${on ? 'var(--accent)' : 'var(--accent-l)'};color:${on ? '#fff' : 'var(--accent-d)'}`;
-    // 뷰 분기 (2026-07-29): 시트=상품형 소재를 한 줄씩 한 표로(광고순위·오가닉 나란히), 브랜드형 섹션은 아래에 그대로.
-    // gsecHtml·buildDashFlat은 모듈 스코프(뷰 토글 부분 재렌더 swapProdView와 공유).
+    // 뷰 분기 (2026-07-29): 시트=상품형 소재를 한 줄씩 한 표로(광고순위·오가닉 나란히), 키워드=행이 추적 키워드,
+    // 브랜드형 섹션은 두 시트 뷰 모두 아래에 그대로. gsecHtml·buildDashFlat은 모듈 스코프(swapProdView와 공유).
     let sections;
-    if (dashView === 'sheet') {
-      dashFlat = buildDashFlat(structure);
+    if (dashView === 'sheet' || dashView === 'kw') {
+      dashFlat = buildDashFlat(structure); // 키워드 뷰에서도 칩 클릭 → 카드 상세용으로 필요
       const brandSecs = structure.flatMap(s => s.groups.filter(g => g.isBrand).map(gr => gsecHtml(s, gr))).join('');
-      sections = sheetTable() + brandSecs;
+      sections = (dashView === 'kw' ? kwTable() : sheetTable()) + brandSecs;
     } else {
       sections = structure.map(s => s.groups.map(gr => gsecHtml(s, gr)).join('')).join('');
     }
@@ -399,7 +408,7 @@
     const agoTxt = (ts) => { const m = Math.max(1, Math.round((Date.now() - ts) / 60000)); return m < 60 ? m + '분' : (Math.round(m / 6) / 10) + '시간'; };
     const staleNote = opts.staleTs ? `<div id="nvc-stale" style="margin-bottom:10px;font-size:12px;font-weight:700;color:var(--green);background:var(--green-l);border-radius:9px;padding:7px 11px">⚡ ${agoTxt(opts.staleTs)} 전 데이터를 먼저 표시했어요 · 최신 데이터 불러오는 중…</div>` : '';
     const viewBtn = (v, lbl) => `<button class="nvf-view" data-v="${v}" style="border:none;background:${dashView === v ? 'var(--accent)' : 'transparent'};color:${dashView === v ? '#fff' : 'var(--muted)'};padding:8px 13px;font-size:12px;font-weight:700;cursor:pointer">${lbl}</button>`;
-    const viewSeg = `<div style="display:flex;border:1px solid var(--border2);border-radius:9px;overflow:hidden;background:var(--surface)">${viewBtn('sheet', '☰ 시트')}${viewBtn('card', '⊞ 카드')}</div>`;
+    const viewSeg = `<div style="display:flex;border:1px solid var(--border2);border-radius:9px;overflow:hidden;background:var(--surface)">${viewBtn('sheet', '☰ 제품')}${viewBtn('kw', '🔑 키워드')}${viewBtn('card', '⊞ 카드')}</div>`;
     body.innerHTML = `
       ${staleNote}
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -441,6 +450,12 @@
           while (n && !n.classList.contains('nvc-srow')) { n.style.display = vis ? '' : 'none'; n = n.nextElementSibling; }
         }
       });
+      document.querySelectorAll('.nvk-row[data-title]').forEach(el => { // 키워드 뷰: 검색만 적용(상태·캠페인 필터는 소재 대상이라 무관)
+        const vis = !term || el.dataset.title.includes(term);
+        el.style.display = vis ? '' : 'none';
+        let n = el.nextElementSibling;
+        while (n && !n.classList.contains('nvk-row')) { n.style.display = vis ? '' : 'none'; n = n.nextElementSibling; }
+      });
       document.querySelectorAll('.nvc-gsec').forEach(sec => {
         const campMatch = !dashCamp || sec.dataset.camp === dashCamp; // 선택 캠페인만
         const anyVis = [...sec.querySelectorAll('.nvc-card, .nvc-krow')].some(c => c.style.display !== 'none');
@@ -476,11 +491,13 @@
         if (!pending && nvSuggestions.length) updateApplyBtn(); // 체크박스가 전체선택으로 리셋되므로 카운트 갱신
       }
       if (dashView === 'sheet') wireSheet();
+      else if (dashView === 'kw') wireKwSheet();
       if (organicLast) injectOrganic(organicLast);
       injectRecentChanges();
       applyFilters();
     });
     if (dashView === 'sheet') wireSheet();
+    else if (dashView === 'kw') wireKwSheet();
     document.querySelectorAll('.nv-hist').forEach(b => b.onclick = () => toggleEntityHistory(b));
     const snapBtn = $('#nvc-snapshot'); if (snapBtn) snapBtn.onclick = () => nvcSnapshot(snapBtn);
     const updateApplyBtn = () => { const n = document.querySelectorAll('.nvc-cb:checked').length; const bt = $('#nvc-applyall'); if (bt) { bt.disabled = !n; bt.textContent = n ? `▶ 선택 ${n}건 입찰가 반영` : '선택된 항목 없음'; } };
@@ -580,9 +597,9 @@
     const tmp = document.createElement('div');
     const frag = document.createDocumentFragment();
     const addHtml = (html) => { tmp.innerHTML = html; while (tmp.firstChild) frag.appendChild(tmp.firstChild); };
-    if (dashView === 'sheet') {
+    if (dashView === 'sheet' || dashView === 'kw') {
       dashFlat = buildDashFlat(structure);
-      addHtml(sheetTable());
+      addHtml(dashView === 'kw' ? kwTable() : sheetTable());
       structure.forEach(s => s.groups.forEach(gr => {
         if (!gr.isBrand) return;
         const n = brandNodes[gr.group.nccAdgroupId];
@@ -607,7 +624,7 @@
       return `<th data-key="${key}" title="클릭: 정렬 · 다시 클릭: 역순" style="${right ? 'text-align:right' : ''}">${label} <span class="nvs-arr" style="font-size:9px;color:${active ? 'var(--accent-d)' : 'var(--border2)'}">${active ? (dashSort.dir === 1 ? '▲' : '▼') : '↕'}</span></th>`;
     };
     // 고정 레이아웃(가로 스크롤 방지): 수치 컬럼은 px 고정, 제품·오가닉이 남는 폭을 나눠 갖고 말줄임 (2026-07-29)
-    return `<div class="nvs-wrap"><table>
+    return `<div class="nvs-wrap"><table id="nvs-table">
       <colgroup><col style="width:44px"><col><col style="width:72px"><col style="width:36%"><col style="width:92px"><col style="width:62px"><col style="width:66px"><col style="width:150px"></colgroup>
       <thead><tr>
         <th></th>
@@ -676,6 +693,7 @@
       if (organicLast) injectOrganic(organicLast);
       injectRecentChanges();
     };
+    makeColsResizable('nvs-table', 'nv_colw_sheet'); // 열 폭 드래그 조절 (2026-07-29)
     applySheetSort(); // 기간 변경·재렌더 후에도 유지 중인 정렬 상태 재적용
   }
   function applySheetSort() {
@@ -701,6 +719,221 @@
       const on = th.dataset.key === key;
       arr.textContent = on ? (dir === 1 ? '▲' : '▼') : '↕';
       arr.style.color = on ? 'var(--accent-d)' : 'var(--border2)';
+    });
+  }
+
+  // ── 🔑 키워드 기준 뷰 (2026-07-29 대표님 요청): 행=추적 키워드 — 검색수·오가닉 순위(우리 제품)·광고 실측 노출 ──
+  //    광고 노출은 추정이 아니라 검색어 보고서 CSV(수동 업로드, nv_search_terms 영속) 실측 — 그룹 단위.
+  //    (쇼핑 검색어는 API 미제공·제외키워드도 API로 못 읽어, 오가닉 기반 역추정은 부정확 — 사용자 지적으로 B안 확정)
+  function termIdx() {
+    if (nvTermIdxCache) return nvTermIdxCache;
+    const m = {};
+    (nvTermsCache || []).forEach(r => { const t = (m[r.term] ||= { list: [], imp: 0 }); t.list.push(r); t.imp += r.imp || 0; });
+    for (const k in m) m[k].list.sort((a, b) => (b.imp || 0) - (a.imp || 0));
+    nvTermIdxCache = m; return m;
+  }
+  async function loadSearchTerms() {
+    if (nvTermsCache !== null) return nvTermsCache;
+    if (MOCK) { nvTermsCache = [{ term: '유아원피스', campaign: 'ONS', adgroup: '원피스_모모리본', imp: 1240, clk: 33, cost: 32000, conv_value: 67000, updated_at: new Date().toISOString() }]; nvTermsTs = nvTermsCache[0].updated_at; nvTermIdxCache = null; return nvTermsCache; }
+    try {
+      const rows = await sbGet('nv_search_terms', 'term,campaign,adgroup,imp,clk,cost,conv_value,updated_at');
+      nvTermsCache = Array.isArray(rows) ? rows : [];
+      nvTermsTs = nvTermsCache.length ? nvTermsCache[0].updated_at : null;
+    } catch (e) { nvTermsCache = []; nvTermsTs = null; } // 테이블 미생성·게이트웨이 오류 → '미업로드'로 표시
+    nvTermIdxCache = null;
+    return nvTermsCache;
+  }
+  function termsStatusText() {
+    if (nvTermsCache === null) return '검색어 보고서: 확인 중…';
+    if (!nvTermsCache.length) return '검색어 보고서: 미업로드 — 업로드하면 광고 실측 노출이 채워져요';
+    const k = new Date(new Date(nvTermsTs).getTime() + 9 * 3600000);
+    return `검색어 보고서: ✓ ${cnt(nvTermsCache.length)}행 · 마지막 업로드 ${k.toISOString().slice(0, 16).replace('T', ' ')} (KST)`;
+  }
+  function adCellHtml(kw) {
+    if (nvTermsCache === null) return '<span style="color:var(--muted);font-size:11px">…</span>';
+    if (!nvTermsCache.length) return '<span style="color:var(--muted);font-size:11px">보고서 미업로드</span>';
+    const t = termIdx()[kw];
+    if (!t || !t.list.length) return '<span style="color:var(--muted);font-size:11px">노출 기록 없음</span>';
+    return t.list.slice(0, 4).map(g => {
+      const roas = g.cost > 0 ? Math.round((g.conv_value || 0) / g.cost * 100) : null;
+      return `<span class="nvs-oc a" title="${esc(g.adgroup)} · 노출 ${cnt(g.imp)} · 클릭 ${cnt(g.clk)} · ${won(g.cost)}${roas != null ? ' · ROAS ' + roas + '%' : ''}">${esc(g.adgroup)} ${cnt(g.imp)}회${roas != null ? ' · ' + roas + '%' : ''}</span>`;
+    }).join('') + (t.list.length > 4 ? `<span style="color:var(--muted);font-size:10.5px"> 외 ${t.list.length - 4}그룹</span>` : '');
+  }
+  function kwRow(kw, info) {
+    const best = info.products.length ? info.products[0].rank : null;
+    const bestCell = best == null ? '<span style="color:var(--muted)">—</span>'
+      : `<b style="font-size:13.5px;font-weight:900;color:${best <= 10 ? 'var(--green)' : best <= 50 ? 'var(--amber, #B45309)' : 'var(--muted)'}">${best}위</b>`;
+    const shortT = (t) => { const s = String(t).replace(/오즈키즈|OZKIZ/gi, '').trim(); return s.length > 16 ? s.slice(0, 16) + '…' : s; };
+    const orgCell = info.products.length
+      ? info.products.slice(0, 5).map(p => `<span class="nvs-oc ${p.rank <= 10 ? 't' : p.rank <= 50 ? 'm' : 'l'} nvk-chip" data-pid="${esc(p.pid)}" style="cursor:pointer" title="${esc(p.title)} · ${p.rank}위 — 클릭: 광고 소재 상세">${esc(shortT(p.title))} ${p.rank}</span>`).join('')
+      : '<span style="color:var(--muted);font-size:11px">순위권 밖 (top100 진입 없음)</span>';
+    const t = termIdx()[kw];
+    return `<tr class="nvk-row" data-title="${esc(kw.toLowerCase())}" data-kname="${esc(kw)}" data-kvol="${info.vol || ''}" data-kbest="${best == null ? '' : best}" data-kimp="${t ? t.imp : ''}">
+      <td style="font-weight:700">${esc(kw)}</td>
+      <td style="text-align:right">${info.vol ? cnt(info.vol) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="text-align:right">${bestCell}</td>
+      <td class="nvk-org">${orgCell}</td>
+      <td class="nvk-ad" data-kw="${esc(kw)}">${adCellHtml(kw)}</td>
+    </tr>`;
+  }
+  function kwTable() {
+    const KTH = (key, label, right) => {
+      const active = kwSort.key === key;
+      return `<th data-key="${key}" title="클릭: 정렬 · 다시 클릭: 역순" style="${right ? 'text-align:right' : ''}">${label} <span class="nvs-arr" style="font-size:9px;color:${active ? 'var(--accent-d)' : 'var(--border2)'}">${active ? (kwSort.dir === 1 ? '▲' : '▼') : '↕'}</span></th>`;
+    };
+    const bar = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+      <button id="nvk-upbtn" style="padding:7px 13px;border-radius:9px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;font-weight:700;font-size:12px">📤 검색어 보고서 업로드 (CSV)</button>
+      <input type="file" id="nvk-upfile" accept=".csv,text/csv" style="display:none">
+      <span id="nvk-upstat" style="font-size:11.5px;color:var(--muted)">${esc(termsStatusText())}</span>
+      <span style="font-size:11px;color:var(--muted);margin-left:auto">광고 노출 = 검색어 보고서 실측(그룹 단위·보고서 기간 기준) · 오가닉 = 추적 키워드 top100</span>
+    </div>`;
+    if (!organicKwCache) return bar + '<div id="nvk-empty" style="color:var(--muted);padding:18px">⏳ 오가닉 순위 데이터 불러오는 중…</div>';
+    const entries = Object.entries(organicKwCache);
+    return bar + `<div class="nvs-wrap"><table id="nvk-table">
+      <colgroup><col style="width:140px"><col style="width:88px"><col style="width:88px"><col style="width:34%"><col></colgroup>
+      <thead><tr>
+        ${KTH('name', '키워드')}
+        ${KTH('vol', '주간검색수', 1)}
+        ${KTH('best', '오가닉 최고', 1)}
+        <th>오가닉 랭킹 (우리 제품 · 최고순위순)</th>
+        ${KTH('imp', '광고 실측 노출 (검색어 보고서)')}
+      </tr></thead>
+      <tbody id="nvk-tbody">${entries.map(([kw, info]) => kwRow(kw, info)).join('')}</tbody>
+    </table></div>
+    <div style="font-size:11px;color:var(--muted);margin:6px 2px">키워드 ${entries.length}개 · 헤더 클릭 = 정렬(키워드=가나다) · 헤더 경계 드래그 = 열 폭 조절(더블클릭 = 기본 폭) · 오가닉 칩 클릭 = 광고 소재 상세</div>`;
+  }
+  function applyKwSort() {
+    const tb = document.getElementById('nvk-tbody'); if (!tb) return;
+    const packs = [];
+    [...tb.children].forEach(tr => {
+      if (tr.classList.contains('nvk-row')) packs.push([tr]);
+      else if (packs.length) packs[packs.length - 1].push(tr);
+    });
+    const { key, dir } = kwSort;
+    packs.sort((p1, p2) => {
+      const r1 = p1[0], r2 = p2[0];
+      if (key === 'name') return dir * String(r1.dataset.kname || '').localeCompare(String(r2.dataset.kname || ''), 'ko');
+      const v1 = parseFloat(r1.dataset['k' + key]), v2 = parseFloat(r2.dataset['k' + key]);
+      const f1 = Number.isFinite(v1), f2 = Number.isFinite(v2);
+      if (f1 && f2) return dir * (v1 - v2);
+      return f1 ? -1 : f2 ? 1 : 0; // 값 없는 행은 항상 아래
+    });
+    packs.forEach(p => p.forEach(tr => tb.appendChild(tr)));
+    document.querySelectorAll('#nvk-table th[data-key]').forEach(th => {
+      const arr = th.querySelector('.nvs-arr'); if (!arr) return;
+      const on = th.dataset.key === key;
+      arr.textContent = on ? (dir === 1 ? '▲' : '▼') : '↕';
+      arr.style.color = on ? 'var(--accent-d)' : 'var(--border2)';
+    });
+  }
+  function refreshKwCells() { // 검색어 보고서 도착/업로드 후 광고 셀·상태만 부분 갱신(전체 재렌더 없이 — 재귀 방지)
+    const st = document.getElementById('nvk-upstat'); if (st) st.textContent = termsStatusText();
+    document.querySelectorAll('#nvk-tbody td.nvk-ad[data-kw]').forEach(td => {
+      const kw = td.dataset.kw;
+      td.innerHTML = adCellHtml(kw);
+      const t = termIdx()[kw], tr = td.closest('tr');
+      if (tr) tr.dataset.kimp = t ? t.imp : '';
+    });
+    if (kwSort.key === 'imp') applyKwSort();
+  }
+  // 검색어 보고서 CSV 파싱 — 제외키워드 탭과 동일한 헤더 탐지·쇼핑검색 전용 필터, (검색어, 광고그룹) 단위 집계
+  function parseTermsCsv(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    const hi = lines.findIndex(l => l.includes('검색어') && l.includes('총비용'));
+    if (hi < 0) throw new Error('"검색어"·"총비용" 컬럼을 못 찾았어요. 쇼핑검색 검색어 보고서 CSV인지 확인하세요.');
+    const H = lines[hi].split(',');
+    const idx = (name) => H.findIndex(h => h.split('(')[0].trim().includes(name));
+    const ci = { grp: idx('광고그룹'), camp: idx('캠페인'), type: idx('유형'), term: idx('검색어'), imp: idx('노출'), clk: idx('클릭'), cost: idx('총비용'), sales: idx('전환매출') };
+    if (ci.term < 0 || ci.cost < 0) throw new Error('필수 컬럼(검색어/총비용) 매핑 실패');
+    const agg = {}; let skipped = 0;
+    for (let i = hi + 1; i < lines.length; i++) {
+      const c = lines[i].split(','); if (c.length < H.length) continue;
+      const term = (c[ci.term] || '').trim(); if (!term || term === '-') continue;
+      const grp = (ci.grp >= 0 ? (c[ci.grp] || '').trim() : '') || '(그룹 미표기)';
+      const camp = ci.camp >= 0 ? (c[ci.camp] || '').trim() : '';
+      const rowType = ci.type >= 0 ? (c[ci.type] || '').trim() : '';
+      if (/플레이스|파워링크|파링|브랜드형/.test(grp + camp) || (ci.type >= 0 && !rowType.includes('쇼핑'))) { skipped++; continue; }
+      const k = term + '' + grp;
+      const a = (agg[k] ||= { term, campaign: camp, adgroup: grp, imp: 0, clk: 0, cost: 0, conv_value: 0 });
+      a.imp += Number(c[ci.imp]) || 0; a.clk += Number(c[ci.clk]) || 0; a.cost += Number(c[ci.cost]) || 0; a.conv_value += Number(c[ci.sales]) || 0;
+    }
+    return { rows: Object.values(agg), skipped };
+  }
+  async function uploadSearchTerms(text) {
+    const st = document.getElementById('nvk-upstat');
+    try {
+      const { rows, skipped } = parseTermsCsv(text);
+      if (!rows.length) { alert('쇼핑검색 행이 없습니다.' + (skipped ? ` (쇼핑검색 외 ${skipped}행 제외됨)` : '')); return; }
+      if (MOCK) { alert('🧪 목모드: 실제 저장 안 함 (' + rows.length + '행 파싱 성공)'); return; }
+      if (st) st.textContent = `⏳ ${cnt(rows.length)}행 서버 저장 중… (완료까지 새로고침 금지)`;
+      const save = sbReplace('nv_search_terms', rows); // index.html 게이트웨이(쓰기 인증) — 실패 시 throw
+      await (typeof trackSaving === 'function' ? trackSaving(save) : save);
+      const now = new Date().toISOString();
+      nvTermsCache = rows.map(r => ({ ...r, updated_at: now }));
+      nvTermsTs = now; nvTermIdxCache = null;
+      refreshKwCells();
+    } catch (e) {
+      if (st) st.textContent = '⚠️ 서버 저장 실패 — 마지막 업로드 데이터가 유지됩니다';
+      alert('검색어 보고서 저장 실패: ' + (e.message || e) + '\n쓰기 인증(🔒 쓰기 잠김) 상태를 확인하고 다시 업로드해주세요.');
+    }
+  }
+  function wireKwSheet() {
+    document.querySelectorAll('#nvk-table th[data-key]').forEach(th => th.onclick = () => {
+      const k = th.dataset.key;
+      kwSort = { key: k, dir: kwSort.key === k ? -kwSort.dir : ((k === 'name' || k === 'best') ? 1 : -1) };
+      applyKwSort();
+    });
+    const tb = document.getElementById('nvk-tbody');
+    if (tb) tb.onclick = (e) => { // 오가닉 칩 클릭 → 해당 제품의 광고 카드 상세 펼침
+      const chip = e.target.closest('.nvk-chip[data-pid]'); if (!chip || !chip.dataset.pid) return;
+      const tr = e.target.closest('tr.nvk-row'); if (!tr) return;
+      const pid = chip.dataset.pid;
+      const next = tr.nextElementSibling;
+      if (next && next.classList.contains('nvc-sdetail')) { const same = next.dataset.pid === pid; next.remove(); if (same) return; }
+      const x = dashFlat.find(f => String((f.it.a.referenceData || {}).mallProductId || '') === pid);
+      if (!x) { const old = chip.textContent; chip.textContent = '광고 소재 없음'; setTimeout(() => { chip.textContent = old; }, 1200); return; }
+      const det = document.createElement('tr');
+      det.className = 'nvc-sdetail'; det.dataset.pid = pid;
+      const html = fullCard(x.it).replace(/class="nvc-cb"/g, 'class="nvc-cbd" disabled').replace(/id="nvb-/g, 'id="nvbd-');
+      det.innerHTML = `<td colspan="${tr.children.length}" style="padding:8px 10px;background:var(--surface2);white-space:normal">${html}</td>`;
+      tr.after(det);
+      det.querySelectorAll('.nv-hist').forEach(b => b.onclick = () => toggleEntityHistory(b));
+      if (organicLast) injectOrganic(organicLast);
+      injectRecentChanges();
+    };
+    const ub = document.getElementById('nvk-upbtn'), uf = document.getElementById('nvk-upfile');
+    if (ub && uf) {
+      ub.onclick = () => uf.click();
+      uf.onchange = (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) f.text().then(uploadSearchTerms).catch(err => alert('파일 읽기 실패: ' + (err.message || err))); };
+    }
+    makeColsResizable('nvk-table', 'nv_colw_kw');
+    applyKwSort();
+    loadSearchTerms().then(refreshKwCells).catch(() => {}); // 캐시면 즉시 반환 — 셀만 갱신하므로 재귀 없음
+  }
+  // ── 열 폭 드래그 조절 (2026-07-29 대표님 요청): colgroup 폭 직접 조정, localStorage 유지, 더블클릭=기본 ──
+  function makeColsResizable(tableId, storeKey) {
+    const table = document.getElementById(tableId); if (!table) return;
+    const cols = [...table.querySelectorAll('colgroup col')];
+    cols.forEach(c => { if (c.dataset.w0 === undefined) c.dataset.w0 = c.style.width || ''; });
+    try { const saved = JSON.parse(localStorage.getItem(storeKey) || 'null'); if (Array.isArray(saved)) saved.forEach((px, i) => { if (px > 0 && cols[i]) cols[i].style.width = px + 'px'; }); } catch (e) {}
+    table.querySelectorAll('thead th').forEach((th, i) => {
+      if (i >= cols.length || th.querySelector('.nvs-grip')) return;
+      const grip = document.createElement('span');
+      grip.className = 'nvs-grip'; grip.title = '드래그: 열 폭 조절 · 더블클릭: 기본 폭';
+      grip.onclick = (e) => e.stopPropagation(); // 헤더 정렬 클릭과 분리
+      grip.ondblclick = (e) => { e.stopPropagation(); cols.forEach(c => { c.style.width = c.dataset.w0; }); try { localStorage.removeItem(storeKey); } catch (er) {} };
+      grip.onmousedown = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const startX = e.clientX, startW = cols[i].getBoundingClientRect().width;
+        const move = (ev) => { cols[i].style.width = Math.max(40, Math.round(startW + ev.clientX - startX)) + 'px'; };
+        const up = () => {
+          document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+          try { localStorage.setItem(storeKey, JSON.stringify(cols.map(c => /px$/.test(c.style.width) ? parseInt(c.style.width) : 0))); } catch (er) {}
+        };
+        document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+      };
+      th.appendChild(grip);
     });
   }
 
@@ -787,7 +1020,11 @@
   let organicCache = null;
   async function loadOrganicRanks() {
     if (organicCache) return organicCache;
-    if (MOCK) { organicCache = { '86862273595': [{ keyword: '유아원피스', rank: 9, vol: 40100 }, { keyword: '여아원피스', rank: 12, vol: 12000 }], '9317773272': [] }; return organicCache; }
+    if (MOCK) {
+      organicCache = { '86862273595': [{ keyword: '유아원피스', rank: 9, vol: 40100 }, { keyword: '여아원피스', rank: 12, vol: 12000 }], '9317773272': [] };
+      organicKwCache = { '유아원피스': { vol: 40100, products: [{ pid: '86862273595', title: '오즈키즈 유아원피스 모모리본', rank: 9 }] }, '여아원피스': { vol: 12000, products: [{ pid: '86862273595', title: '오즈키즈 유아원피스 모모리본', rank: 12 }] }, '아기샌들': { vol: 21400, products: [] } };
+      return organicCache;
+    }
     try {
       const [bb, dict] = await Promise.all([
         fetch(KWDASH + '?action=brandboard_rank').then(r => r.json()),
@@ -805,6 +1042,19 @@
         const best = {}; map[id].forEach(k => { if (!(k.keyword in best) || k.rank < best[k.keyword]) best[k.keyword] = k.rank; });
         map[id] = Object.entries(best).map(([keyword, rank]) => ({ keyword, rank, vol: vol[keyword] || 0 })).sort((a, b) => b.vol - a.vol); // 검색수 많은 순
       }
+      // 키워드 기준 맵 (2026-07-29 키워드 뷰): 추적 키워드 전체(순위권 밖 포함), 제품은 최고 순위 1건씩
+      const kwMap = {};
+      (bb.values || []).forEach(v => {
+        const best = {};
+        (v.ozProducts || []).forEach(p => {
+          const m = String(p.url || '').match(/products\/(\d+)/);
+          const key = m ? m[1] : (p.title || '');
+          if (!key) return;
+          if (!(key in best) || p.rank < best[key].rank) best[key] = { pid: m ? m[1] : '', title: p.title || '', rank: p.rank };
+        });
+        kwMap[v.keyword] = { vol: vol[v.keyword] || 0, products: Object.values(best).sort((a, b) => a.rank - b.rank) };
+      });
+      organicKwCache = kwMap;
       organicCache = map; return map;
     } catch { return null; } // 실패 시 캐시 안 함(다음에 재시도) — 잘못된 '순위권 밖' 표시 방지
   }
@@ -831,6 +1081,7 @@
       el.innerHTML = `<span style="color:var(--muted);font-weight:700;margin-right:4px">🌿 오가닉</span>${top}`;
     });
     if (dashView === 'sheet' && dashSort.key === 'organic') applySheetSort(); // 오가닉 값 도착 후 정렬 재적용
+    if (dashView === 'kw' && organicKwCache && document.getElementById('nvk-empty')) { if (swapProdView()) wireKwSheet(); } // 키워드 뷰 자리표시자 → 데이터 도착 후 재구성
   }
   // 소재 기본지표(최근 7일): /stats 라벨값 합산
   async function adBase(nad) {
