@@ -304,7 +304,8 @@
 .nvs-oc.l{background:var(--surface2);color:var(--muted)}
 .nvs-oc.a{background:var(--accent-l);color:var(--accent-d)}
 .nvs-grip{position:absolute;right:0;top:0;bottom:0;width:9px;cursor:col-resize;z-index:4}
-.nvs-grip:hover{background:linear-gradient(to right,transparent 3px,var(--accent) 3px,var(--accent) 6px,transparent 6px)}`;
+.nvs-grip:hover{background:linear-gradient(to right,transparent 3px,var(--accent) 3px,var(--accent) 6px,transparent 6px)}
+.nvk-th{width:22px;height:22px;border-radius:5px;object-fit:cover;flex:none;background:var(--surface2)}`;
   function injectNvCss() { if (document.getElementById('nv-css')) return; const s = document.createElement('style'); s.id = 'nv-css'; s.textContent = NV_CSS; document.head.appendChild(s); }
   function renderDashboard(body, structure, statsMap, purchase, opts) {
     opts = opts || {};
@@ -592,6 +593,7 @@
     const flat = [];
     structure.forEach(s => s.groups.forEach(gr => { if (!gr.isBrand) gr.items.forEach(it => flat.push({ camp: s.camp, grName: gr.group.name, it })); }));
     flat.sort((a, b) => b.it.b.cost - a.it.b.cost);
+    nvPidThumbCache = null; // pid→썸네일 맵 재계산(키워드 뷰 오가닉 이미지)
     return flat;
   }
   // 뷰 토글 부분 재렌더 (2026-07-29 성능): 상품 뷰(시트↔카드)만 새로 만들고, 대시보드 HTML의 85%를
@@ -787,19 +789,34 @@
     const rank = t.rank != null ? t.rank : (fbImp > 0 ? Math.round(fbW / fbImp * 10) / 10 : null);
     return { html, rank };
   }
+  // 오가닉 제품 썸네일: 상품번호(pid) → 광고 소재의 상품 이미지 (OFF 소재 포함 구조 전체에서 매칭)
+  let nvPidThumbCache = null;
+  function pidThumbMap() {
+    if (nvPidThumbCache) return nvPidThumbCache;
+    const m = {};
+    (dashFlat || []).forEach(x => {
+      const rd = x.it.a.referenceData || {};
+      if (rd.mallProductId && rd.imageUrl && !m[rd.mallProductId]) m[rd.mallProductId] = rd.imageUrl;
+    });
+    nvPidThumbCache = m; return m;
+  }
   function kwRow(kw, info) {
-    // 2026-07-29 사용자 지정: '오가닉 최고' 별도 컬럼 제거(첫 칩과 중복) — 최고순위는 정렬값(data-kbest)으로만 유지
-    const best = info.products.length ? info.products[0].rank : null;
-    const shortT = (t) => { const s = String(t).replace(/오즈키즈|OZKIZ/gi, '').trim(); return s.length > 16 ? s.slice(0, 16) + '…' : s; };
-    const orgCell = info.products.length
-      ? info.products.slice(0, 5).map(p => `<span class="nvs-oc ${p.rank <= 10 ? 't' : p.rank <= 50 ? 'm' : 'l'} nvk-chip" data-pid="${esc(p.pid)}" style="cursor:pointer" title="${esc(p.title)} · ${p.rank}위 — 클릭: 광고 소재 상세">${esc(shortT(p.title))} ${p.rank}</span>`).join('')
-      : '<span style="color:var(--muted);font-size:11px">순위권 밖 (top100 진입 없음)</span>';
+    // 2026-07-29 사용자 요청: 오가닉을 1·2·3순위 컬럼으로 분리(각각 정렬) + 제품 썸네일
+    const shortT = (t) => { const s = String(t).replace(/오즈키즈|OZKIZ/gi, '').trim(); return s.length > 13 ? s.slice(0, 13) + '…' : s; };
+    const thumbs = pidThumbMap();
+    const prodCell = (p, i) => {
+      if (!p) return `<td style="text-align:center;color:var(--border2)">${i === 0 && !info.products.length ? '<span style="color:var(--muted);font-size:11px">순위권 밖</span>' : '—'}</td>`;
+      const cls = p.rank <= 10 ? 't' : p.rank <= 50 ? 'm' : 'l';
+      const th = thumbs[p.pid];
+      return `<td><span class="nvs-oc ${cls} nvk-chip" data-pid="${esc(p.pid)}" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;max-width:100%" title="${esc(p.title)} · ${p.rank}위 — 클릭: 광고 소재 상세">${th ? `<img class="nvk-th" src="${esc(th)}" loading="lazy" onerror="this.style.display='none'">` : ''}<span style="overflow:hidden;text-overflow:ellipsis">${esc(shortT(p.title))}</span> <b>${p.rank}</b></span></td>`;
+    };
+    const [p1, p2, p3] = info.products;
     const t = termIdx()[kw];
     const ad = kwAdInfo(kw);
-    return `<tr class="nvk-row" data-title="${esc(kw.toLowerCase())}" data-kname="${esc(kw)}" data-kvol="${info.vol || ''}" data-kbest="${best == null ? '' : best}" data-kroas="${t && t.roas != null ? t.roas : ''}" data-krank="${ad.rank != null ? ad.rank : ''}">
+    return `<tr class="nvk-row" data-title="${esc(kw.toLowerCase())}" data-kname="${esc(kw)}" data-kvol="${info.vol || ''}" data-kb1="${p1 ? p1.rank : ''}" data-kb2="${p2 ? p2.rank : ''}" data-kb3="${p3 ? p3.rank : ''}" data-kroas="${t && t.roas != null ? t.roas : ''}" data-krank="${ad.rank != null ? ad.rank : ''}">
       <td style="font-weight:700">${esc(kw)}</td>
       <td style="text-align:right">${info.vol ? cnt(info.vol) : '<span style="color:var(--muted)">—</span>'}</td>
-      <td class="nvk-org">${orgCell}</td>
+      ${prodCell(p1, 0)}${prodCell(p2, 1)}${prodCell(p3, 2)}
       <td class="nvk-ad" data-kw="${esc(kw)}">${ad.html}</td>
     </tr>`;
   }
@@ -817,11 +834,13 @@
     if (!organicKwCache) return bar + '<div id="nvk-empty" style="color:var(--muted);padding:18px">⏳ 오가닉 순위 데이터 불러오는 중…</div>';
     const entries = Object.entries(organicKwCache);
     return bar + `<div class="nvs-wrap"><table id="nvk-table">
-      <colgroup><col style="width:140px"><col style="width:88px"><col style="width:40%"><col></colgroup>
+      <colgroup><col style="width:128px"><col style="width:84px"><col style="width:15%"><col style="width:15%"><col style="width:15%"><col></colgroup>
       <thead><tr>
         ${KTH('name', '키워드')}
         ${KTH('vol', '주간검색수', 1)}
-        ${KTH('best', '오가닉 랭킹 (우리 제품 · 최고순위순)')}
+        ${KTH('b1', '오가닉 1순위')}
+        ${KTH('b2', '2순위')}
+        ${KTH('b3', '3순위')}
         <th>광고 실측 — ${(() => { const S2 = (key, label) => { const active = kwSort.key === key; return `<span class="nvs-sort2" data-key="${key}" style="cursor:pointer" title="클릭: ${label} 정렬">${label} <span class="nvs-arr" style="font-size:9px;color:${active ? 'var(--accent-d)' : 'var(--border2)'}">${active ? (kwSort.dir === 1 ? '▲' : '▼') : '↕'}</span></span>`; }; return S2('rank', '랭킹') + ' · ' + S2('roas', 'ROAS'); })()} <span style="font-weight:400;color:var(--muted)">(검색어 보고서)</span></th>
       </tr></thead>
       <tbody id="nvk-tbody">${entries.map(([kw, info]) => kwRow(kw, info)).join('')}</tbody>
@@ -918,7 +937,7 @@
     document.querySelectorAll('#nvk-table th[data-key], #nvk-table .nvs-sort2[data-key]').forEach(el => el.onclick = (e) => {
       e.stopPropagation();
       const k = el.dataset.key;
-      kwSort = { key: k, dir: kwSort.key === k ? -kwSort.dir : ((k === 'name' || k === 'best' || k === 'rank') ? 1 : -1) };
+      kwSort = { key: k, dir: kwSort.key === k ? -kwSort.dir : ((k === 'vol' || k === 'roas') ? -1 : 1) }; // 순위류·이름=오름차순, 검색수·ROAS=내림차순 먼저
       applyKwSort();
     });
     const tb = document.getElementById('nvk-tbody');
