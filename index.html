@@ -563,6 +563,7 @@ async function gwWrite(body, _retried) {
   }
   const j = await r.json().catch(() => ({}));
   if (j.error) throw new Error(`gateway ${body.op} ${body.table}: ${j.error}`);
+  if (!r.ok) throw new Error(`gateway ${body.op} ${body.table}: HTTP ${r.status}`); // 비JSON 오류(413 용량초과 등)도 실패로 처리 — 조용한 성공 방지 (2026-07-29)
   return j;
 }
 // meta/bulk 등 게이트웨이 외 write 호출용: 토큰 있으면 Authorization 첨부, 401이면 토큰폐기+재인증+1회 재시도.
@@ -1329,32 +1330,35 @@ function findRepCodeKey(rows) {
   return cols.find(looksLikeCode) || null;
 }
 
+// 업로드 저장 상태 (2026-07-29): 34k행 replace가 15~20초 걸리는데 "✓ 로드됨"이 먼저 떠서
+// 완료 전 새로고침 → 이전 데이터로 되돌아 보이던 문제. 저장 실패도 조용히 삼키지 않고 throw(호출부에서 라벨·alert).
+let sbSavingCount = 0; // 진행 중 서버 저장 수 — 새로고침 이탈 경고용
+window.addEventListener('beforeunload', e => { if (sbSavingCount > 0) { e.preventDefault(); e.returnValue = ''; } });
+async function trackSaving(promise) {
+  sbSavingCount++;
+  try { return await promise; } finally { sbSavingCount--; }
+}
+
 async function saveInventoryToSupabase(slim) {
-  try {
-    const rows = slim.map(r => ({
-      name: r['상품명'], option: r['옵션'], avail: r['가용재고'], store: r['매장총재고'],
-      cost: r['원가'] || 0,
-      rep_code: r['카페24 상품코드'] || '',
-    }));
-    await sbReplace('inventory', rows);
-  } catch(e) { console.log('재고 Supabase 저장 실패:', e); }
+  const rows = slim.map(r => ({
+    name: r['상품명'], option: r['옵션'], avail: r['가용재고'], store: r['매장총재고'],
+    cost: r['원가'] || 0,
+    rep_code: r['카페24 상품코드'] || '',
+  }));
+  await trackSaving(sbReplace('inventory', rows));
 }
 
 async function saveStrategyToSupabase(data) {
-  try {
-    const rows = data.map(r => ({ name: r.name, season: r.season, category: r.category }));
-    await sbReplace('strategy', rows);
-  } catch(e) { console.log('전략파일 Supabase 저장 실패:', e); }
+  const rows = data.map(r => ({ name: r.name, season: r.season, category: r.category }));
+  await trackSaving(sbReplace('strategy', rows));
 }
 
 async function saveSeraToSupabase(data) {
-  try {
-    const rows = data.map(r => ({
-      code: r.code, name: r.name, views: r.views, orders: r.orders,
-      opv: r.opv, click_value: r.clickValue,
-    }));
-    await sbReplace('sera', rows);
-  } catch(e) { console.log('SERA Supabase 저장 실패:', e); }
+  const rows = data.map(r => ({
+    code: r.code, name: r.name, views: r.views, orders: r.orders,
+    opv: r.opv, click_value: r.clickValue,
+  }));
+  await trackSaving(sbReplace('sera', rows));
 }
 
 // ── UPLOAD ───────────────────────────────────────────────────────
@@ -1395,15 +1399,20 @@ function initUpload() {
           });
           console.log(`[재고저장] 원가 컬럼: ${costKey||'미발견'}`);
           console.log(`[재고저장] 상품코드 컬럼: ${repKey||'미발견'} · rep_code 채워진 행 ${repFilled}/${slim.length}`);
-          // Supabase에 저장
-          saveInventoryToSupabase(slim);
-          // 업로드 날짜 표시
-          const now = new Date();
-          const dateStr = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+          // Supabase에 저장 — 완료 전까지 '저장 중' 표시(34k행 ≈ 15~20초), 실패 시 alert (2026-07-29)
+          const txtEl = document.getElementById('upload-text');
           const dateEl = document.getElementById('upload-date-label');
-          if (dateEl) { dateEl.textContent = `업로드: ${dateStr}`; dateEl.style.display = 'block'; }
-        } catch(e) { console.log('저장 실패:', e); }
-        document.getElementById('upload-text').textContent = `✓ ${state.inventoryData.length}개 로드됨`;
+          txtEl.textContent = `⏳ ${state.inventoryData.length}개 서버 저장 중… (완료까지 새로고침 금지)`;
+          saveInventoryToSupabase(slim).then(() => {
+            const now = new Date();
+            const dateStr = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+            txtEl.textContent = `✓ ${state.inventoryData.length}개 저장됨`;
+            if (dateEl) { dateEl.textContent = `업로드: ${dateStr}`; dateEl.style.display = 'block'; }
+          }).catch(err => {
+            txtEl.textContent = `⚠️ 서버 저장 실패 — 화면에만 반영됨`;
+            alert('재고 서버 저장 실패: ' + (err.message || err) + '\n새로고침하면 이전 데이터로 돌아갑니다.\n쓰기 인증(🔒 쓰기 잠김) 상태를 확인하고 다시 업로드해주세요.');
+          });
+        } catch(e) { console.log('저장 실패:', e); document.getElementById('upload-text').textContent = `⚠️ ${state.inventoryData.length}개 로드됨 · 서버 저장 안 됨(컬럼 인식 실패)`; }
         refreshActiveDataTab();
       } catch(err) {
         alert('파일 읽기 오류: ' + err.message);
@@ -1433,11 +1442,12 @@ function initUpload() {
           season:   String(row[seasonIdx] || '').trim(),
           category: String(row[catIdx]    || '').trim(),
         })).filter(r => r.name);
-        // localStorage에 저장
-        try {
-          saveStrategyToSupabase(state.strategyData);
-        } catch(e) {}
-        document.getElementById('strategy-text').textContent = `✓ ${state.strategyData.length}개 로드됨`;
+        // 서버 저장 — 완료/실패 표시 (2026-07-29)
+        const stTxt = document.getElementById('strategy-text');
+        stTxt.textContent = `⏳ ${state.strategyData.length}개 서버 저장 중…`;
+        saveStrategyToSupabase(state.strategyData)
+          .then(() => { stTxt.textContent = `✓ ${state.strategyData.length}개 저장됨`; })
+          .catch(err => { stTxt.textContent = '⚠️ 서버 저장 실패 — 화면에만 반영됨'; alert('전략파일 서버 저장 실패: ' + (err.message || err) + '\n새로고침하면 이전 데이터로 돌아갑니다.'); });
         if (state.inventoryData.length) { state._stockProductMap = null; refreshActiveDataTab(); }
       } catch(err) { alert('전략파일 오류: ' + err.message); }
     };
@@ -1474,8 +1484,12 @@ function initUpload() {
           opv: parseFloat(r[opvKey]||0) || 0,
           clickValue: parseFloat(r[espKey]||0) || 0,
         })).filter(r => r.code || r.name);
-        try { saveSeraToSupabase(state._seraData); } catch(e) {}
-        document.getElementById('sera-text').textContent = `✓ ${state._seraData.length}개 로드됨`;
+        // 서버 저장 — 완료/실패 표시 (2026-07-29)
+        const seTxt = document.getElementById('sera-text');
+        seTxt.textContent = `⏳ ${state._seraData.length}개 서버 저장 중…`;
+        saveSeraToSupabase(state._seraData)
+          .then(() => { seTxt.textContent = `✓ ${state._seraData.length}개 저장됨`; })
+          .catch(err => { seTxt.textContent = '⚠️ 서버 저장 실패 — 화면에만 반영됨'; alert('SERA 서버 저장 실패: ' + (err.message || err) + '\n새로고침하면 이전 데이터로 돌아갑니다.'); });
         if (state.inventoryData.length) { state._stockProductMap = null; refreshActiveDataTab(); }
       } catch(err) { alert('SERA 파일 오류: ' + err.message); }
     };
