@@ -865,7 +865,7 @@
       </tr></thead>
       <tbody id="nvk-tbody">${entries.map(([kw, info]) => kwRow(kw, info)).join('')}</tbody>
     </table></div>
-    <div style="font-size:11px;color:var(--muted);margin:6px 2px">키워드 ${entries.length}개 · 헤더 클릭 = 정렬(키워드=가나다) · 헤더 경계 드래그 = 열 폭 조절(더블클릭 = 기본 폭) · 오가닉 칩 색 = 순위 구간 <span class="nvs-oc t">1~10위</span><span class="nvs-oc m">11~50위</span><span class="nvs-oc l">51위~</span> (클릭 = 광고 소재 상세) · 광고 칩 색 = 점유율 <span class="nvs-oc a">보라 = 자주 노출(5%+)</span><span class="nvs-oc l" style="opacity:.7">회색 = 어쩌다 노출(5% 미만)</span> · 광고 실측 = 검색어 보고서(그룹 단위·보고서 기간, 노출 ${NV_TRACE_IMP}회 미만 흔적 제외) · 오가닉 = 추적 키워드 top100</div>`;
+    <div style="font-size:11px;color:var(--muted);margin:6px 2px">오가닉 칩 색 = 순위 구간 <span class="nvs-oc t">1~10위</span><span class="nvs-oc m">11~50위</span><span class="nvs-oc l">51위~</span> (클릭 = 광고 소재 상세) · 광고 칩 색 = 점유율 <span class="nvs-oc a">보라 = 자주 노출(5%+)</span><span class="nvs-oc l" style="opacity:.7">회색 = 어쩌다 노출(5% 미만)</span> · 광고 실측 = 검색어 보고서(그룹 단위·보고서 기간, 노출 ${NV_TRACE_IMP}회 미만 흔적 제외) · 오가닉 = 추적 키워드 top100</div>`;
   }
   // 키워드 행 필터 (2026-07-29): 상품명 검색창 + 검색량 하한 + 오가닉 1순위 + 광고 랭킹 조합.
   // renderDashboard의 applyFilters와 필터 셀렉트 onchange 양쪽에서 호출(모듈 스코프).
