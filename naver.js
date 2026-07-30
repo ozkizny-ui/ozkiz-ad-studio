@@ -785,11 +785,13 @@
       const rkV = rk != null ? rk : rkFb;
       const share = kwVol > 0 && g.imp > 0 ? g.imp / kwVol * 100 : null;
       const lowShare = share != null && share < 5;
-      const rkc = rkV == null ? 'var(--muted)' : lowShare ? 'var(--muted)' : rkV <= 5 ? 'var(--green)' : rkV <= 10 ? 'var(--amber, #B45309)' : 'var(--red)';
+      // 점유율 낮은 칩은 통째로 회색·흐림 (2026-07-29 사용자 지정: 배경색으로 높/낮 즉시 구분)
+      const rkc = (rkV == null || lowShare) ? 'var(--muted)' : rkV <= 5 ? 'var(--green)' : rkV <= 10 ? 'var(--amber, #B45309)' : 'var(--red)';
+      const roasC = lowShare ? 'var(--muted)' : rc;
       const rkHtml = rkV == null ? '' : `<b style="color:${rkc}">${rk == null ? '≈' : ''}${rkV}위</b> · `;
       const shareTip = share == null ? '' : ` · 점유율 ${share < 10 ? share.toFixed(1) : Math.round(share)}%${lowShare ? ` (검색 ${Math.max(2, Math.round(100 / share))}번 중 ~1번만 노출 — 실검색에선 잘 안 보임)` : ''}`;
       const tip = `${g.adgroup} · ${rk != null ? '이 검색어 평균노출순위 ' + rk + '위' : (rkFb != null ? '순위 ≈' + rkFb + '위 (보고서에 순위 없음 → 대시보드 전체 평균)' : '순위 정보 없음')} · 노출 ${cnt(g.imp)} · 클릭 ${cnt(g.clk)} · ${won(g.cost)}${roas != null ? ' · ROAS ' + roas + '%' : ' · 클릭 0(비용 없음)'}${shareTip}`;
-      return `<span class="nvs-oc a" title="${esc(tip)}">${esc(g.adgroup)} ${rkHtml}<b style="color:${rc}">${roas != null ? roas + '%' : '—'}</b></span>`;
+      return `<span class="nvs-oc ${lowShare ? 'l' : 'a'}" style="${lowShare ? 'opacity:.7' : ''}" title="${esc(tip)}">${esc(g.adgroup)} ${rkHtml}<b style="color:${roasC}">${roas != null ? roas + '%' : '—'}</b></span>`;
     }).join('') + (t.list.length > 4 ? `<span style="color:var(--muted);font-size:10.5px"> 외 ${t.list.length - 4}그룹</span>` : '');
     const rank = t.rank != null ? t.rank : (fbImp > 0 ? Math.round(fbW / fbImp * 10) / 10 : null);
     return { html, rank };
@@ -863,7 +865,7 @@
       </tr></thead>
       <tbody id="nvk-tbody">${entries.map(([kw, info]) => kwRow(kw, info)).join('')}</tbody>
     </table></div>
-    <div style="font-size:11px;color:var(--muted);margin:6px 2px">키워드 ${entries.length}개 · 헤더 클릭 = 정렬(키워드=가나다) · 헤더 경계 드래그 = 열 폭 조절(더블클릭 = 기본 폭) · 오가닉 칩 클릭 = 광고 소재 상세 · 광고 실측 = 검색어 보고서(그룹 단위·보고서 기간, 노출 ${NV_TRACE_IMP}회 미만 흔적 제외) · <span style="color:var(--muted);font-weight:700">회색 순위</span> = 노출 점유율 5% 미만(어쩌다 뜸 — 실검색에선 잘 안 보임) · 오가닉 = 추적 키워드 top100</div>`;
+    <div style="font-size:11px;color:var(--muted);margin:6px 2px">키워드 ${entries.length}개 · 헤더 클릭 = 정렬(키워드=가나다) · 헤더 경계 드래그 = 열 폭 조절(더블클릭 = 기본 폭) · 오가닉 칩 색 = 순위 구간 <span class="nvs-oc t">1~10위</span><span class="nvs-oc m">11~50위</span><span class="nvs-oc l">51위~</span> (클릭 = 광고 소재 상세) · 광고 칩 색 = 점유율 <span class="nvs-oc a">보라 = 자주 노출(5%+)</span><span class="nvs-oc l" style="opacity:.7">회색 = 어쩌다 노출(5% 미만)</span> · 광고 실측 = 검색어 보고서(그룹 단위·보고서 기간, 노출 ${NV_TRACE_IMP}회 미만 흔적 제외) · 오가닉 = 추적 키워드 top100</div>`;
   }
   // 키워드 행 필터 (2026-07-29): 상품명 검색창 + 검색량 하한 + 오가닉 1순위 + 광고 랭킹 조합.
   // renderDashboard의 applyFilters와 필터 셀렉트 onchange 양쪽에서 호출(모듈 스코프).
