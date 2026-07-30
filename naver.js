@@ -731,10 +731,13 @@
   // ── 🔑 키워드 기준 뷰 (2026-07-29 대표님 요청): 행=추적 키워드 — 검색수·오가닉 순위(우리 제품)·광고 실측 노출 ──
   //    광고 노출은 추정이 아니라 검색어 보고서 CSV(수동 업로드, nv_search_terms 영속) 실측 — 그룹 단위.
   //    (쇼핑 검색어는 API 미제공·제외키워드도 API로 못 읽어, 오가닉 기반 역추정은 부정확 — 사용자 지적으로 B안 확정)
+  // 흔적 노출 컷 (2026-07-29 사용자 확정): 보고서 기간 노출 20회 미만은 '노출 안 됨'으로 취급(칩·ROAS·랭킹·필터 전부 제외).
+  // 근거: 실데이터에서 클릭 최초 발생 노출수 27회 — 20회 미만 행은 전부 클릭 0·비용 0(우연 매칭 흔적, 예: 샌들 광고가 아쿠아슈즈 검색어에 주 2회).
+  const NV_TRACE_IMP = 20;
   function termIdx() {
     if (nvTermIdxCache) return nvTermIdxCache;
     const m = {};
-    (nvTermsCache || []).forEach(r => { const t = (m[r.term] ||= { list: [], imp: 0, cost: 0, conv: 0, rankW: 0, rankImp: 0 }); t.list.push(r); t.imp += r.imp || 0; t.cost += Number(r.cost) || 0; t.conv += Number(r.conv_value) || 0; if (r.avg_rank != null && r.imp > 0) { t.rankW += Number(r.avg_rank) * r.imp; t.rankImp += r.imp; } });
+    (nvTermsCache || []).forEach(r => { if ((r.imp || 0) < NV_TRACE_IMP) return; const t = (m[r.term] ||= { list: [], imp: 0, cost: 0, conv: 0, rankW: 0, rankImp: 0 }); t.list.push(r); t.imp += r.imp || 0; t.cost += Number(r.cost) || 0; t.conv += Number(r.conv_value) || 0; if (r.avg_rank != null && r.imp > 0) { t.rankW += Number(r.avg_rank) * r.imp; t.rankImp += r.imp; } });
     for (const k in m) { const t = m[k]; t.list.sort((a, b) => (b.cost || 0) - (a.cost || 0)); t.roas = t.cost > 0 ? Math.round(t.conv / t.cost * 100) : null; t.rank = t.rankImp > 0 ? Math.round(t.rankW / t.rankImp * 10) / 10 : null; } // 대표 ROAS·랭킹 = 전 그룹 노출/비용 가중
     nvTermIdxCache = m; return m;
   }
@@ -767,7 +770,7 @@
     if (nvTermsCache === null) return { html: '<span style="color:var(--muted);font-size:11px">…</span>', rank: null };
     if (!nvTermsCache.length) return { html: '<span style="color:var(--muted);font-size:11px">보고서 미업로드</span>', rank: null };
     const t = termIdx()[kw];
-    if (!t || !t.list.length) return { html: '<span style="color:var(--muted);font-size:11px">노출 기록 없음</span>', rank: null };
+    if (!t || !t.list.length) return { html: `<span style="color:var(--muted);font-size:11px" title="보고서 기간 노출 ${NV_TRACE_IMP}회 미만(우연 매칭 흔적)은 노출 안 된 것으로 처리">노출 기록 없음</span>`, rank: null };
     const fb = dashGroupRank(); // 대체값(그룹 전체 검색어 평균)
     let fbW = 0, fbImp = 0;
     const html = t.list.slice(0, 4).map(g => {
@@ -854,7 +857,7 @@
       </tr></thead>
       <tbody id="nvk-tbody">${entries.map(([kw, info]) => kwRow(kw, info)).join('')}</tbody>
     </table></div>
-    <div style="font-size:11px;color:var(--muted);margin:6px 2px">키워드 ${entries.length}개 · 헤더 클릭 = 정렬(키워드=가나다) · 헤더 경계 드래그 = 열 폭 조절(더블클릭 = 기본 폭) · 오가닉 칩 클릭 = 광고 소재 상세 · 광고 실측 = 검색어 보고서(그룹 단위·보고서 기간) · 오가닉 = 추적 키워드 top100</div>`;
+    <div style="font-size:11px;color:var(--muted);margin:6px 2px">키워드 ${entries.length}개 · 헤더 클릭 = 정렬(키워드=가나다) · 헤더 경계 드래그 = 열 폭 조절(더블클릭 = 기본 폭) · 오가닉 칩 클릭 = 광고 소재 상세 · 광고 실측 = 검색어 보고서(그룹 단위·보고서 기간, 노출 ${NV_TRACE_IMP}회 미만 흔적 제외) · 오가닉 = 추적 키워드 top100</div>`;
   }
   // 키워드 행 필터 (2026-07-29): 상품명 검색창 + 검색량 하한 + 오가닉 1순위 + 광고 랭킹 조합.
   // renderDashboard의 applyFilters와 필터 셀렉트 onchange 양쪽에서 호출(모듈 스코프).
