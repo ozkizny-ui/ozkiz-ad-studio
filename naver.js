@@ -144,6 +144,7 @@
   let dashSort = { key: 'cost', dir: -1 }; // 시트 컬럼 정렬 상태 (기본: 총비용 내림차순)
   // 키워드 기준 뷰 (2026-07-29 대표님 요청 2차): 행=추적 키워드, 오가닉 순위 + 검색어 보고서 실측 광고 노출
   let kwSort = { key: 'vol', dir: -1 };        // 키워드 뷰 정렬 (기본: 주간검색수 내림차순)
+  let kwFilter = { vol: 0, org: 'all', ad: 'all' }; // 키워드 뷰 필터 (2026-07-29: 검색량 하한·오가닉 1순위·광고 랭킹)
   let organicKwCache = null;                    // {keyword: {vol, products:[{pid,title,rank}]}} — 순위권 밖 키워드 포함
   let nvTermsCache = null, nvTermsTs = null;    // nv_search_terms 행 캐시 + 마지막 업로드 시각(null=조회 전, []=미업로드)
   let nvTermIdxCache = null;                    // {검색어: {list:[{adgroup,imp,clk,cost,conv_value}], imp}} 지연 계산
@@ -451,12 +452,7 @@
           while (n && !n.classList.contains('nvc-srow')) { n.style.display = vis ? '' : 'none'; n = n.nextElementSibling; }
         }
       });
-      document.querySelectorAll('.nvk-row[data-title]').forEach(el => { // 키워드 뷰: 검색만 적용(상태·캠페인 필터는 소재 대상이라 무관)
-        const vis = !term || el.dataset.title.includes(term);
-        el.style.display = vis ? '' : 'none';
-        let n = el.nextElementSibling;
-        while (n && !n.classList.contains('nvk-row')) { n.style.display = vis ? '' : 'none'; n = n.nextElementSibling; }
-      });
+      applyKwRowFilters(); // 키워드 뷰: 검색어 + 키워드 전용 필터(검색량·오가닉·광고랭킹) — 상태·캠페인 필터는 소재 대상이라 무관
       document.querySelectorAll('.nvc-gsec').forEach(sec => {
         const campMatch = !dashCamp || sec.dataset.camp === dashCamp; // 선택 캠페인만
         const anyVis = [...sec.querySelectorAll('.nvc-card, .nvc-krow')].some(c => c.style.display !== 'none');
@@ -825,11 +821,24 @@
       const active = kwSort.key === key;
       return `<th data-key="${key}" title="클릭: 정렬 · 다시 클릭: 역순" style="${right ? 'text-align:right' : ''}">${label} <span class="nvs-arr" style="font-size:9px;color:${active ? 'var(--accent-d)' : 'var(--border2)'}">${active ? (kwSort.dir === 1 ? '▲' : '▼') : '↕'}</span></th>`;
     };
+    const selCss = 'padding:7px 9px;border:1px solid var(--border2);border-radius:9px;background:var(--surface);color:var(--text);font-size:12px;font-weight:600;cursor:pointer';
+    const opt = (v, lbl, cur) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${lbl}</option>`;
     const bar = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
       <button id="nvk-upbtn" style="padding:7px 13px;border-radius:9px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;font-weight:700;font-size:12px">📤 검색어 보고서 업로드 (CSV)</button>
       <input type="file" id="nvk-upfile" accept=".csv,text/csv" style="display:none">
       <span id="nvk-upstat" style="font-size:11.5px;color:var(--muted)">${esc(termsStatusText())}</span>
-      <span style="font-size:11px;color:var(--muted);margin-left:auto">광고 노출 = 검색어 보고서 실측(그룹 단위·보고서 기간 기준) · 오가닉 = 추적 키워드 top100</span>
+      <span style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <select id="nvk-fvol" style="${selCss}" title="주간검색수 하한 필터">
+          ${opt(0, '검색량 전체', kwFilter.vol)}${opt(1000, '검색량 1,000+', kwFilter.vol)}${opt(3000, '검색량 3,000+', kwFilter.vol)}${opt(5000, '검색량 5,000+', kwFilter.vol)}${opt(10000, '검색량 10,000+', kwFilter.vol)}
+        </select>
+        <select id="nvk-forg" style="${selCss}" title="오가닉 1순위 필터">
+          ${opt('all', '오가닉 전체', kwFilter.org)}${opt(10, '오가닉 10위 이내', kwFilter.org)}${opt(30, '오가닉 30위 이내', kwFilter.org)}${opt(50, '오가닉 50위 이내', kwFilter.org)}${opt('none', '순위권 밖만', kwFilter.org)}
+        </select>
+        <select id="nvk-fad" style="${selCss}" title="광고 랭킹 필터">
+          ${opt('all', '광고 전체', kwFilter.ad)}${opt(5, '광고 5위 이내', kwFilter.ad)}${opt(10, '광고 10위 이내', kwFilter.ad)}${opt('over10', '광고 10위 초과', kwFilter.ad)}${opt('none', '노출 기록 없음', kwFilter.ad)}
+        </select>
+        <span id="nvk-fcnt" style="font-size:11.5px;color:var(--muted);min-width:52px"></span>
+      </span>
     </div>`;
     if (!organicKwCache) return bar + '<div id="nvk-empty" style="color:var(--muted);padding:18px">⏳ 오가닉 순위 데이터 불러오는 중…</div>';
     const entries = Object.entries(organicKwCache);
@@ -845,7 +854,37 @@
       </tr></thead>
       <tbody id="nvk-tbody">${entries.map(([kw, info]) => kwRow(kw, info)).join('')}</tbody>
     </table></div>
-    <div style="font-size:11px;color:var(--muted);margin:6px 2px">키워드 ${entries.length}개 · 헤더 클릭 = 정렬(키워드=가나다) · 헤더 경계 드래그 = 열 폭 조절(더블클릭 = 기본 폭) · 오가닉 칩 클릭 = 광고 소재 상세</div>`;
+    <div style="font-size:11px;color:var(--muted);margin:6px 2px">키워드 ${entries.length}개 · 헤더 클릭 = 정렬(키워드=가나다) · 헤더 경계 드래그 = 열 폭 조절(더블클릭 = 기본 폭) · 오가닉 칩 클릭 = 광고 소재 상세 · 광고 실측 = 검색어 보고서(그룹 단위·보고서 기간) · 오가닉 = 추적 키워드 top100</div>`;
+  }
+  // 키워드 행 필터 (2026-07-29): 상품명 검색창 + 검색량 하한 + 오가닉 1순위 + 광고 랭킹 조합.
+  // renderDashboard의 applyFilters와 필터 셀렉트 onchange 양쪽에서 호출(모듈 스코프).
+  function applyKwRowFilters() {
+    const term = ((document.getElementById('nvf-q') || {}).value || '').toLowerCase();
+    document.querySelectorAll('.nvk-row[data-title]').forEach(el => {
+      const d = el.dataset;
+      let vis = !term || d.title.includes(term);
+      if (vis && kwFilter.vol > 0) vis = (parseFloat(d.kvol) || 0) >= kwFilter.vol;
+      if (vis && kwFilter.org !== 'all') {
+        const b = parseFloat(d.kb1);
+        vis = kwFilter.org === 'none' ? !Number.isFinite(b) : (Number.isFinite(b) && b <= +kwFilter.org);
+      }
+      if (vis && kwFilter.ad !== 'all') {
+        const rk = parseFloat(d.krank);
+        vis = kwFilter.ad === 'none' ? !Number.isFinite(rk)
+          : kwFilter.ad === 'over10' ? (Number.isFinite(rk) && rk > 10)
+          : (Number.isFinite(rk) && rk <= +kwFilter.ad);
+      }
+      el.style.display = vis ? '' : 'none';
+      let n = el.nextElementSibling;
+      while (n && !n.classList.contains('nvk-row')) { n.style.display = vis ? '' : 'none'; n = n.nextElementSibling; }
+    });
+    const cntEl = document.getElementById('nvk-fcnt');
+    if (cntEl) {
+      const all = [...document.querySelectorAll('.nvk-row')];
+      const vis = all.filter(x => x.style.display !== 'none').length;
+      cntEl.textContent = vis === all.length ? `${all.length}개` : `필터 ${vis}/${all.length}개`;
+      cntEl.style.color = vis === all.length ? 'var(--muted)' : 'var(--accent-d)';
+    }
   }
   function applyKwSort() {
     const tb = document.getElementById('nvk-tbody'); if (!tb) return;
@@ -881,6 +920,7 @@
       if (tr) { tr.dataset.kroas = (t && t.roas != null) ? t.roas : ''; tr.dataset.krank = ad.rank != null ? ad.rank : ''; }
     });
     if (kwSort.key === 'roas' || kwSort.key === 'rank') applyKwSort();
+    if (kwFilter.ad !== 'all') applyKwRowFilters(); // 광고 랭킹 값이 도착/갱신되면 필터 재평가
   }
   // 검색어 보고서 CSV 파싱 — 제외키워드 탭과 동일한 헤더 탐지·쇼핑검색 전용 필터, (검색어, 광고그룹) 단위 집계
   function parseTermsCsv(text) {
@@ -963,8 +1003,14 @@
       ub.onclick = () => uf.click();
       uf.onchange = (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) f.text().then(uploadSearchTerms).catch(err => alert('파일 읽기 실패: ' + (err.message || err))); };
     }
+    // 키워드 필터 셀렉트 (2026-07-29): 검색량·오가닉 1순위·광고 랭킹
+    const fv = document.getElementById('nvk-fvol'), fo = document.getElementById('nvk-forg'), fa = document.getElementById('nvk-fad');
+    if (fv) fv.onchange = () => { kwFilter.vol = +fv.value || 0; applyKwRowFilters(); };
+    if (fo) fo.onchange = () => { kwFilter.org = fo.value; applyKwRowFilters(); };
+    if (fa) fa.onchange = () => { kwFilter.ad = fa.value; applyKwRowFilters(); };
     makeColsResizable('nvk-table', 'nv_colw_kw');
     applyKwSort();
+    applyKwRowFilters(); // 유지 중인 필터 상태 재적용(뷰 전환·재렌더 후)
     loadSearchTerms().then(refreshKwCells).catch(() => {}); // 캐시면 즉시 반환 — 셀만 갱신하므로 재귀 없음
   }
   // ── 열 폭 드래그 조절 (2026-07-29 대표님 요청): colgroup 폭 직접 조정, localStorage 유지, 더블클릭=기본 ──
