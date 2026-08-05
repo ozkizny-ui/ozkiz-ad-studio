@@ -137,6 +137,8 @@
   let dashCamp = ''; // ''=전체, 아니면 선택 캠페인만 표시
   // 표시 필터 (2026-07-23 UI 정리): 상태 세그먼트(전체/ON/OFF) + 타일 클릭 필터(미노출·변경대상)
   let dashStatus = 'on', dashFNoimp = false, dashFChanged = false; // 기본 ON(기존 화면과 동일) — OFF 868개가 기본 노출되면 과밀
+  let dashFRecent = false;      // 최근 2주 변경기록 있는 소재만 (2026-07-29) — 기록은 injectRecentChanges가 행에 마킹
+  let nvApplyFiltersRef = null; // 이력 로드 완료 후 필터 재적용용(applyFilters는 renderDashboard 클로저)
   // 데이터 기간 (2026-07-23): 0=오늘(부분집계), 3/7/30=완결일 기준 최근 N일. 지표·구매전환 모두 이 기간.
   let dashDays = 3; // 기본 최근 3일 (2026-07-23 사용자 지정)
   // 뷰 모드 (2026-07-29 대표님 요청): 시트(한 줄=한 소재, 광고순위·오가닉 나란히)가 기본. 카드/키워드로 전환 가능.
@@ -406,8 +408,9 @@
     const campSel = `<select id="nvf-campsel" style="padding:8px 10px;border:1px solid var(--border2);border-radius:9px;background:var(--surface);color:var(--text);font-size:12.5px;font-weight:600;max-width:230px">
       <option value="">전체 캠페인</option>
       ${structure.map(s => `<option value="${s.camp.nccCampaignId}" ${dashCamp === s.camp.nccCampaignId ? 'selected' : ''}>${esc(s.camp.name)}</option>`).join('')}</select>`;
-    // 미노출 필터 = 반영 버튼 옆 미니 칩 (2026-07-29: 타일에서 이동, 변경대상 타일은 제거 — 제안 수는 반영 버튼에 표시됨)
+    // 미노출·변경기록 필터 = 반영 버튼 옆 미니 칩 (2026-07-29: 타일에서 이동, 변경대상 타일은 제거 — 제안 수는 반영 버튼에 표시됨)
     const noimpCss = (on) => `padding:8px 12px;border-radius:9px;border:1px solid ${on ? 'var(--amber, #B45309)' : 'var(--border2)'};background:${on ? 'var(--amber-l, rgba(245,158,11,.12))' : 'var(--surface)'};color:var(--amber, #B45309);cursor:pointer;font-weight:700;font-size:12px;white-space:nowrap`;
+    const recentCss = (on) => `padding:8px 12px;border-radius:9px;border:1px solid ${on ? 'var(--accent)' : 'var(--border2)'};background:${on ? 'var(--accent-l)' : 'var(--surface)'};color:var(--accent-d);cursor:pointer;font-weight:700;font-size:12px;white-space:nowrap`;
     const agoTxt = (ts) => { const m = Math.max(1, Math.round((Date.now() - ts) / 60000)); return m < 60 ? m + '분' : (Math.round(m / 6) / 10) + '시간'; };
     const staleNote = opts.staleTs ? `<div id="nvc-stale" style="margin-bottom:10px;font-size:12px;font-weight:700;color:var(--green);background:var(--green-l);border-radius:9px;padding:7px 11px">⚡ ${agoTxt(opts.staleTs)} 전 데이터를 먼저 표시했어요 · 최신 데이터 불러오는 중…</div>` : '';
     const viewBtn = (v, lbl) => `<button class="nvf-view" data-v="${v}" style="border:none;background:${dashView === v ? 'var(--accent)' : 'transparent'};color:${dashView === v ? '#fff' : 'var(--muted)'};padding:8px 13px;font-size:12px;font-weight:700;cursor:pointer">${lbl}</button>`;
@@ -434,6 +437,7 @@
         <button id="nvc-snapshot" title="현재 라이브 상품형 광고 + 최근 2주 ON/OFF 기록을 표(TSV)로 복사 — 시트에 바로 붙여넣기" style="margin-left:auto;padding:8px 14px;border-radius:10px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;font-weight:700;font-size:12.5px">📋 스냅샷 복사</button>
         <span id="nvc-selmeta" style="font-size:12px;color:var(--muted);${(!pending && nvSuggestions.length && !opts.staleTs) ? '' : 'display:none'}"><a href="javascript:void(0)" id="nvc-selnone" style="color:var(--accent-d);font-weight:700;text-decoration:none">전체 해제</a></span>
         <button id="nvf-noimp" style="${noimpCss(dashFNoimp)}">🟡 미노출 ${gNoImp}</button>
+        <button id="nvf-recent" style="${recentCss(dashFRecent)}">🕐 변경기록</button>
         <button id="nvc-applyall" style="${pBtn}" ${(!pending && nvSuggestions.length && !opts.staleTs) ? '' : 'disabled'}>${opts.staleTs ? '⚡ 최신 데이터 갱신 중…' : pending ? '⏳ 구매전환 집계 중…' : (nvSuggestions.length ? `▶ ${nvSuggestions.length}건 입찰가 반영` : '변경 대상 없음')}</button>
       </div>
       <div id="nvc-dash">${sections}</div>
@@ -445,7 +449,8 @@
         const stOk = dashStatus === 'all' || el.dataset.status === dashStatus;
         const isSrow = el.classList.contains('nvc-srow');
         const campOk = !isSrow || !dashCamp || el.dataset.camp === dashCamp; // 시트 행은 gsec 밖이라 캠페인 필터를 행에서 직접
-        const vis = (!term || el.dataset.title.includes(term)) && (!dashFChanged || el.dataset.changed === '1') && (!dashFNoimp || el.dataset.noimp === '1') && stOk && campOk;
+        // 변경기록 필터가 켜지면 상태 세그먼트(ON/OFF) 무시 — 변경 기록의 주 대상이 OFF된 소재라 기본 ON에서 다 걸러지는 문제 (스냅샷과 동일 철학)
+        const vis = (!term || el.dataset.title.includes(term)) && (!dashFChanged || el.dataset.changed === '1') && (!dashFNoimp || el.dataset.noimp === '1') && (!dashFRecent || el.dataset.hasrecent === '1') && (dashFRecent || stOk) && campOk;
         el.style.display = vis ? '' : 'none';
         if (isSrow) { // 딸린 상세(카드 펼침)·이력 행도 함께 숨김/표시
           let n = el.nextElementSibling;
@@ -460,15 +465,23 @@
       });
     };
     if (q) q.oninput = applyFilters;
-    // 미노출 미니 필터 — 소재(제품·카드 뷰) 대상이라 키워드 뷰에선 비활성 표시 (2026-07-29)
-    const tNo = $('#nvf-noimp');
+    // 미노출·변경기록 미니 필터 — 소재(제품·카드 뷰) 대상이라 키워드 뷰에선 비활성 표시 (2026-07-29)
+    nvApplyFiltersRef = applyFilters; // 이력 도착 후 injectRecentChanges가 재적용할 수 있게
+    const tNo = $('#nvf-noimp'), tRe = $('#nvf-recent');
     const setTileMode = () => {
       const kwMode = dashView === 'kw';
-      if (!tNo) return;
-      tNo.style.cssText = noimpCss(dashFNoimp) + (kwMode ? ';opacity:.45;cursor:default' : '');
-      tNo.title = kwMode ? '제품·카드 뷰 전용 필터 (키워드 뷰에는 소재 행이 없어요)' : '클릭하면 미노출(기간 내 노출 0)만 보기';
+      const kwTip = '제품·카드 뷰 전용 필터 (키워드 뷰에는 소재 행이 없어요)';
+      if (tNo) {
+        tNo.style.cssText = noimpCss(dashFNoimp) + (kwMode ? ';opacity:.45;cursor:default' : '');
+        tNo.title = kwMode ? kwTip : '클릭하면 미노출(기간 내 노출 0)만 보기';
+      }
+      if (tRe) {
+        tRe.style.cssText = recentCss(dashFRecent) + (kwMode ? ';opacity:.45;cursor:default' : '');
+        tRe.title = kwMode ? kwTip : '클릭하면 최근 2주 내 입찰·ON/OFF 변경 기록이 있는 소재만 보기 (외부감지·수동 기록 포함 · ON/OFF 상태 무관 표시)';
+      }
     };
     if (tNo) tNo.onclick = () => { if (dashView === 'kw') return; dashFNoimp = !dashFNoimp; setTileMode(); applyFilters(); };
+    if (tRe) tRe.onclick = () => { if (dashView === 'kw') return; dashFRecent = !dashFRecent; setTileMode(); applyFilters(); };
     setTileMode();
     // 상태 세그먼트 (전체/ON/OFF)
     document.querySelectorAll('.nvf-status').forEach(b => b.onclick = () => {
@@ -1602,16 +1615,29 @@
       const line = (c) => c.channel === 'onoff'
         ? `${fmt(c.changed_at)} ${c.new_bid === 1 ? '🟢 ON' : '🔴 OFF'}${String(c.name || '').includes('(외부감지)') ? ' (관리자)' : ''}`
         : `${fmt(c.changed_at)} 입찰 ${cnt(c.old_bid)}→${cnt(c.new_bid)}원`;
+      // 최근 2주 변경기록 마킹 (2026-07-29): '🕐 변경기록' 필터용 — 행/카드에 data-hasrecent 부여
+      const cut14 = Date.now() - 14 * 86400000;
+      const isRecent = (c) => c && new Date(c.changed_at).getTime() >= cut14;
+      const mark = (el, c) => { const host = el.closest('.nvc-card, .nvc-srow, .nvc-krow'); if (host) host.dataset.hasrecent = isRecent(c) ? '1' : '0'; };
       document.querySelectorAll('.nv-recent[data-id]').forEach(el => {
-        const v = el.querySelector('.nv-recent-val'); if (!v) return;
         const c = latest[el.dataset.id];
+        mark(el, c);
+        const v = el.querySelector('.nv-recent-val'); if (!v) return;
         if (c) v.textContent = line(c);
         else { v.textContent = '기록 없음'; v.style.color = 'var(--muted)'; v.style.fontWeight = '400'; }
       });
       document.querySelectorAll('.nv-recent-mini[data-id]').forEach(el => {
         const c = latest[el.dataset.id];
+        mark(el, c);
         el.textContent = c ? line(c) : '';
       });
+      // 변경기록 칩 카운트 갱신 + 필터 켜져 있으면 재적용(이력이 늦게 도착하는 경우)
+      const rc = document.getElementById('nvf-recent');
+      if (rc) {
+        const n = new Set([...document.querySelectorAll('[data-hasrecent="1"]')].map(x => x.querySelector('.nv-recent[data-id], .nv-recent-mini[data-id]')?.dataset.id).filter(Boolean)).size;
+        rc.textContent = `🕐 변경기록 ${n}`;
+      }
+      if (dashFRecent && typeof nvApplyFiltersRef === 'function') nvApplyFiltersRef();
     } catch (e) { /* 이력 테이블 미가용 시 조용히 생략 */ }
   }
 
